@@ -780,6 +780,16 @@ int main(int argc, char **argv)
 		fprintf(stderr, "--record-inputs needs --replay-inputs: it records the replayed prefix plus the manual play after it\n");
 		return 2;
 	}
+	// a session's saves (each pause, the reset or quit) update its own file; an earlier
+	// session's recording, or the one being replayed, is never written over
+	if (!record_path.empty()) {
+		std::error_code ec;
+		if (std::filesystem::exists(record_path, ec)) {
+			fprintf(stderr, "--record-inputs %s: the file is already there; give a new name (or delete it) to keep the earlier recording safe\n",
+				record_path.c_str());
+			return 2;
+		}
+	}
 	if (replay_until > 0 && !replay_mode) {
 		fprintf(stderr, "--replay-until needs --replay-inputs\n");
 		return 2;
@@ -868,6 +878,7 @@ int main(int argc, char **argv)
 	// count says little about how fast it is); the menu goes higher. Steam sets SteamDeck=1 on the
 	// Deck: fullscreen, 16:10.
 	cfg.scale = 2;
+	cfg.fps = game::get_video(host_game()).default_fps;
 	if (getenv("SteamDeck")) { cfg.fullscreen = true; cfg.aspect = 2; }
 	for (int p = 0; p < 2; p++)
 		cfg.ctl[p] = player_controls::defaults(p, controls);
@@ -923,6 +934,7 @@ int main(int argc, char **argv)
 	// the game's own part of the host (its settings, pages, cheats); the menu's side is filled in
 	// once the menu is made
 	host_context game_ctx{ m, dir, find_assets(), g_pc_mode, [&] { cfg_dirty = true; }, {}, {}, {} };
+	game_ctx.replay = replay_mode;
 	game_part.start(game_ctx);   // (before the code is recompiled: an instruction it changes goes in it)
 	const std::string rank_path = *game_part.save_sidecar_name() ? dir + "/" + game_part.save_sidecar_name() : std::string();
 	uint32_t rank_saved = game_part.save_sidecar_version();

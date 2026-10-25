@@ -130,6 +130,10 @@ struct gameplay_callbacks
 	uint32_t read32_watch = 0;
 	uint32_t read32_watch_end = 0;
 	std::function<uint32_t(uint32_t, uint32_t, uint32_t)> read32_value;
+	// Optional adjustment of the 8- and 16-bit reads by instructions in [read_pc_first, read_pc_last]
+	// (PC, address, value). These include the instructions' own bytes from the program ROM.
+	uint32_t read_pc_first = 0, read_pc_last = 0;
+	std::function<uint16_t(uint32_t, uint32_t, uint16_t)> read_value;
 	// Extra renderer-only objects attached to a matrix as the CPU writes it.
 	std::function<std::vector<render_object>()> matrix_objects;
 	// Snapshot active records when a relevant matrix is written, before visibility advances.
@@ -211,6 +215,8 @@ struct hud_tile_range
 struct video_traits
 {
 	bool smooth_frames = false;      // the 3D blended between game frames (a 30 Hz game's)
+	bool separate_parts = false;     // the parts are separate objects (ships, shots), not a fighter's limbs
+	int default_fps = 120;           // the Frame rate setting's first-run choice (30: the arcade's, no blending)
 	bool pin_hud_edges = false;      // move off-center, non-full-screen HUD graphics into widescreen sides
 	std::vector<uint32_t> foreground_objects;   // screen-space 3D overlays, sorted after world geometry
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge

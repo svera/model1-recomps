@@ -86,7 +86,8 @@ int main()
 	for (int p = 0; p < 2; p++)
 		for (int a = 0; a < C_COUNT; a++)
 			if (CONTROLS.visible(a, p) && CONTROLS.keys[p][a]) assert(used.insert(CONTROLS.keys[p][a]).second);
-	assert(!game::get_video(ID).smooth_frames);
+	assert(game::get_video(ID).smooth_frames && game::get_video(ID).separate_parts);
+	assert(game::get_video(ID).default_fps == 30);   // blending is the player's choice
 	assert(!game::get_video(ID).pin_hud_edges);
 
 	model1::regions regions;

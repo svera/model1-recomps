@@ -686,6 +686,43 @@ static void turn_blend(const float *pa, const float *pb, double alpha, float *ou
 	for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++) out[3 * c + r] = m[c][r];
 }
 
+// A rigid part's move from one list to the next taken as one motion, a turn about a line and a
+// slide along it, and that motion's fraction (or, past 1, more of it) applied to the older place.
+// Lerped, a big model turning by the camera (the Tantive IV's hull, its origin thousands of units
+// from the part on screen) swung its near side across the view; carried on with the newer turn
+// kept, by hundreds of units off it. False when the part isn't rigid (its stretch changed).
+static bool rigid_blend(const float *pa, const float *pb, double alpha, float *out)
+{
+	const glm::mat3 ma(pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], pa[6], pa[7], pa[8]);
+	const glm::mat3 mb(pb[0], pb[1], pb[2], pb[3], pb[4], pb[5], pb[6], pb[7], pb[8]);
+	const glm::mat3 ra = polar_turn(ma), rb = polar_turn(mb);
+	const float da = glm::determinant(ra), db = glm::determinant(rb);
+	if (std::fabs(std::fabs(da) - 1) > 0.01f || std::fabs(std::fabs(db) - 1) > 0.01f || da * db <= 0) return false;
+	const glm::mat3 sa = glm::transpose(ra) * ma, sb = glm::transpose(rb) * mb;
+	for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++)
+		if (std::fabs(sa[c][r] - sb[c][r]) > 0.01f * (1 + std::fabs(sa[c][r]))) return false;
+	const glm::dmat3 rd = glm::dmat3(rb) * glm::transpose(glm::dmat3(ra));
+	const glm::dvec3 ta(pa[9], pa[10], pa[11]), tb(pb[9], pb[10], pb[11]);
+	const glm::dvec3 td = tb - rd * ta;
+	glm::dquat q = glm::normalize(glm::quat_cast(rd));
+	if (q.w < 0) q = -q;
+	const double half = std::acos(std::clamp(q.w, -1.0, 1.0));
+	glm::dmat3 rs(1.0);
+	glm::dvec3 t;
+	if (half < 1e-5) t = ta + alpha * td;
+	else {
+		const glm::dvec3 u = glm::normalize(glm::dvec3(q.x, q.y, q.z));
+		const glm::dvec3 par = glm::dot(u, td) * u, perp = td - par;
+		const glm::dvec3 c = 0.5 * (perp + glm::cross(u, perp) / std::tan(half));   // a point on the turn's line
+		rs = glm::mat3_cast(glm::angleAxis(2 * half * alpha, u));
+		t = rs * (ta - c) + c + alpha * par;
+	}
+	const glm::dmat3 m = rs * glm::dmat3(ma);
+	for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++) out[3 * c + r] = float(m[c][r]);
+	for (int r = 0; r < 3; r++) out[9 + r] = float(t[r]);
+	return true;
+}
+
 void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alpha)
 {
 	m_blend.assign(b.slots.size(), {});
@@ -721,6 +758,39 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 			if (f) {
 				while (i + ra < na && first(a.slots[i + ra]) == f) ra++;
 				while (j + rb < nb && first(b.slots[j + rb]) == f) rb++;
+			}
+			// (SWA's copies are ships, listed in no steady order: a fighter flying past the camera
+			// was paired with one behind it, and every copy's swap taken for a cut. They pair the way
+			// that moves them least in all (nearest first swapped two fighters crossing at speed);
+			// the rest are new or gone.)
+			if (m_video->separate_parts && f && (ra > 1 || rb > 1)) {
+				const size_t n = std::min(ra, rb), m = std::max(ra, rb);
+				auto cost = [&](size_t ks, size_t kl) { return std::sqrt(ra <= rb ? dist(i + ks, j + kl) : dist(i + kl, j + ks)); };
+				std::vector<int> best(n, -1), cur(n, -1);
+				std::vector<char> used(m, 0);
+				if (m <= 8) {
+					double best_c = -1;
+					std::function<void(size_t, double)> search = [&](size_t k, double c) {
+						if (best_c >= 0 && c >= best_c) return;
+						if (k == n) { best_c = c; best = cur; return; }
+						for (size_t l = 0; l < m; l++)
+							if (!used[l]) { used[l] = 1; cur[k] = int(l); search(k + 1, c + cost(k, l)); used[l] = 0; }
+					};
+					search(0, 0);
+				} else {
+					struct cand { double d; size_t ks, kl; };
+					std::vector<cand> c;
+					for (size_t ks = 0; ks < n; ks++) for (size_t kl = 0; kl < m; kl++) c.push_back({ cost(ks, kl), ks, kl });
+					std::sort(c.begin(), c.end(), [](const cand &x, const cand &y) { return x.d < y.d; });
+					for (const cand &x : c)
+						if (best[x.ks] < 0 && !used[x.kl]) { used[x.kl] = 1; best[x.ks] = int(x.kl); }
+				}
+				for (size_t k = 0; k < n; k++) {
+					if (ra <= rb) pair[j + best[k]] = int(i + k);
+					else pair[j + k] = int(i + best[k]);
+				}
+				i += ra; j += rb;
+				continue;
 			}
 			if (ra == rb) { for (size_t k = 0; k < ra; k++) pair[j + k] = int(i + k); i += ra; j += rb; continue; }
 			for (size_t k = 0; k < rb; k++) changed_run[j + k] = 1;
@@ -773,10 +843,18 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 			const float dot = pa[r] * pb[r] + pa[r + 1] * pb[r + 1] + pa[r + 2] * pb[r + 2];
 			if (la > 0 && lb > 0 && dot < 0.77f * std::sqrt(la * lb)) turned = true;     // over ~40 degrees
 		}
-		if (dx * dx + dy * dy + dz * dz > 0.09f * depth * depth || turned) jumps++, jumped[i] = 1;    // fast, or a cut
+		// (SWA's shots and passing fighters move 30-50% of their depth in a list as they near the
+		// camera: a jump there is 60%, or a turn. Blended, a shot passing the camera came through
+		// the lens, a fighter's wrong pair swept across the screen: drawn where the newer list has it.)
+		const float far = m_video->separate_parts ? 0.36f : 0.09f;
+		if (dx * dx + dy * dy + dz * dz > far * depth * depth || turned) {    // fast, or a cut
+			jumps++, jumped[i] = 1;
+			if (m_video->separate_parts) continue;
+		}
 		for (int k = 0; k < 12; k++) m_blend[i][k] = float(pa[k] + (pb[k] - pa[k]) * alpha);
 		static const bool no_turn = getenv("M1_NO_TURN_BLEND") != nullptr;   // TESTONLY
-		if (!no_turn && swung(pa, pb)) turn_blend(pa, pb, alpha, m_blend[i].data());
+		if (!(m_video->separate_parts && rigid_blend(pa, pb, alpha, m_blend[i].data())) && !no_turn && swung(pa, pb))
+			turn_blend(pa, pb, alpha, m_blend[i].data());
 		memcpy(m_blend_from[i].data(), pa, 12 * sizeof(float));
 		memcpy(m_blend_to[i].data(), pb, 12 * sizeof(float));
 		const slot &sa = a.slots[pair[i]];
@@ -797,7 +875,10 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 		cut_jumps = 0;
 		for (size_t i = 0; i < b.slots.size(); i++) cut_jumps += m_blend_ok[i] && m_cam_res[i] > 0.3f;
 	}
-	m_blend_cut = cut_jumps * 2 > paired || missing * 8 > paired || m_camera_cut;
+	// (SWA's scenes have 3-9 parts: one shot fired was a cut, and two fighters and a shot passing
+	// the camera, 3 of 5 parts. Its new and fast parts are drawn where they are; a cut moves nearly all.)
+	m_blend_cut = (m_video->separate_parts ? cut_jumps * 4 > paired * 3 : cut_jumps * 2 > paired)
+		|| (!m_video->separate_parts && missing * 8 > paired) || m_camera_cut;
 	// Carried on past the newer list (blend_slots(older, newer, 1 to 1.5) at a cut, half a game frame
 	// on at most): each part's own blend carried on grew the fast-turning ones (a kicking leg up to
 	// twice its length) and moved each by itself, apart from the next (made rigid, a hand came off
@@ -807,7 +888,10 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	// leg) are left out of the average, carried with the rest: their own move carried on went into
 	// views and poses the game never showed. (The newer list was held as it was until the cut when
 	// any part moved fast: one kicking leg, and the picture stood a list before most cuts.)
-	if (alpha > 1 && !m_blend_cut) {
+	// (SWA's parts are ships and shots, each moving by itself: the average of a scene's few parts,
+	// two shots flying past at ten times a ship's speed, carried the Tantive IV's hull at their pace
+	// into the camera. Each carries on by its own motion, blended so above.)
+	if (alpha > 1 && !m_blend_cut && !m_video->separate_parts) {
 		double mv[3] = {};
 		int n = 0;
 		for (size_t i = 0; i < b.slots.size(); i++)

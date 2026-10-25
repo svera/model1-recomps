@@ -176,8 +176,10 @@ when you quit, and when a reset (F3 or the menu) ends the recording. Replaying
 that file with `--replay-inputs` reproduces your run exactly and hands over at the
 point you stopped, so a checkpoint can be extended by recording again from it.
 Pause right after an interesting moment (a hit, a target, the end of the trench) to
-mark it; the frame count in the header tells where you stopped. Use a different
-output name if you don't want to overwrite the earlier recording.
+mark it; the frame count in the header tells where you stopped. Each pause updates
+the same file, so copy it to keep an earlier mark. The output name must be new:
+`--record-inputs` refuses a file that is already there, so an earlier recording (or
+the one being replayed) is never written over.
 
 To rewind, add `--replay-until N`: only the recording's first N frames are replayed
 before the handoff, e.g. a few seconds (60 frames each) before a fatal hit. A prefix
@@ -193,6 +195,11 @@ One player can fly with both seats firing: **Esc → game menu → Gunner assist
 start and continue mode menus while the Pilot stick is centred, the Gunner's stick and
 laser then aim at the nearest moving enemy in reach. It drives only the cabinet's
 inputs, which are recorded, so recordings made with it replay without it.
+
+**Esc → Display → LOD** defaults to Off (`lod = off`): ships, scenery and every Star
+Destroyer keep their most detailed models at every distance. On restores the arcade's
+simpler distant models. The game plays the same either way. Input replay, and recording
+from it, always use the arcade's models so a recording's checksum verifies.
 
 Replay mode ignores existing battery/EEPROM saves and never writes saves or
 settings, including after manual play. It uses arcade mode, 4:3, 1x and whole-frame
@@ -215,6 +222,14 @@ checks the format's bounds, truncation and rejection paths.
 and on the interpreter, but camera/mode RAM identification remains to be done: those addresses are
 left unset, and the original boot sequence is shown rather than skipped. Release packaging remains
 VR-only.
+
+SWA draws a new 3D picture every two video frames (30 a second) throughout play, like VR. It
+starts at Frame rate 30 (Arcade), each picture as the game drew it; choose 60 or 120 under the
+menu's Frame rate to blend between them. The blending pairs the parts by their place in the list alone (no
+table of the ships or the camera yet). Its parts are taken as separate ships and shots: copies of
+a model pair by the least total move, each part moves as one rigid motion, fast parts (a shot or
+fighter passing the camera) are drawn as the game has them, and a shot appearing is no cut.
+Much of play is still drawn unblended. Replays always run at 30 FPS.
 
 Foreground polygons (display-list command `0x41`) are masked only by the HUD layers' bright
 features, not by the background picture or the regular 3D scene. This keeps the name-entry letters

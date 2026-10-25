@@ -431,13 +431,26 @@ void model1::bus_write16(uint32_t a, uint16_t v, uint16_t mask)
 	if (a >= 0xe00008 && a < 0xe0000c) { timer_period_w((a >> 1) & 1, v); return; }
 }
 
-uint8_t model1::read8(uint32_t a) { return uint8_t(bus_read16(a) >> ((a & 1) * 8)); }
+uint8_t model1::read8(uint32_t a)
+{
+	const uint8_t value = uint8_t(bus_read16(a) >> ((a & 1) * 8));
+	if (m_gameplay.read_value) {
+		const uint32_t pc = m_maincpu.pc();
+		if (pc >= m_gameplay.read_pc_first && pc <= m_gameplay.read_pc_last) return uint8_t(m_gameplay.read_value(pc, a, value));
+	}
+	return value;
+}
 void model1::write8(uint32_t a, uint8_t v) { bus_write16(a, uint16_t(v) << ((a & 1) * 8), (a & 1) ? 0xff00 : 0x00ff); }
 
 uint16_t model1::read16(uint32_t a)
 {
 	if (a & 1) return read8(a) | (read8(a + 1) << 8);
-	return bus_read16(a);
+	const uint16_t value = bus_read16(a);
+	if (m_gameplay.read_value) {
+		const uint32_t pc = m_maincpu.pc();
+		if (pc >= m_gameplay.read_pc_first && pc <= m_gameplay.read_pc_last) return m_gameplay.read_value(pc, a, value);
+	}
+	return value;
 }
 
 void model1::write16(uint32_t a, uint16_t v)

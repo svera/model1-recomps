@@ -29,6 +29,7 @@ struct host_context
 	std::function<void(menu_page, int)> replace_page;
 	std::function<void(const std::string &, std::function<bool(const SDL_Event &)>, std::function<void()>)> capture;
 	std::function<void()> refresh_menu;
+	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings
 };
 
 class game_host

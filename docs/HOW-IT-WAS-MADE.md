@@ -1386,7 +1386,9 @@ point the replayed rows are applied: after the host has read the controls and
 immediately before the frame runs. That point is shared by paced frames,
 run-ahead frames and Tab fast-forward. The file holds the prefix plus those live
 rows and the RAM hash after the last one. It is written on P (pause), quit, and
-a reset, which ends the recording. A hidden 578-live-frame recording replays to
+a reset, which ends the recording. The output name must be new: a file that is
+already there is refused at launch, after a pause had once written over a
+checkpoint the player meant to keep. A hidden 578-live-frame recording replays to
 its hash `5b97ea5c5f687609` on both native and interpreter hosts, so a player's
 run becomes a new, verifiable handoff point.
 
@@ -1500,6 +1502,65 @@ and dark HUD pixels at 1x/2x and 4:3/16:9. The ROM-backed test reaches real name
 15750 and checks at 1x and 2x that the photograph does not mask its yellow letters. SWA, VR and
 VF gameplay regressions passed, and the desktop hosts were rebuilt.
 
+### SWA's model detail (LOD)
+
+Display > LOD defaults to Off and persists as `lod = off`, as in VR. Session probes that logged
+the display-list objects while the camera approached showed ship and scenery models stepping
+through up to five versions with distance. Three drawing routines choose them the same way: TGP
+command `0x22` returns a distance, read by `in.w [FP], R0` at `0CDFD8`, `0D1D38` and `0E7FD3`;
+anything above `0x6FFF` is culled; otherwise the value shifted right by 5 indexes the byte table
+at `23FE6E` (level 0 below `0x180`, 1 from `0x180`, 2 from `0x2A0`, 3 from `0x460`, 4 from
+`0x700`), and the level picks an entry in the object's per-type model table at `CA81E`.
+
+With LOD off, `copro_result` returns 0 for an in-range result read at those three addresses, so
+the routine takes level 0, the nearest and most detailed model. Out-of-range values still cull,
+the visibility test (command `0x32`) is untouched, and the distance is not stored: only the
+display-list entry changes. A list entry names a model rather than copying its polygons, and the
+renderer has no polygon cap, so unlike VR there is no submission budget to bypass.
+
+Star Destroyers choose by rank instead, and that choice is kept. `0DBFF6` sorts them by distance
+and stores each one's level in `3A[object]` from the byte table at `DC0C2`: the nearest gets -1
+(the near model, with separately drawn hull parts), the next two 0, the rest 2, and `7F` hides
+one. The first three also join a list at `6D80` the game uses, so the stored byte has to stay.
+A read hook for 8- and 16-bit data reads by a range of instructions changes only what the
+drawing routine reads at `0DC336` (`movz.bw 3A[R20], R17`): -1 unless the byte is `7F`. The
+routine leaves the level in R17 for `DCE13`, which counts down the near Star Destroyer's 14 turret
+timers and fires their shots only for -1. For a Star Destroyer drawn near only by this setting,
+the hook makes the turret enable mask, read at `0DCE68` (`and.h 44[R20], R0`), read all set:
+the game's own path for a disabled turret, which writes nothing. Each hooked read must be the
+operand itself (`R20` plus the field's offset): an interrupt taken at the instruction reads its
+vector with the same PC, and changing that read jumped the CPU into the program ROM's data.
+
+The same routine then gives every Star Destroyer level 2 while the game's mode byte `7009[R25]`
+is 2. That mode covers the attract mode's scenes, including the start of its X-wing demonstration,
+so with only the hook above those Star Destroyers stayed simple. With LOD off, the routine's read
+of the byte at `0DC341` (`cmp.b #2, 7009[R25]`) reads 0. The turret mask also reads all set in that
+mode, because the game never runs the turrets there.
+
+The large Star Destroyers of the fleet that `0D6540` draws (in the attract mode, and the one
+`0EEC62` sets up) use a third scheme. Two TGP results, shifted right by 15 and capped at 3, pick an
+entry in the table at `D6E12`. The routine stores the entry in the object: the model at `2[R20]`
+and its data at `6[R20]`. `C1869` then draws it. The far entry is `23C01A`/`53698` and the near
+one `23C016`/`5360F`. The object keeps what the game stored. Only `C1869`'s 32-bit reads of
+those two fields, at `0C18AF` and `0C18AA`, return the near entry. This uses the existing
+`read32_value` hook, over RAM A, where the objects are.
+
+The game logic is unchanged, but its timing is not quite: more models take the CPU longer, so
+the point within the game's update where a frame ends can move. At about one frame end in a
+hundred where Star Destroyers are on screen, some object bytes still hold their previous values,
+and the stack and the display list's end pointer differ more often. Each difference is gone by
+the next frame end. No difference persisted in the attract mode or in either recording, through
+the whole game. A session probe also compared the game RAM (without the stack and the end
+pointer) each time the main loop reached its wait for the next frame (`0C067C`), with LOD on
+and off. All 5,900 such points in 12,000 attract-mode frames matched. Input replay, and recording from it, therefore use the arcade's models: a
+recording's RAM checksum covers the stack.
+
+`make test-swa-recording` replays both human recordings on the interpreter with arcade LOD and on
+native code with LOD off. Every game-state change matches at the same frame, the interpreter's RAM
+checksums match exactly, and native code's game RAM (all but the stack and the display list's end)
+matches the interpreter's at each checkpoint. About 17,500 detail results are replaced on the
+native run, and Star Destroyers are drawn near about 8,850 times.
+
 ### What the tests establish, and what remains
 
 The main local checks are:
@@ -1513,8 +1574,8 @@ The main local checks are:
   independent aiming, plus continuation checks with the coin or Start withheld. An
   shared visual progression driver completes the opening objective, with a no-firing control.
 - `make test-model1-video test-swa-video`: synthetic HUD priority and real name-entry rendering.
-- `make test-swa-recording`: two human recordings replayed on the interpreter and native code,
-  with exact RAM checksums and game-state transitions. The first runs through the trench objective,
+- `make test-swa-recording`: two human recordings replayed on the interpreter (arcade LOD, exact
+  RAM checksums) and native code (LOD off, the same game RAM), with exact game-state transitions. The first runs through the trench objective,
   the next stage, a continue and the following offer. The second plays the whole game, through
   two continues, to the ending.
 - `make swa-native-lockstep swa-lockstep`: all seven scenarios against the interpreter:

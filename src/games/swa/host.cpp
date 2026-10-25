@@ -1,5 +1,6 @@
 #include "../../host/game_host.h"
 #include "controls.h"
+#include "gameplay.h"
 #include "gunner_assist.h"
 #include "profile.h"
 #include "romset.h"
@@ -21,7 +22,7 @@ public:
 
 	void load_settings(const settings_map &settings) override
 	{
-		for (const auto &[key, flag] : { std::pair{ "invert_flight_y", &invert_y }, std::pair{ "gunner_assist", &assist } }) {
+		for (const auto &[key, flag] : { std::pair{ "invert_flight_y", &invert_y }, std::pair{ "gunner_assist", &assist }, std::pair{ "lod", &lod } }) {
 			const auto it = settings.find(key);
 			if (it == settings.end()) continue;
 			if (it->second == "on" || it->second == "off") *flag = it->second == "on";
@@ -32,6 +33,7 @@ public:
 	{
 		fprintf(f, "invert_flight_y = %s\n", invert_y ? "on" : "off");
 		fprintf(f, "gunner_assist = %s\n", assist ? "on" : "off");
+		fprintf(f, "lod = %s\n", lod ? "on" : "off");
 	}
 
 	void before_frame() override
@@ -42,8 +44,24 @@ public:
 	void start(host_context &context) override
 	{
 		ctx = &context;
-		fprintf(stderr, "SWA: experimental interpreter bring-up; boot detection and native recompilation "
-						"are not implemented.\n");
+		// a replay (and the recording made from it) keeps the arcade's models: LOD off draws more,
+		// which moves where a frame ends in the game's update and so the RAM hash a recording checks
+		set_lod(context.machine, lod || context.replay);
+	}
+
+	std::vector<menu_item> display_menu_items() override
+	{
+		if (ctx->replay)
+			return { { "LOD", "Input replay and recording use the arcade's models, so recordings verify.",
+				[] { return "On (replay)"; }, [](int) {} } };
+		return { { "LOD", "Off keeps the highest-detail models at every distance. On uses the arcade's simpler distant models. "
+						  "Off can lower performance.",
+			[this] { return lod ? "On" : "Off"; },
+			[this](int) {
+				lod = !lod;
+				set_lod(ctx->machine, lod);
+				ctx->settings_changed();
+			} } };
 	}
 
 	std::vector<menu_item> game_menu_items() override
@@ -69,6 +87,7 @@ private:
 	host_context *ctx = nullptr;
 	bool invert_y = false;
 	bool assist = false;
+	bool lod = false;
 	gunner_assist gunner;
 };
 

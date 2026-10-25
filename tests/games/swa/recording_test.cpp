@@ -3,9 +3,13 @@
 // trench objective, reaches the next stage, takes two moving-collision hits (0x0c7f33) and is shot
 // down to the continue offer; then continues, which restarts that stage with full shield, and is shot
 // down again. The recording holds no game state, so it reproduces only if emulation does.
-// Every game-state and shield change from the trench handoff on, and the RAM checksums at the four
-// handoff points the recordings were made at, must match exactly on the interpreter (silent) and
-// the native recompile (with sound), with no interpreter fallback.
+// Every game-state and shield change from the trench handoff on must match exactly on the interpreter
+// (silent, the arcade's models) and the native recompile (with sound, LOD off as players get it),
+// with no interpreter fallback. At the handoff points the recordings were made at, the interpreter's
+// RAM checksums must match exactly, and native code's game RAM the interpreter's: LOD off draws more
+// models (Star Destroyers near), which takes the CPU longer, so a frame can end at another point of
+// the game's update; only the stack and the display list's end then differ by the checkpoints.
+#include "../../../src/games/swa/gameplay.h"
 #include "../../../src/games/swa/profile.h"
 #include "../../../src/host/input_replay.h"
 #include "../../../src/host/regions.h"
@@ -25,6 +29,19 @@ constexpr size_t TRACE_FROM = 16600;
 struct checkpoint { size_t frames; uint64_t hash; const char *what; };
 // (frame index whose run made the change, sequence, subsequence, shield)
 struct state { size_t frame; unsigned seq, sub, shield; bool operator==(const state &) const = default; };
+
+// RAM less the stack and the display list's end, which depend on where in the update the frame ended
+constexpr uint32_t RAM_A = 0x400000, DISPLAY_LIST_END = 0x40f068, STACK = 0x40fc00;
+
+uint64_t game_ram_hash(model1 &m)
+{
+	uint64_t h = 1469598103934665603ull;
+	auto add = [&](uint8_t b) { h = (h ^ b) * 1099511628211ull; };
+	for (uint32_t a = RAM_A; a < STACK; a++)
+		if (a != DISPLAY_LIST_END && a != DISPLAY_LIST_END + 1) add(m.nvram()[a - RAM_A]);
+	for (uint8_t b : m.work_ram()) add(b);
+	return h;
+}
 
 struct recorded_run {
 	const char *path;
@@ -165,7 +182,9 @@ const recorded_run COMPLETE_GAME = {
 	"the whole game, through two continues to the ending",
 };
 
-std::vector<state> replay(const std::string &dir, const recorded_run &run, const input_replay::recording &rec, bool native)
+// native: game RAM hashes the interpreter reached at the checkpoints (filled by its run)
+std::vector<state> replay(const std::string &dir, const recorded_run &run, const input_replay::recording &rec, bool native,
+	std::vector<uint64_t> &game_hashes)
 {
 	model1 m(load_regions(dir, ID));
 	if (native) {
@@ -179,6 +198,8 @@ std::vector<state> replay(const std::string &dir, const recorded_run &run, const
 	m.reset();
 	if (!native) m.run_cpu = [&](int c) { m.cpu().run(c); };
 	m.set_drawing(false);
+	set_lod(m, !native);
+	const auto lod_state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
 	const char *mode = native ? "native" : "interpreter";
 	std::vector<state> changes;
 	state last{};
@@ -193,16 +214,28 @@ std::vector<state> replay(const std::string &dir, const recorded_run &run, const
 		last = now;
 		if (next_checkpoint < run.checkpoints.size() && f + 1 == run.checkpoints[next_checkpoint].frames) {
 			const auto &c = run.checkpoints[next_checkpoint++];
-			const uint64_t h = input_replay::ram_hash(m);
-			if (h != c.hash) {
-				fprintf(stderr, "SWA recording (%s): %s after %zu frames: RAM hash %016llx, expected %016llx\n", mode, c.what, c.frames,
-					(unsigned long long)h, (unsigned long long)c.hash);
+			const uint64_t game = game_ram_hash(m);
+			if (!native) {
+				const uint64_t h = input_replay::ram_hash(m);
+				if (h != c.hash) {
+					fprintf(stderr, "SWA recording (%s): %s after %zu frames: RAM hash %016llx, expected %016llx\n", mode, c.what, c.frames,
+						(unsigned long long)h, (unsigned long long)c.hash);
+					assert(false);
+				}
+				game_hashes.push_back(game);
+			} else if (game != game_hashes[next_checkpoint - 1]) {
+				fprintf(stderr, "SWA recording (%s): %s after %zu frames: game RAM differs from the interpreter's\n", mode, c.what, c.frames);
 				assert(false);
 			}
 			printf("SWA recording (%s): %s at %zu frames matches\n", mode, c.what, c.frames);
 		}
 	}
 	assert(next_checkpoint == run.checkpoints.size());
+	if (native) {
+		assert(lod_state->nearest > 0 && lod_state->destroyers_near > 0);
+		printf("SWA recording (native, LOD off): %llu detail results replaced by the nearest model's, %llu Star Destroyers drawn near\n",
+			(unsigned long long)lod_state->nearest, (unsigned long long)lod_state->destroyers_near);
+	} else assert(lod_state->nearest == 0 && lod_state->destroyers_near == 0);
 	return changes;
 }
 
@@ -219,8 +252,9 @@ bool verify(const char *dir, const recorded_run &run)
 	input_replay::recording rec;
 	if (const auto error = input_replay::load(run.path, ID, rec); !error.empty()) { fprintf(stderr, "%s\n", error.c_str()); return false; }
 	assert(rec.frames.size() == run.checkpoints.back().frames && rec.expected_ram == run.checkpoints.back().hash);
-	check(run, replay(dir, run, rec, false), "interpreter");
-	check(run, replay(dir, run, rec, true), "native");
+	std::vector<uint64_t> game_hashes;
+	check(run, replay(dir, run, rec, false, game_hashes), "interpreter");
+	check(run, replay(dir, run, rec, true, game_hashes), "native");
 	if (rec::fallback_count()) {
 		fprintf(stderr, "SWA recording: native code fell back to the interpreter %zu times, first at %06x (regenerate assets/games/swa/swa_map.txt)\n",
 			rec::fallback_count(), rec::first_fallback_address());
