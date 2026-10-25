@@ -134,9 +134,9 @@ make test-swa-controls              # buttons and axes against the game's own in
 make test-swa-dsb                   # the Digital Sound Board, stubbed and in the attract sequence
 make test-swa-gameplay              # Rebel Attack (both seats) and Training, to game over and back
 make test-swa-video                 # name-entry priority and real-input destroyer crash regression
-make test-swa-recording             # a recorded human run: trench objective, next stage, continue offer
+make test-swa-recording             # recorded human runs: continues, and the whole game to its ending
 make swa-coverage                   # record those runs as hints for the recompile
-make swa-native-lockstep            # native code against the interpreter, all scenarios, 36,000 frames
+make swa-native-lockstep            # native code against the interpreter, all scenarios, the whole game
 make swa-lockstep                   # the same for the generated C++
 build/bin/swa --arcade --scale 1 --aspect 4:3
 ```
@@ -179,6 +179,21 @@ Pause right after an interesting moment (a hit, a target, the end of the trench)
 mark it; the frame count in the header tells where you stopped. Use a different
 output name if you don't want to overwrite the earlier recording.
 
+To rewind, add `--replay-until N`: only the recording's first N frames are replayed
+before the handoff, e.g. a few seconds (60 frames each) before a fatal hit. A prefix
+has no checksum of its own to verify; a new `--record-inputs` file from it gets its
+own checksum and replays exactly like any other.
+
+```sh
+build/bin/swa build/swa --replay-inputs build/swa-continue-try2.inputs --replay-until 30000 --record-inputs build/swa-retry.inputs
+```
+
+One player can fly with both seats firing: **Esc → game menu → Gunner assist: On**
+(or `gunner_assist = on` in `settings.ini`). In PILOT & GUNNER mode, the default on the
+start and continue mode menus while the Pilot stick is centred, the Gunner's stick and
+laser then aim at the nearest moving enemy in reach. It drives only the cabinet's
+inputs, which are recorded, so recordings made with it replay without it.
+
 Replay mode ignores existing battery/EEPROM saves and never writes saves or
 settings, including after manual play. It uses arcade mode, 4:3, 1x and whole-frame
 rendering for reproduction; normal launches are unchanged. A missing, malformed,
@@ -219,9 +234,11 @@ runs (`make swa-coverage`) and the entries the runtime noted when native code fe
 interpreter (`build/cov/swa/runtime_entries.txt`). Most of those are pseudo-calls: the game pushes a
 return address and branches (and its reset pushes one and runs `RETIS`), so the code returned to has
 no caller in the native code and must be an entry of its own. The map was regenerated until the
-lockstep noted no more; `swa-native-lockstep` and `swa-lockstep` run all six scenarios (the five
-scripted ones and `recording`, a human's recorded run) to frame
-36,000 with `--strict` (no fallback), comparing registers, RAM and rendered frames with the interpreter.
+lockstep noted no more. `swa-native-lockstep` and `swa-lockstep` run seven scenarios with
+`--strict` (no fallback), comparing registers, RAM and rendered frames with the interpreter. Six
+run to frame 38,400: the five scripted ones and `recording`, a human's recorded run, whose length
+set that figure. The seventh, `complete`, is a human's recorded run of the whole game and runs to
+frame 57,600, through the Death Star and the ending. Coverage replays the same seven.
 `test-swa-gameplay` plays all five scenarios natively with sound. Code the scripts never reach
 (other missions' branches, the test menu) may still fall back to the interpreter, which is correct
 but slower, and is noted for the next map.
@@ -355,11 +372,23 @@ A human player has since completed the trench objective from that handoff, recor
 `--record-inputs`. `test-swa-recording` replays the committed recording
 (`tests/games/swa/recordings/manual-trench-to-continue.inputs`) on the interpreter and on native
 code with sound. It requires the RAM checksums at the trench handoff (16,600 frames), next-stage
-arrival (21,635) and continue offer (24,755), and every sequence, subsequence and shield change
-from the handoff on: the trench objective at frame 17,961, next-stage flight at 22,016, two
-surface crashes, and the continue offer at 24,644. It runs in about 30 seconds. The same inputs
+arrival (21,635), continue offer (24,755) and the continued attempt's end (38,123), and every
+sequence, subsequence and shield change from the handoff on: the trench objective at frame 17,961,
+next-stage flight at 22,016, two moving-collision hits and the continue offer at 24,644, then the
+continue (that stage again, full shield), eight more hits and the next offer at 37,987. The same inputs
 are the `recording` scenario of the coverage and lockstep tools, so the native map covers the
 manually reached code with no interpreter fallback.
+
+The test also replays a second recording,
+`tests/games/swa/recordings/manual-complete-game.inputs`: a player finishing the game from
+the same continue offer, using `--replay-until` rewinds and the Gunner assist (both are only
+cabinet inputs in the file). It checks the RAM checksums at 16,600, 21,635 and 24,755 frames
+(shared with the first recording), at the Death Star's continue offer (44,637), in its tunnel
+after continuing (50,523) and at the ending (57,549). It also checks all 72 sequence,
+subsequence and shield changes from the trench handoff on, including phase 3's objective at
+31,872, the Death Star's tunnel at 35,902, the reactor at 54,561 and the ending at 56,742.
+Both recordings must replay with no interpreter fallback; the test takes about two minutes. The
+`complete` coverage scenario replays the same inputs, so the native map covers the whole game.
 
 `test-swa-gameplay` runs the original three scenarios to frame 22,000, `continue` to 36,000
 and `progression` to 10,000
@@ -402,7 +431,7 @@ The gameplay test runs it on the interpreter with and without sound and on nativ
 sound, requiring identical final battery/work RAM hashes and no native fallback. Repeated
 drivers with different seeds must emit identical controls. A matching run without firing
 must not reach either success transition within 10,000 frames and must fail the scenario.
-Coverage and strict native/generated-C++ lockstep include `progression` for 36,000 frames,
+Coverage and strict native/generated-C++ lockstep include `progression` for 38,400 frames,
 including playback after its required objective has completed.
 This verifies one successful objective, not completion of Rebel Attack. The blue-pixel aiming
 heuristic can also target engine details; its success checks have been validated at 1x, 4:3.

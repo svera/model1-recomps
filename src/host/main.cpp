@@ -742,6 +742,7 @@ int main(int argc, char **argv)
 #endif
 	bool arg_arcade = false;
 	std::string replay_path, record_path;
+	long replay_until = -1;   // --replay-until N: hand over after the recording's first N frames
 	input_replay::recording replay, record;
 	bool recording = false;
 	std::string arg_roms;   // --roms <folder>: where the player's zip is (over M1_ROMS and settings.ini's roms_folder)
@@ -754,6 +755,11 @@ int main(int argc, char **argv)
 		else if (a == "--arcade") arg_arcade = true;  // boot screen, credits and coins as on the cabinet
 		else if (a == "--replay-inputs" && i + 1 < argc) replay_path = argv[++i];
 		else if (a == "--record-inputs" && i + 1 < argc) record_path = argv[++i];
+		else if (a == "--replay-until" && i + 1 < argc) {
+			char *end = nullptr;
+			replay_until = strtol(argv[++i], &end, 10);
+			if (*end || replay_until < 1) { fprintf(stderr, "--replay-until needs a frame number from 1 on\n"); return 2; }
+		}
 		else if (a == "--aspect" && i + 1 < argc) {
 			std::string v = argv[++i];
 			for (int k = 0; k < N_ASPECTS; k++) if (v == ASPECT_NAMES[k]) arg_aspect = k;
@@ -774,6 +780,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "--record-inputs needs --replay-inputs: it records the replayed prefix plus the manual play after it\n");
 		return 2;
 	}
+	if (replay_until > 0 && !replay_mode) {
+		fprintf(stderr, "--replay-until needs --replay-inputs\n");
+		return 2;
+	}
 	if (replay_mode) {
 		if (host_game().name != "swa" || getenv("M1_SCRIPT")) {
 			fprintf(stderr, "--replay-inputs is experimental SWA-only and cannot be combined with M1_SCRIPT\n");
@@ -781,6 +791,14 @@ int main(int argc, char **argv)
 		}
 		if (const auto error = input_replay::load(replay_path, host_game(), replay); !error.empty()) {
 			fprintf(stderr, "input replay: %s\n", error.c_str()); return 2;
+		}
+		if (replay_until > 0) {
+			if (size_t(replay_until) >= replay.frames.size()) {
+				fprintf(stderr, "--replay-until %ld: the recording has %zu frames; give fewer (or leave it out to replay them all)\n",
+					replay_until, replay.frames.size());
+				return 2;
+			}
+			replay.frames.resize(size_t(replay_until));
 		}
 	}
 	// Where the game comes from: a regions folder (our own builds, tools/romset.py: build/vf by
@@ -2014,11 +2032,13 @@ int main(int argc, char **argv)
 	// passes keep to the screen's refreshes, a whole number of them apart on average: not with vsync
 	// off or not honoured, nor a minimised or covered window; never back. M1_NO_EVEN_PACE=1: as before.
 	double even_real = 0, even_shown = 0, pass_avg = 0, dt_avg = 1.0 / 120;
+	double sound_lead = 0;                   // frames the sound's running dry has run ahead of the clock
 	auto restart_clock = [&] {
 		clock_t = SDL_GetTicksNS();
 		frame_clock = double(game_run);
 		even_real = even_shown = pass_avg = 0;
 		dt_avg = 1.0 / 120;
+		sound_lead = 0;
 	};
 	auto resume_clock = [&] {
 		restart_clock();
@@ -2047,7 +2067,7 @@ int main(int argc, char **argv)
 	static FILE *trace = getenv("M1_TRACE") ? fopen(getenv("M1_TRACE"), "w") : nullptr;
 	struct trace_pass { char kind = 'S'; int due = 0; double now = -1; uint64_t emu = 0, draw = 0, compose = 0, upload = 0, present = 0; } tp;
 	const uint64_t trace_t0 = SDL_GetTicksNS();
-	if (trace) fprintf(trace, "# pass t_ms due frame emu draw compose upload present kind now hold tiles_full tiles_ms layers layers_ms sky_build sky_build_ms sky_scale sky_scale_ms padded tex_made up_kpx stopped hp1 hp2 replay live r1 r2 quads mode alpha list0 list1 px py pz edge_ms\n");
+	if (trace) fprintf(trace, "# pass t_ms due frame emu draw compose upload present kind now hold tiles_full tiles_ms layers layers_ms sky_build sky_build_ms sky_scale sky_scale_ms padded tex_made up_kpx stopped hp1 hp2 replay live r1 r2 quads mode alpha list0 list1 px py pz edge_ms queued_ms\n");
 	// The game on a thread of its own while the screen waits (from VF3, 7647ac6): a frame that will be
 	// due by the next refresh is run during the present's wait for vsync, its inputs read as it starts;
 	// what follows it (the hold, its sound) as the present returns. Only with smooth motion, whose
@@ -2188,7 +2208,9 @@ int main(int argc, char **argv)
 				m.m_audio_out.clear();
 			}
 			const uint64_t actual = input_replay::ram_hash(m);
-			if (actual != replay.expected_ram) {
+			// (the file's hash is for its last frame: a prefix has none to check. What's recorded from
+			// it is still a cold-boot run whatever this machine did, its own hash taken as it's saved.)
+			if (replay_until < 0 && actual != replay.expected_ram) {
 				const std::string error = "Input replay diverged before handoff; refusing manual play. Expected RAM hash " +
 					[&] { std::ostringstream s; s << std::hex << replay.expected_ram << ", got " << actual; return s.str(); }();
 				fprintf(stderr, "%s\n", error.c_str());
@@ -2205,8 +2227,9 @@ int main(int argc, char **argv)
 			pstate[0] = pstate[1] = pad_state{};
 			resume_clock();
 			SDL_SetWindowTitle(win, "SWA: manual handoff paused - P to play");
-			fprintf(stderr, "input replay: verified %zu frames, RAM hash %016llx in %.1f s; paused for manual control (P to play)\n",
-				replay.frames.size(), (unsigned long long)actual, double(SDL_GetTicksNS() - replay_start) / 1e9);
+			fprintf(stderr, "input replay: %s %zu frames, RAM hash %016llx in %.1f s; paused for manual control (P to play)\n",
+				replay_until < 0 ? "verified" : "replayed the first", replay.frames.size(), (unsigned long long)actual,
+				double(SDL_GetTicksNS() - replay_start) / 1e9);
 			if (!record_path.empty()) {
 				record.frames = replay.frames;
 				recording = true;
@@ -2250,8 +2273,11 @@ int main(int argc, char **argv)
 		}
 		// testing: M1_EVENTS_AT="2000:p,2050:reset,2060:targets" at those passes presses a key, or
 		// sends the renderer's device reset or render targets reset (as Direct3D does); "stall" and
-		// "unstall" stop and restart the sound device
+		// "unstall" stop and restart the sound device; "gulp": for 2 s the device takes the sound as
+		// fast as it comes (as macOS's does after waking)
 		static const char *events_at = getenv("M1_EVENTS_AT");
+		static uint64_t gulp_until = 0;
+		if (audio && SDL_GetTicksNS() < gulp_until) SDL_ClearAudioStream(audio);
 		for (const char *c = events_at; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : "") {
 			char what[32] = "";
 			long at = -1;
@@ -2259,6 +2285,10 @@ int main(int argc, char **argv)
 			fprintf(stderr, "test: pass %ld: %s\n", at, what);
 			if (!strcmp(what, "sleep")) {
 				clock_t -= 60000000000ull;
+				continue;
+			}
+			if (!strcmp(what, "gulp")) {
+				gulp_until = SDL_GetTicksNS() + 2000000000ull;
 				continue;
 			}
 			if (!strcmp(what, "stall") || !strcmp(what, "unstall")) {   // the sound device stops taking data
@@ -2280,7 +2310,7 @@ int main(int argc, char **argv)
 		bool pads_changed = false;
 		while (SDL_PollEvent(&e)) {
 			if (e.type == SDL_EVENT_QUIT) running = false;
-			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) resume_clock();
+			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) { fprintf(stderr, "clock: back in the foreground, restarted\n"); resume_clock(); }
 			else if (e.type == SDL_EVENT_RENDER_TARGETS_RESET || e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
 				// Direct3D lost what render targets held (a device reset: every texture). The GPU's
 				// parts are made again whatever is on show (their old textures can't be used), and
@@ -2382,6 +2412,7 @@ int main(int argc, char **argv)
 			// Sleep and long suspensions are not game time. Reset the pacing filters too: feeding
 			// the gap into their averages can keep the game accelerated long after waking.
 			if (fixed_dt == 0 && dt > 0.5) {
+				fprintf(stderr, "clock: a %.1f s gap (sleep or a stall) not run as game time\n", dt);
 				resume_clock();
 				dt = 0;
 			}
@@ -2439,7 +2470,16 @@ int main(int argc, char **argv)
 				frame_clock = double(game_run + pace) + (frame_clock - std::floor(frame_clock));
 				due = pace;
 			}
-			due = std::max(due, std::min(low, pace + 1));   // (the sound about to run dry: a frame more at most)
+			// The sound about to run dry: a frame more at most, and no more than its slack (QUEUED
+			// frames) ahead of the clock, won back at the trim's 1%. A device that takes data faster than
+			// it plays (macOS's for a second or two after waking from sleep, after its stall) otherwise
+			// ran the game at three times its speed while it did: each frame for it moved the clock on.
+			sound_lead = std::max(0.0, sound_lead - dt * rate * 0.01);
+			if (const int want = std::min(low, pace + 1); want > due) {
+				const int extra = std::min(want - std::max(due, 0), std::max(0, int(QUEUED - sound_lead)));
+				due = std::max(due, 0) + extra;
+				sound_lead += extra;
+			}
 			if (due > 0) frame_clock = std::max(frame_clock, double(game_run + due));
 			due = std::max(due, 0);
 			if (ff) { due = 8; frame_clock = double(game_run + due); }
@@ -2696,12 +2736,13 @@ int main(int argc, char **argv)
 			game_part.trace_fields(gf);
 			float sa, place[3]; int s0, s1;
 			m.smooth_state(sa, s0, s1, place);
-			fprintf(trace, "%lld %.3f %d %llu %.3f %.3f %.3f %.3f %.3f %c %.4f %d %d %.3f %d %.3f %d %.3f %d %.3f %d %d %llu %d %u %u %u %u %u %u %d %u %.4f %d %d %.3f %.3f %.3f %.3f\n",
+			fprintf(trace, "%lld %.3f %d %llu %.3f %.3f %.3f %.3f %.3f %c %.4f %d %d %.3f %d %.3f %d %.3f %d %.3f %d %d %llu %d %u %u %u %u %u %u %d %u %.4f %d %d %.3f %.3f %.3f %.3f %.1f\n",
 					(long long)pass, (pass_t - trace_t0) / 1e6, tp.due, (unsigned long long)m.frame_number(), tp.emu / 1e6, tp.draw / 1e6,
 					tp.compose / 1e6, tp.upload / 1e6, tp.present / 1e6, tp.kind, tp.now, int(sync.holding()), w.tiles_full, w.tiles_ns / 1e6,
 					w.layers, w.layers_ns / 1e6, w.sky_build, w.sky_build_ns / 1e6, w.sky_scale, w.sky_scale_ns / 1e6, w.padded, gc.made,
 					(unsigned long long)(gc.uploaded / 1000), int(stopped), gf[0], gf[1], gf[2], gf[3],
-					gf[4], gf[5], int(m.frame_quads()), unsigned(m.game_mode()), sa, s0, s1, place[0], place[1], place[2], w.edge_ns / 1e6);
+					gf[4], gf[5], int(m.frame_quads()), unsigned(m.game_mode()), sa, s0, s1, place[0], place[1], place[2], w.edge_ns / 1e6,
+					audio ? SDL_GetAudioStreamQueued(audio) * 1000.0 / (frame_bytes * FRAME_HZ) : 0.0);
 			w = model1::work_trace{};
 			gc.made = 0; gc.uploaded = 0;
 		}

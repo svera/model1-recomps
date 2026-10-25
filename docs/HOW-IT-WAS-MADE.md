@@ -111,6 +111,13 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   and queued audio, so waking from sleep does not fast-forward through missed time.
   `M1_HIDDEN=1 M1_QUIT_AFTER=240 M1_EVENTS_AT=80:sleep,160:sleep M1_TRACE=/tmp/resume.log build/bin/vr`
   exercises two simulated one-minute gaps without displaying a window.
+  A real Mac sleep barely shows up in that clock: a SWA trace saw a 30-second sleep as a 2-second gap. After
+  waking, the sound device stalled for about 7 seconds, and the game waited for it. Then, for about 2 seconds,
+  it took sound faster than it played it. Each frame run to keep it fed also moved the game clock on, so the
+  game ran at three times its speed. Such catch-up frames are now limited to the sound's slack (3 frames)
+  ahead of the clock. That allowance recovers at the 1% trim's rate, so the device gets a moment of silence
+  instead. `M1_EVENTS_AT=400:gulp` simulates that device for 2 seconds; the trace's last column, `queued_ms`,
+  shows the sound queue.
 - **Scene sync.** VF builds a new scene over several frames. The host holds the last complete picture until the new
   3D has settled, so scene changes don't show half-built frames.
 
@@ -1385,17 +1392,62 @@ run becomes a new, verifiable handoff point.
 
 From that handoff a human player completed the trench objective. Replaying the
 recording, the shield fell from 832 to 576 about a third of a second after the
-handoff, because controls start neutral just before the constriction. Three more
+handoff, through `0x0c7f33` (a moving collision sphere such as a projectile), then three
 `c736b` hits followed. Subsequence 5 became 6 at machine frame 17,961, near trench
 Z≈576,500, with no fire button held in the preceding six seconds; this suggests
 reaching the trench's end completes it, though the ROM condition is not yet traced.
 The next stage began at 19,394 and its flight at 22,016. A second recording
-continued from there. Two terrain-damage hits at 22,330 (384→1) and 24,174 ended
-in the continue offer at 24,644.
+continued from there. Two `0x0c7f33` moving-collision hits at 22,330 (384→1) and
+24,174 ended in the continue offer at 24,644. These were not surface collisions:
+the ship was near or at Y=2000, the highest altitude it reached in that stage. A third recording took the continue;
+it restarts that stage with shield 1792 and the score reset, after its briefing
+(subsequence 1→2→3). Its flight took eight more `0x0c7f33` hits, again mostly at
+Y=2000, before the next continue offer.
+
+Further attempts at that stage ended the same way, once with the timer at zero and
+256 shield left. Its briefing sets the objective: 24 TIE fighters in 200 seconds
+(6015 in the game's 1/30 s units); that run destroyed 18. Ground targets add score but
+not to the count, and no RAM counter of the TIEs left was found. The difficulty was
+already at its easiest. Since a cabinet has two seats, a Gunner assist was added
+(`src/games/swa/gunner_assist.h`). Native code skips the interpreter's instruction
+hooks, so it reads only RAM, with `peek16`, which never triggers watch hooks:
+- the camera's rotation, nine floats stored column by column at `0x40f570`, and the
+  coming frame's eye at `0x40f700`, both fitted against the interpreter's projected
+  objects;
+- the shootable objects' list, from `0x40ed04` up to the pointer at `0x40ed00`. Each
+  entry has its world position at +0x0c and its handler at +0x24. The list also
+  holds the surface's static guns and towers (handlers such as `e0f62` and `e161a`)
+  alongside the flying ones (`cc9f9`, `ccfde`, `cb2a8`, `cbd69`, `cc3a0`). The assist
+  therefore aims only at entries whose position changed within the last second.
+
+The nearest moving target within 500–20,000 units of view depth is projected onto
+the Gunner stick: `127 - 141.8·x/z` and `127 + 215·y/z`, the reticle moving 1.41 and
+0.93 pixels per step, inverted. The laser is held while a target is in reach. It
+writes only the analog channels and the I/O bits, before the frame is captured, so
+recordings hold its inputs. Replaying the continued attempt with PILOT & GUNNER
+kept on the mode menu and the assist on, the stage objective completed at frame
+34,742 (subsequence 3→4→5, time bonus), with 1,536 shield at 38,400. The same run
+without it died at 37,211. `--replay-until N` hands over after a recording's first N
+frames, so a player can rewind to before a mistake; replayed prefixes are exact by
+determinism. A run that used it and the assist (30,000 frames replayed, 29,464 live)
+verified on replay with the assist off.
+
+With those, a human player finished the game. Phase 3 completed with the assist
+at 31,872 frames. The Death Star stage that follows starts with a surface trench,
+then a tunnel whose walls and fins cost 64 shield on contact. The ship can stay
+wedged against a fin and take one such hit every 60 frames; the collision runs on
+the TGP's own program, so this is taken to be the original behaviour. The tunnel
+ends at shooting rings guarding the reactor. One attempt died there and took the
+game's continue, which restarts the stage with shield 1792 and 200 s. The reactor
+fell at frame 54,561 (subsequence 7→8), followed by the escape, the Death Star's
+explosion and the "Congratulations!" ending. That cold-boot recording, 57,549
+frames with RAM hash `1e390d36a3331dbe`, replays exactly. It used only cabinet
+inputs, with no RAM writes or cheats.
 
 That recording, of which the earlier ones are exact prefixes, is committed as
-`tests/games/swa/recordings/manual-trench-to-continue.inputs`; the file is 876 KB
-of text but compresses to about 13 KB. `test-swa-recording` replays it on the
+`tests/games/swa/recordings/manual-trench-to-continue.inputs`; it was the
+continued attempt's 38,123 frames when last replaced. Each replacement was an
+exact extension of the previous file, so earlier checkpoints remain asserted. `test-swa-recording` replays it on the
 interpreter silently and on native code with sound. It asserts the three handoff
 checksums and the exact list of sequence/subsequence/shield changes from the
 trench handoff on. Its first native run fell back to the interpreter 1,569 times:
@@ -1403,6 +1455,24 @@ the scripts never reached the trench's or next stage's code. The same inputs
 became SWA's `recording` scenario for `model1cov` and both lockstep tools. Coverage
 plus two runtime-entry passes, using the shipped map as a hint so no entry was
 lost, added 101 entries and 1,313 edges, removed none, and left zero fallbacks.
+The continued attempt then fell back 62 times; one more coverage pass added 3
+entries and 338 edges. Since the recording is 38,123 frames, SWA's coverage and
+lockstep lengths became 38,400 for all six scenarios.
+
+The finished game's recording shares the first one's inputs up to the continue offer at 24,755,
+then takes a different continue; the later handoffs it was played from (44,637 and 50,523) are
+exact prefixes of it too. It is committed as
+`tests/games/swa/recordings/manual-complete-game.inputs`, and `test-swa-recording` replays both
+recordings. On the interpreter its six handoff checksums and 72 game-state changes matched at the
+first try. Natively it fell back 7,476 times, from `0c8dce` on: phase 3's completion, the Death
+Star and the ending had never been recompiled. A `complete` coverage scenario replays it for
+57,600 frames (`swa_COV_FRAMES_complete`; the Makefile's coverage rule takes a per-scenario
+length). Four regenerations, each adding the runtime entries the last run noted (2,448, then 144,
+then 7,489 as newly native callers reached further, then 2), left zero fallbacks. The map grew
+from 14,420 entries and edges to 16,764 (1,524 functions). The same scenario was then added
+to both lockstep tools at its own length (`swa_LOCK_FRAMES_complete`), alongside the six
+38,400-frame scenarios. Native code and the generated C++ were identical to the interpreter
+through all 57,600 frames, so the Death Star stage and the ending are compared frame by frame.
 
 The host/parser tests, ordinary desktop-startup smoke test, SWA controls test,
 gamepad test and sound-enabled progression regression pass. The latter still
@@ -1443,11 +1513,12 @@ The main local checks are:
   independent aiming, plus continuation checks with the coin or Start withheld. An
   shared visual progression driver completes the opening objective, with a no-firing control.
 - `make test-model1-video test-swa-video`: synthetic HUD priority and real name-entry rendering.
-- `make test-swa-recording`: a human's recorded run replayed on the interpreter and native code,
-  with exact RAM checksums and game-state transitions through the trench objective, the next
-  stage and the continue offer.
-- `make swa-native-lockstep swa-lockstep`: all six scenarios against the interpreter,
-  36,000 frames each.
+- `make test-swa-recording`: two human recordings replayed on the interpreter and native code,
+  with exact RAM checksums and game-state transitions. The first runs through the trench objective,
+  the next stage, a continue and the following offer. The second plays the whole game, through
+  two continues, to the ending.
+- `make swa-native-lockstep swa-lockstep`: all seven scenarios against the interpreter:
+  six for 38,400 frames each, and the recorded whole game for 57,600.
 
 These are ROM-backed local checks where applicable, not evidence that every cabinet behaviour
 or every mission branch has been validated. The Gunner's buttons and axes are checked in the

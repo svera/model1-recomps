@@ -226,9 +226,9 @@ IOBOARD_ZIP = $(wildcard roms/model1io.zip)
 #   <game>_HOST_REC        native: startup recompilation; gen: generated C++; none: interpreter
 #   <game>_COV_SCENARIOS   the scripted runs model1cov records as the recompile's hints ("default":
 #                          the game's plain run; none: only the runtime entries)
-#   <game>_COV_FRAMES      their length
+#   <game>_COV_FRAMES      their length (<game>_COV_FRAMES_<scenario>: one scenario's own)
 #   <game>_LOCK_SCENARIOS  the runs <game>-lockstep and <game>-native-lockstep check
-#   <game>_LOCK_FRAMES     their length
+#   <game>_LOCK_FRAMES     their length (<game>_LOCK_FRAMES_<scenario>: one scenario's own)
 # The targets for a game g:
 #   g                  build/bin/g, the desktop build (and build/g from roms/g.zip, when there)
 #   g-native           build/bin/g-native, the release build: native code made at start-up
@@ -246,7 +246,7 @@ scenario_flag = $(if $(filter default,$(1)),,--scenario=$(1))
 define COV_RULE
 build/cov/$(1)/coverage-$(2).txt: $$(BIN)/model1cov build/$(1)/maincpu.bin
 	@mkdir -p $$(dir $$@)
-	$$(BIN)/model1cov --game $(1) $(call scenario_flag,$(2)) build/$(1) $$($(1)_COV_FRAMES) $$@
+	$$(BIN)/model1cov --game $(1) $(call scenario_flag,$(2)) build/$(1) $$(or $$($(1)_COV_FRAMES_$(2)),$$($(1)_COV_FRAMES)) $$@
 endef
 
 define GAME_RULES
@@ -301,9 +301,9 @@ $$(BIN)/$(1)lock-static: $$(OBJ)/tools/model1lock.o $$(call objs,$$(CORE) $$(MAC
 	@mkdir -p $$(dir $$@)
 	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS)
 $(1)-lockstep: $$(BIN)/$(1)lock-static
-	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/$(1)lock-static --game $(1) build/$(1) $$($(1)_LOCK_FRAMES) --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
+	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/$(1)lock-static --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
 $(1)-native-lockstep: $$(BIN)/model1lock $$($(1)_LOCAL_REGIONS)
-	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/model1lock --game $(1) build/$(1) $$($(1)_LOCK_FRAMES) --native --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
+	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/model1lock --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) --native --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
 
 .PHONY: $(1) $(1)-native $(1)-regions $(1)-coverage $(1)-static $(1)-lockstep $(1)-native-lockstep
 endef

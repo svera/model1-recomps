@@ -20,8 +20,9 @@
 
 namespace game::swa {
 
-// the recorded human run the "recording" scenario replays, from the repository's folder
-constexpr const char *RECORDING = "tests/games/swa/recordings/manual-trench-to-continue.inputs";
+// the recorded human runs the "recording" and "complete" scenarios replay, from the repository's folder
+constexpr const char *RECORDING = "tests/games/swa/recordings/manual-trench-to-continue.inputs",
+	*COMPLETE_RECORDING = "tests/games/swa/recordings/manual-complete-game.inputs";
 
 namespace {
 
@@ -372,9 +373,9 @@ private:
 
 std::unique_ptr<auto_play> make_auto_play(const std::string &scenario, uint32_t seed, bool checks)
 {
-	if (scenario == "recording") {
+	if (scenario == "recording" || scenario == "complete") {
 		input_replay::recording r;
-		if (const auto error = input_replay::load(RECORDING, ID, r); !error.empty()) {
+		if (const auto error = input_replay::load(scenario == "complete" ? COMPLETE_RECORDING : RECORDING, ID, r); !error.empty()) {
 			fprintf(stderr, "SWA recording scenario (run from the repository's folder): %s\n", error.c_str());
 			return nullptr;
 		}

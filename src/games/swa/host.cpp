@@ -1,5 +1,6 @@
 #include "../../host/game_host.h"
 #include "controls.h"
+#include "gunner_assist.h"
 #include "profile.h"
 #include "romset.h"
 
@@ -20,12 +21,23 @@ public:
 
 	void load_settings(const settings_map &settings) override
 	{
-		const auto it = settings.find("invert_flight_y");
-		if (it == settings.end()) return;
-		if (it->second == "on" || it->second == "off") invert_y = it->second == "on";
-		else fprintf(stderr, "SWA: invalid invert_flight_y '%s'; expected on or off\n", it->second.c_str());
+		for (const auto &[key, flag] : { std::pair{ "invert_flight_y", &invert_y }, std::pair{ "gunner_assist", &assist } }) {
+			const auto it = settings.find(key);
+			if (it == settings.end()) continue;
+			if (it->second == "on" || it->second == "off") *flag = it->second == "on";
+			else fprintf(stderr, "SWA: invalid %s '%s'; expected on or off\n", key, it->second.c_str());
+		}
 	}
-	void save_settings(FILE *f) const override { fprintf(f, "invert_flight_y = %s\n", invert_y ? "on" : "off"); }
+	void save_settings(FILE *f) const override
+	{
+		fprintf(f, "invert_flight_y = %s\n", invert_y ? "on" : "off");
+		fprintf(f, "gunner_assist = %s\n", assist ? "on" : "off");
+	}
+
+	void before_frame() override
+	{
+		if (assist) gunner.aim(ctx->machine);
+	}
 
 	void start(host_context &context) override
 	{
@@ -42,12 +54,22 @@ public:
 			[this](int) {
 				invert_y = !invert_y;
 				ctx->settings_changed();
+			} },
+			{ "Gunner assist", "On: in PILOT & GUNNER mode, the Gunner's stick and laser aim at the nearest moving "
+								"enemy in reach, for one player to fly with both seats firing. Only the cabinet's "
+								"inputs: recordings replay without it.",
+			[this] { return assist ? "On" : "Off"; },
+			[this](int) {
+				assist = !assist;
+				ctx->settings_changed();
 			} } };
 	}
 
 private:
 	host_context *ctx = nullptr;
 	bool invert_y = false;
+	bool assist = false;
+	gunner_assist gunner;
 };
 
 }

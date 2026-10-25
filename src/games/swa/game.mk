@@ -2,10 +2,12 @@
 GAMES += swa
 swa_HOST_REC = native
 # the scripted runs model1cov records as hints for the recompile (make swa-coverage)
-swa_COV_SCENARIOS = default gunner training continue progression recording
-swa_COV_FRAMES ?= 36000
-swa_LOCK_SCENARIOS = default gunner training continue progression recording
-swa_LOCK_FRAMES ?= 36000
+swa_COV_SCENARIOS = default gunner training continue progression recording complete
+swa_COV_FRAMES ?= 38400
+swa_COV_FRAMES_complete ?= 57600   # the recorded run that finishes the game, to its ending
+swa_LOCK_SCENARIOS = default gunner training continue progression recording complete
+swa_LOCK_FRAMES ?= 38400
+swa_LOCK_FRAMES_complete ?= 57600
 
 $(OBJ)/tests/games/swa/profile_test.o $(OBJ)/tests/games/swa/controls_test.o $(OBJ)/tests/games/swa/dsb_test.o: CXXFLAGS += $(SDL_CFLAGS)
 $(BIN)/swa_profile_test: $(OBJ)/tests/games/swa/profile_test.o $(GAMES_LINK)
