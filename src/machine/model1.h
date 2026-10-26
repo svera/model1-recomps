@@ -463,9 +463,9 @@ private:
 	// several pictures a frame and the tiles only change with the frame. With each row's drawn span,
 	// so the scaling skips what's empty (the HUD and text layers are mostly empty).
 	// `sides`: the game filled the widescreen sides (gameplay layer_sides), so no curtain is carried out
-	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; };
+	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; };
 	// the sky layer as last drawn (once a game frame, as the others; its panorama placing every time)
-	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false; uint64_t m_l4_gen = 0;
+	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false, m_l4_wide = false; uint64_t m_l4_gen = 0;
 	// The GPU's parts (model1_gpu.cpp)
 	gpu_parts *m_parts = nullptr;                    // being drawn in parts
 	bool m_parts_whole = false;                     // this picture can't be: draw it whole
@@ -515,6 +515,8 @@ private:
 	void pin_hud_direct(point_t *points, quad_t *quads);
 	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
+	bool stretch_backdrops() const { return !m_video || m_video->stretch_backdrops; }
+	void fill_backdrop_sides(bitmap_rgb32 &pixels) const;
 public:
 	static bool s_moire_blend;
 	static int s_mark_y1, s_mark_y2;   // rows holding shading marks this frame (y1 > y2: none)

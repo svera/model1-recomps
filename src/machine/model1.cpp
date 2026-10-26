@@ -553,13 +553,14 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	constexpr uint32_t KEY = 0xff000000;
 	layer_cache &c = m_layer_cache[layer & 7];
 	const int tw = SCREEN_W + 2 * m_ext;
-	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.px.width() != tw) {
+	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) {
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
 		m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
+		if (flags & segas24_tile::DRAW_OPAQUE) fill_backdrop_sides(c.px);
 		c.sides = m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext);
 		c.x0.assign(SCREEN_H, 0);
@@ -572,7 +573,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			while (b > a && r[b - 1] == KEY) b--;
 			c.x0[y] = int16_t(a); c.x1[y] = int16_t(b);
 		}
-		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.gen++;
+		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.wide = m_wide_frame; c.gen++;
 	}
 	return c;
 }
@@ -677,7 +678,7 @@ void model1::prepare_layers()
 	for (int l : LAYERS) {
 		const int flags = l == 6 ? segas24_tile::DRAW_OPAQUE : 0;
 		const layer_cache &c = m_layer_cache[l];
-		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.px.width() != tw) todo[n++] = l;
+		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) todo[n++] = l;
 	}
 	if (n < 2) return;
 	m_work.layers += n;
@@ -686,6 +687,27 @@ void model1::prepare_layers()
 	parallel_jobs(n, [&](int i) { cached_layer(todo[i], todo[i] == 6 ? segas24_tile::DRAW_OPAQUE : 0); });
 	m_layers_together = false;
 	m_tiles.m_ox = 0;
+}
+
+// Widescreen, for a game whose backdrops aren't stretched: an opaque layer's sides (where it has drawn
+// nothing) take its edge's colour when that edge is all one colour (a plain backdrop), else black
+// (art reaching the edge, kept 4:3).
+void model1::fill_backdrop_sides(bitmap_rgb32 &pixels) const
+{
+	constexpr uint32_t KEY = 0xff000000;
+	if (!m_ext || !m_wide_frame || stretch_backdrops()) return;
+	for (int x_edge : { m_ext, m_ext + SCREEN_W - 1 }) {
+		const uint32_t first = pixels.pix(0, x_edge);
+		bool plain = first != KEY;
+		for (int y = 1; y < SCREEN_H && plain; y++) plain = pixels.pix(y, x_edge) == first;
+		bool any = false;
+		for (int y = 0; y < SCREEN_H && !any; y++) any = pixels.pix(y, x_edge) != KEY;
+		if (!any) continue;                                   // nothing at this edge: nothing to continue
+		const uint32_t c = plain ? first : 0;
+		const int x0 = x_edge == m_ext ? 0 : m_ext + SCREEN_W, x1 = x_edge == m_ext ? m_ext : pixels.width();
+		for (int y = 0; y < SCREEN_H; y++)
+			for (int x = x0; x < x1; x++) pixels.pix(y, x) = c;
+	}
 }
 
 // The 2D layers are drawn at the arcade's resolution and scaled up to the render's.
@@ -707,7 +729,8 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 		// frame; which panorama and where, every time)
 		if (m_skies.empty()) init_skies();
 		sky = !m_skies.empty() && m_wide_frame;
-		if (m_l4_frame != m_frame || m_l4_ext != m_ext || m_l4_coords != sky || m_tile_tmp.width() != SCREEN_W + 2 * m_ext) {
+		if (m_l4_frame != m_frame || m_l4_ext != m_ext || m_l4_coords != sky || m_l4_wide != m_wide_frame ||
+			m_tile_tmp.width() != SCREEN_W + 2 * m_ext) {
 			m_tile_tmp.fill(KEY);
 			m_tiles.m_ox = m_ext;
 			if (sky) {
@@ -717,7 +740,8 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;
-			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_gen++;
+			fill_backdrop_sides(m_tile_tmp);
+			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_wide = m_wide_frame; m_l4_gen++;
 		}
 		if (sky) find_sky();
 	} else {
@@ -727,7 +751,8 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	// Widescreen: the opaque layers are the game's backdrop (VF's sky), which only holds the
 	// visible part of its panorama; stretch it across the width. Other layers retain their scale;
 	// the game's edge-anchored HUD has already been positioned in cached_layer.
-	const bool stretch = m_ext && m_wide_frame && (flags & segas24_tile::DRAW_OPAQUE);
+	const bool stretch = m_ext && m_wide_frame && (flags & segas24_tile::DRAW_OPAQUE) && stretch_backdrops();
+	if (flags & segas24_tile::DRAW_OPAQUE) sides = true;   // (its sides are its own: stretched or filled)
 	const int s = m_scale;
 	const int out_w = bitmap.width();
 	// smooth motion: the sky between two game frames, moved by the blended scroll at full resolution

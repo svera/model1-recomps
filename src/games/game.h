@@ -232,6 +232,9 @@ struct video_traits
 	bool separate_parts = false;     // the parts are separate objects (ships, shots), not a fighter's limbs
 	int default_fps = 120;           // the Frame rate setting's first-run choice (30: the arcade's, no blending)
 	bool pin_hud_edges = false;      // move off-center, non-full-screen HUD graphics into widescreen sides
+	// widescreen: the opaque tile layers (the backdrop) stretched across the width; else drawn 1:1,
+	// the sides of each the colour of its edges where those are one colour, black where not
+	bool stretch_backdrops = true;
 	std::vector<uint32_t> foreground_objects;   // screen-space 3D overlays, sorted after world geometry
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera

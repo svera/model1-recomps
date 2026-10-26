@@ -1636,6 +1636,40 @@ struct model1_video_test
 		puts("Model 1 widescreen direct overlay checks passed");
 	}
 
+	// widescreen, SWA: an opaque layer isn't stretched; its sides continue a plain edge's colour, else black
+	static void unstretched_backdrops()
+	{
+		constexpr uint32_t KEY = 0xff000000;
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.m_wide_frame = true;
+		assert(!m.stretch_backdrops());
+		const int ext = m.m_ext, w = model1::SCREEN_W + 2 * ext;
+		bitmap_rgb32 px;
+		px.allocate(w, model1::SCREEN_H);
+		px.fill(KEY);
+		for (int y = 0; y < model1::SCREEN_H; y++)
+			for (int x = ext; x < ext + model1::SCREEN_W; x++) px.pix(y, x) = 0x00ffffff;
+		px.pix(100, ext + model1::SCREEN_W - 1) = 0x00123456;    // art reaching the right edge
+		m.fill_backdrop_sides(px);
+		for (int y = 0; y < model1::SCREEN_H; y++) {
+			assert(px.pix(y, 0) == 0x00ffffff && px.pix(y, ext - 1) == 0x00ffffff);
+			assert(px.pix(y, ext + model1::SCREEN_W) == 0 && px.pix(y, w - 1) == 0);
+		}
+		m.m_wide_frame = false;
+		px.fill(KEY);
+		px.pix(0, ext) = 0x00ffffff;
+		m.fill_backdrop_sides(px);
+		assert(px.pix(0, 0) == KEY);
+
+		model1::regions vr;
+		vr.title = game::id{ "vr" };
+		assert(model1(std::move(vr)).stretch_backdrops());
+		puts("Model 1 unstretched widescreen backdrop checks passed");
+	}
+
 	static void hud_edge_pinning()
 	{
 		model1::regions regions;
@@ -2031,6 +2065,7 @@ int main(int argc, char **argv)
 	model1_video_test::culled_records();
 	model1_video_test::hud_edge_pinning();
 	model1_video_test::wide_direct_overlay();
+	model1_video_test::unstretched_backdrops();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);

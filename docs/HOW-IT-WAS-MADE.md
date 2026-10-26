@@ -1618,6 +1618,14 @@ struts and the steeper console lines carry on instead of stretching. Layers fill
 the edge-colour "curtain" that otherwise fills the sides of wide opaque rows. The profile test
 continues a synthetic diagonal band.
 
+SWA's other 2D art is not stretched either. The engine stretches opaque tile layers (VF's sky
+backdrop) across a widescreen picture, which in SWA's attract mode widened the EPA and FBI notices,
+the Rankings photo and the cockpit's Caution panel. SWA's video traits set
+`stretch_backdrops = false`, so its opaque layers 4 and 6 draw 1:1. `fill_backdrop_sides` gives
+each side the colour of the layer's 4:3 edge column when that column is one colour (the notices'
+plain backgrounds, space), and black where art reaches the edge (the Rankings photo). The
+edge-colour curtain is skipped for opaque layers. Only the cockpit is extended, as above.
+
 When the player's ship is hit, SWA flashes the screen with a stippled direct (2D) polygon spanning
 exactly the arcade's 496 columns, so in widescreen the flash stopped at the 4:3 edges. In a wide
 frame, `widen_direct` moves the edge points of any direct polygon that reaches both 4:3 edges out

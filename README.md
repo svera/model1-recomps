@@ -163,7 +163,8 @@ Useful settings (**Esc**):
   additions and keeps the cabinet's original pop-in.
 - **Display > Widescreen cockpit:** On (default) continues the X-wing cockpit's canopy struts
   and side consoles out to the screen edges in 16:9 and wider, following their lines instead of
-  stretching the panel. Off leaves the sides of the cockpit open.
+  stretching the panel. Off leaves the sides of the cockpit open. No other 2D art is stretched:
+  attract-mode screens such as the notices and the Rankings stay at their 4:3 proportions.
 
 Developers can also record and replay play sessions; see
 [how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
