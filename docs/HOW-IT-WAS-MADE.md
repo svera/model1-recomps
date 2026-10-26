@@ -1605,6 +1605,26 @@ twice at two scales. The byte at `0x40f783` becomes 1 when this ending starts an
 the next demo, and it is 0 in every other 3/3, so that sequence with this flag set is drawn 4:3.
 The profile test checks the decision.
 
+The cockpit is a 2D tile picture: tilemap 1's priority layer (layer 3), codes `0x2000`-`0x22ff`,
+the same in every stage, and the only thing that tilemap shows. It shakes by scrolling and tile
+swaps. Only its middle 496 columns exist, so in widescreen it ended at the old screen edges. With
+Display > Widescreen cockpit On (`wide_cockpit = on`, the default), the layer cache calls the
+game's `layer_sides` hook after drawing a layer. When at least four tile rows at each 4:3 edge
+hold cockpit codes, `continue_sides` fills the extra columns. For each edge row it block-matches
+the edge column against the column 12 pixels inwards to find the slope of the line crossing
+there. Rows of even colour take the slope interpolated between the nearest measured rows. Each
+column further out is then the edge column skewed along those slopes, so the diagonal canopy
+struts and the steeper console lines carry on instead of stretching. Layers filled this way skip
+the edge-colour "curtain" that otherwise fills the sides of wide opaque rows. The profile test
+continues a synthetic diagonal band.
+
+When the player's ship is hit, SWA flashes the screen with a stippled direct (2D) polygon spanning
+exactly the arcade's 496 columns, so in widescreen the flash stopped at the 4:3 edges. In a wide
+frame, `widen_direct` moves the edge points of any direct polygon that reaches both 4:3 edges out
+to the wide picture's edges. A recorded complete game draws no other direct polygon across the
+whole width; the gunner panels that touch only the left edge stay where they are. The Model 1
+video test checks both cases and 4:3 frames.
+
 ### SWA's draw distance
 
 Display > Draw distance defaults to Full and persists as `draw_distance = extended` (or

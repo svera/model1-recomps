@@ -462,7 +462,8 @@ private:
 	// each layer at arcade resolution, kept for the game frame it was drawn for: smooth motion draws
 	// several pictures a frame and the tiles only change with the frame. With each row's drawn span,
 	// so the scaling skips what's empty (the HUD and text layers are mostly empty).
-	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; };
+	// `sides`: the game filled the widescreen sides (gameplay layer_sides), so no curtain is carried out
+	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; };
 	// the sky layer as last drawn (once a game frame, as the others; its panorama placing every time)
 	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false; uint64_t m_l4_gen = 0;
 	// The GPU's parts (model1_gpu.cpp)
@@ -510,7 +511,9 @@ private:
 	float hud_edge_offset(float left, float right) const;
 	float hud_view_offset(float x, float y) const;
 	void pin_hud_point(point_t *point, float offset) const;
+	std::vector<size_t> direct_groups(point_t *points, quad_t *quads) const;
 	void pin_hud_direct(point_t *points, quad_t *quads);
+	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
 public:
 	static bool s_moire_blend;

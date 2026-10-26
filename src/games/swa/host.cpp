@@ -22,7 +22,8 @@ public:
 
 	void load_settings(const settings_map &settings) override
 	{
-		for (const auto &[key, flag] : { std::pair{ "invert_flight_y", &invert_y }, std::pair{ "gunner_assist", &assist }, std::pair{ "lod", &lod } }) {
+		for (const auto &[key, flag] : { std::pair{ "invert_flight_y", &invert_y }, std::pair{ "gunner_assist", &assist }, std::pair{ "lod", &lod },
+				 std::pair{ "wide_cockpit", &wide_cockpit } }) {
 			const auto it = settings.find(key);
 			if (it == settings.end()) continue;
 			if (it->second == "on" || it->second == "off") *flag = it->second == "on";
@@ -39,6 +40,7 @@ public:
 		fprintf(f, "gunner_assist = %s\n", assist ? "on" : "off");
 		fprintf(f, "draw_distance = %s\n", full_distance ? "extended" : "arcade");
 		fprintf(f, "lod = %s\n", lod ? "on" : "off");
+		fprintf(f, "wide_cockpit = %s\n", wide_cockpit ? "on" : "off");
 	}
 
 	void before_frame() override
@@ -54,6 +56,7 @@ public:
 		set_lod(context.machine, lod || context.replay);
 		// renderer-only: the game runs the same either way, so replays keep it
 		set_full_draw_distance(context.machine, full_distance);
+		set_wide_cockpit(context.machine, wide_cockpit);
 	}
 
 	std::vector<menu_item> display_menu_items() override
@@ -79,6 +82,15 @@ public:
 					set_lod(ctx->machine, lod);
 					ctx->settings_changed();
 				} });
+		items.push_back({ "Widescreen cockpit", "On: at aspect ratios wider than 4:3, the X-wing's cockpit continues out to the "
+												"screen's sides, its canopy struts and consoles extended along their own lines rather "
+												"than stretched. Off: the arcade's 4:3 cockpit in the middle.",
+			[this] { return wide_cockpit ? "On" : "Off"; },
+			[this](int) {
+				wide_cockpit = !wide_cockpit;
+				set_wide_cockpit(ctx->machine, wide_cockpit);
+				ctx->settings_changed();
+			} });
 		return items;
 	}
 
@@ -119,6 +131,7 @@ private:
 	bool assist = false;
 	bool lod = false;
 	bool full_distance = true;
+	bool wide_cockpit = true;
 	gunner_assist gunner;
 };
 

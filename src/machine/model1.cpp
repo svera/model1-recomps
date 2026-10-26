@@ -560,6 +560,8 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
+		c.sides = m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
+			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext);
 		c.x0.assign(SCREEN_H, 0);
 		c.x1.assign(SCREEN_H, 0);
 		for (int y = 0; y < SCREEN_H; y++) {
@@ -699,7 +701,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	constexpr uint32_t KEY = 0xff000000;     // pixels are 0x00rrggbb: never the key
 	bitmap_rgb32 *tmp = &m_tile_tmp;
 	const int16_t *rx0 = nullptr, *rx1 = nullptr;    // each row's drawn span (cached layers)
-	bool sky = false;
+	bool sky = false, sides = false;
 	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) {
 		// the sky layer: note where each pixel came from, for a hi-res replacement (drawn once a game
 		// frame; which panorama and where, every time)
@@ -720,7 +722,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 		if (sky) find_sky();
 	} else {
 		layer_cache &c = cached_layer(layer, flags);
-		tmp = &c.px; rx0 = c.x0.data(); rx1 = c.x1.data();
+		tmp = &c.px; rx0 = c.x0.data(); rx1 = c.x1.data(); sides = c.sides;
 	}
 	// Widescreen: the opaque layers are the game's backdrop (VF's sky), which only holds the
 	// visible part of its panorama; stretch it across the width. Other layers retain their scale;
@@ -784,9 +786,9 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			}
 		}
 		// Widescreen: a row this layer covers from edge to edge is a curtain (the black that hides
-		// a stage change): carry each end out across its side.
+		// a stage change): carry each end out across its side (unless the game filled the sides).
 		const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
-		if (m_ext && m_wide_frame && el != KEY && er != KEY) {
+		if (m_ext && m_wide_frame && !sides && el != KEY && er != KEY) {
 			int covered = 0;
 			for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
 			if (covered * 10 >= SCREEN_W * 9)

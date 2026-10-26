@@ -161,6 +161,9 @@ Useful settings (**Esc**):
   pre-draws asteroid clusters and Star Destroyers at the asteroid-field attract scene's opening
   to avoid their pop-in, without adding them to the Death Star demo. Arcade disables these
   additions and keeps the cabinet's original pop-in.
+- **Display > Widescreen cockpit:** On (default) continues the X-wing cockpit's canopy struts
+  and side consoles out to the screen edges in 16:9 and wider, following their lines instead of
+  stretching the panel. Off leaves the sides of the cockpit open.
 
 Developers can also record and replay play sessions; see
 [how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).

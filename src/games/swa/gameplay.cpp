@@ -72,6 +72,11 @@ constexpr uint8_t MODE_ALL_FAR = 2;
 // 0x7783) is set from the credits until the next demo starts.
 constexpr uint8_t MUSIC_CREDITS_SEQUENCE = 3, MUSIC_CREDITS_SUBSEQUENCE = 3;
 constexpr uint32_t MUSIC_CREDITS_FLAG = 0x7783;
+// The cockpit: tile layer 3, map 1's tiles (its only use), drawn from these characters; it touches
+// both edges of the screen with the canopy's struts and the side consoles.
+constexpr int COCKPIT_LAYER = 3, COCKPIT_MAP = 1;
+constexpr uint16_t COCKPIT_FIRST = 0x2000, COCKPIT_END = 0x2300;
+constexpr int COCKPIT_EDGE_TILES = 4;    // at least this many down each edge
 constexpr uint8_t Z_WRAP_PREFETCH_SEQUENCE = 3, Z_WRAP_PREFETCH_SUBSEQUENCE = 2;
 constexpr uint32_t ATTRACT_DEMO = 0x7770;   // C3828 alternates demos 1 (asteroid field) and 2 (Death Star)
 constexpr uint8_t ASTEROID_FIELD_DEMO = 1;
@@ -190,6 +195,95 @@ void set_full_draw_distance(model1 &machine, bool full)
 		state->z_wrap_prefetched = false;
 		state->wrap_list = {};
 	}
+}
+
+void set_wide_cockpit(model1 &machine, bool wide)
+{
+	std::static_pointer_cast<gameplay_state>(machine.game_state())->wide_cockpit = wide;
+}
+
+namespace {
+// the cockpit is on show: map 1 enabled, with cockpit characters down both edges of the screen
+bool cockpit_shown(const model1 &machine)
+{
+	const uint16_t hscroll = machine.tile_word(0x5000 + COCKPIT_MAP), vscroll = machine.tile_word(0x5004 + COCKPIT_MAP);
+	if (vscroll & 0x8000) return false;
+	int left = 0, right = 0;
+	for (int y = 4; y < 384; y += 8) {
+		const int h = -(hscroll & 0x8000 ? machine.tile_word(0x4000 + 0x200 * COCKPIT_MAP + y) : hscroll);
+		const int my = (y + vscroll) & 0x1ff;
+		for (int x : { 0, 495 }) {
+			const int mx = (x + h) & 0x1ff;
+			const uint16_t code = machine.tile_word(0x1000 * COCKPIT_MAP + (my / 8) * 64 + mx / 8) & 0x3fff;
+			if (code >= COCKPIT_FIRST && code < COCKPIT_END) (x ? right : left)++;
+		}
+	}
+	return left >= COCKPIT_EDGE_TILES && right >= COCKPIT_EDGE_TILES;
+}
+}
+
+bool continue_sides(uint32_t *pixels, int width, int height, int ext)
+{
+	constexpr uint32_t NOTHING = 0xff000000;
+	constexpr int SCREEN = 496, REACH = 12, MAX_SHIFT = 18, WINDOW = 2;
+	if (ext <= 0 || width != SCREEN + 2 * ext || height <= 0) return false;
+	bool any = false;
+	std::vector<float> slope(static_cast<size_t>(height)), y_at(static_cast<size_t>(height));
+	std::vector<uint32_t> edge(static_cast<size_t>(height)), column(static_cast<size_t>(height));
+	for (int dir : { -1, +1 }) {
+		// column j in from this side's edge (0: the edge)
+		const int x_edge = dir < 0 ? ext : ext + SCREEN - 1;
+		auto at = [&](int j, int y) { return pixels[size_t(y) * width + x_edge - dir * j]; };
+		for (int y = 0; y < height; y++) edge[y] = at(0, y);
+		// Each row's slope where a line crosses the edge: the vertical shift REACH columns in that
+		// matches the edge around the row best; rows without a clear line (an even colour) take
+		// the slope interpolated between the nearest rows with one.
+		std::vector<std::pair<int, float>> known;
+		for (int y = 0; y < height; y++) {
+			bool varied = false;
+			for (int k = -WINDOW; k <= WINDOW; k++)
+				if (y + k >= 0 && y + k < height && edge[y + k] != edge[y]) varied = true;
+			if (!varied) continue;
+			int best = INT32_MAX, sum = 0, ties = 0;
+			for (int t = -MAX_SHIFT; t <= MAX_SHIFT; t++) {
+				int cost = 0;
+				for (int k = -WINDOW; k <= WINDOW; k++) {
+					const int a = y + k, b = a + t;
+					if (a < 0 || a >= height) continue;
+					cost += b < 0 || b >= height || at(REACH, b) != edge[a];
+				}
+				if (cost < best) best = cost, sum = t, ties = 1;
+				else if (cost == best) sum += t, ties++;
+			}
+			if (best <= 1 && ties <= 2) known.emplace_back(y, float(sum) / float(ties * REACH));
+		}
+		if (known.empty()) continue;
+		for (size_t i = 0, k = 0; i < size_t(height); i++) {
+			const int y = int(i);
+			while (k + 1 < known.size() && known[k + 1].first <= y) k++;
+			if (y <= known.front().first) slope[i] = known.front().second;
+			else if (k + 1 >= known.size()) slope[i] = known.back().second;
+			else {
+				const auto [y0, s0] = known[k];
+				const auto [y1, s1] = known[k + 1];
+				slope[i] = s0 + (s1 - s0) * float(y - y0) / float(y1 - y0);
+			}
+		}
+		// d columns out, the edge's row r is at r - slope * d: each row painted down to where the next is
+		for (int d = 1; d <= ext; d++) {
+			std::fill(column.begin(), column.end(), NOTHING);
+			for (int r = 0; r < height; r++) y_at[r] = float(r) - slope[r] * float(d);
+			for (int r = 0; r < height; r++) {
+				const float a = y_at[r], b = r + 1 < height ? y_at[r + 1] : y_at[r] + 1;
+				const int lo = int(std::floor(std::min(a, b) + 0.5f)), hi = int(std::floor(std::max(a, b) + 0.5f));
+				for (int y = std::max(lo, 0); y < std::min(std::max(hi, lo + 1), height); y++) column[y] = edge[r];
+			}
+			const int x = x_edge + dir * d;
+			for (int y = 0; y < height; y++) pixels[size_t(y) * width + x] = column[y];
+		}
+		any = true;
+	}
+	return any;
 }
 
 namespace {
@@ -710,6 +804,9 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		const uint8_t sequence = ram[0xf008], subsequence = ram[0xf009];
 		return !(sequence == MUSIC_CREDITS_SEQUENCE && subsequence == MUSIC_CREDITS_SUBSEQUENCE &&
 				 ram[0x8000 + MUSIC_CREDITS_FLAG] != 0);
+	};
+	callbacks.layer_sides = [&machine, state](int layer, uint32_t *pixels, int width, int height, int ext) {
+		return layer == COCKPIT_LAYER && state->wide_cockpit && cockpit_shown(machine) && continue_sides(pixels, width, height, ext);
 	};
 	callbacks.reset = [state] {
 		state->z_wrap_prefetched = false;

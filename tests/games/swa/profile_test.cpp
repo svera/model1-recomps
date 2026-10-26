@@ -198,5 +198,25 @@ int main()
 		if (i) assert(far[i - 1].first * far[i - 1].first + far[i - 1].second * far[i - 1].second <= x * x + z * z);
 	}
 	assert(game::swa::far_cells({}, 18).empty());
-	puts("SWA: profile, controls, I/O layout, analog calibration, unset camera/mode RAM and draw distance checks passed");
+	{
+		// widescreen cockpit: a diagonal band at the left edge carries on outwards along its slope
+		constexpr uint32_t KEY = 0xff000000, WHITE = 0xffffffff;
+		constexpr int EXT = 83, W = 496 + 2 * EXT, H = 384;
+		std::vector<uint32_t> px(size_t(W) * H, KEY);
+		auto band = [](float x) { return 150.0f + 0.5f * x; };   // rows down going inwards
+		for (int x = EXT; x < EXT + 200; x++)
+			for (int y = int(band(float(x - EXT))); y < int(band(float(x - EXT))) + 4; y++) px[size_t(y) * W + x] = WHITE;
+		assert(game::swa::continue_sides(px.data(), W, H, EXT));
+		for (int d : { 1, 40, EXT }) {
+			const int x = EXT - d, mid = int(band(float(-d))) + 2;
+			assert(px[size_t(mid) * W + x] == WHITE);
+			assert(px[size_t(mid + 10) * W + x] != WHITE && px[size_t(mid - 10) * W + x] != WHITE);
+		}
+		for (int y = 0; y < H; y++)
+			for (int x = EXT + 496; x < W; x++) assert(px[size_t(y) * W + x] == KEY);
+		std::vector<uint32_t> empty(size_t(W) * H, KEY);
+		assert(!game::swa::continue_sides(empty.data(), W, H, EXT));
+		assert(!game::swa::continue_sides(px.data(), 496, H, 0));
+	}
+	puts("SWA: profile, controls, I/O layout, analog calibration, unset camera/mode RAM, draw distance and widescreen cockpit checks passed");
 }

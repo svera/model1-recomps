@@ -1595,6 +1595,47 @@ struct model1_video_test
 			assert(p->foreground && p->z == -.1f);
 	}
 
+	// widescreen: a direct poly across the arcade's whole screen (SWA's hit flash) reaches the wide
+	// picture's edges; one touching a single edge stays
+	static void wide_direct_overlay()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.m_wide_frame = true;
+		const float ext = float(m.m_ext);
+		assert(ext > 0);
+		auto direct = [&](std::initializer_list<std::pair<float, float>> corners) {
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			model1::quad_t q;
+			int i = 0;
+			for (auto [x, y] : corners) {
+				model1::point_t *p = m.m_pointpt++;
+				p->fx = (x + ext) * m.m_view->scale;
+				p->fy = y * m.m_view->scale;
+				p->s.x = int32_t(p->fx);
+				q.p[i++] = p;
+			}
+			*m.m_quadpt++ = q;
+			m.widen_direct(m.m_pointdb.get(), m.m_quaddb.get());
+			std::vector<float> xs;
+			for (model1::point_t *p = m.m_pointdb.get(); p < m.m_pointpt; p++) xs.push_back(p->fx / m.m_view->scale - ext);
+			return xs;
+		};
+		const auto flash = direct({ { 0, -1 }, { 496, -1 }, { 496, 383 }, { 0, 383 } });
+		assert(flash[0] == -ext && flash[1] == 496 + ext && flash[2] == 496 + ext && flash[3] == -ext);
+		const auto panel = direct({ { 0, 55 }, { 384, 55 }, { 384, 223 }, { 0, 223 } });
+		assert(panel[0] == 0 && panel[1] == 384);
+		m.m_wide_frame = false;
+		const auto narrow = direct({ { 0, -1 }, { 496, -1 }, { 496, 383 }, { 0, 383 } });
+		assert(narrow[0] == 0 && narrow[1] == 496);
+		m.m_pointpt = m.m_pointdb.get();
+		m.m_quadpt = m.m_quaddb.get();
+		puts("Model 1 widescreen direct overlay checks passed");
+	}
+
 	static void hud_edge_pinning()
 	{
 		model1::regions regions;
@@ -1989,6 +2030,7 @@ int main(int argc, char **argv)
 	model1_video_test::scenery_records();
 	model1_video_test::culled_records();
 	model1_video_test::hud_edge_pinning();
+	model1_video_test::wide_direct_overlay();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);

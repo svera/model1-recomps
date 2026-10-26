@@ -1698,14 +1698,15 @@ int model1::push_direct(int list_offset) {
 			break;
 		}
 	}
+	widen_direct(first_point, first_quad);
 	pin_hud_direct(first_point, first_quad);
 	list_offset += 4;
 	return list_offset;
 }
 
-void model1::pin_hud_direct(point_t *points, quad_t *quads)
+// Each point's group: the points the quads join together (a direct poly's strip).
+std::vector<size_t> model1::direct_groups(point_t *points, quad_t *quads) const
 {
-	if (!hud_edge_pinning_active()) return;
 	const size_t count = size_t(m_pointpt - points);
 	std::vector<size_t> parent(count);
 	for (size_t i = 0; i < count; i++) parent[i] = i;
@@ -1719,17 +1720,43 @@ void model1::pin_hud_direct(point_t *points, quad_t *quads)
 	for (quad_t *q = quads; q < m_quadpt; q++)
 		for (int i = 1; i < 4; i++)
 			parent[root(size_t(q->p[i] - points))] = root(size_t(q->p[0] - points));
+	for (size_t i = 0; i < count; i++) parent[i] = root(i);
+	return parent;
+}
 
+void model1::pin_hud_direct(point_t *points, quad_t *quads)
+{
+	if (!hud_edge_pinning_active()) return;
+	const size_t count = size_t(m_pointpt - points);
+	const std::vector<size_t> group = direct_groups(points, quads);
 	std::vector<float> left(count, float(SCREEN_W)), right(count, 0);
 	for (size_t i = 0; i < count; i++) {
-		const size_t group = root(i);
 		const float x = points[i].fx / m_view->scale - m_view->ext;
-		left[group] = std::min(left[group], x);
-		right[group] = std::max(right[group], x);
+		left[group[i]] = std::min(left[group[i]], x);
+		right[group[i]] = std::max(right[group[i]], x);
+	}
+	for (size_t i = 0; i < count; i++)
+		pin_hud_point(&points[i], hud_edge_offset(left[group[i]], right[group[i]]));
+}
+
+// Widescreen: a direct poly reaching both edges of the arcade's screen covers the whole picture (SWA's
+// flash when the player's ship is hit); its points on those edges move out to the wide picture's.
+void model1::widen_direct(point_t *points, quad_t *quads)
+{
+	if (!m_ext || !m_wide_frame || quads == m_quadpt) return;
+	const size_t count = size_t(m_pointpt - points);
+	const std::vector<size_t> group = direct_groups(points, quads);
+	std::vector<float> left(count, float(SCREEN_W)), right(count, 0);
+	auto x_of = [&](size_t i) { return points[i].fx / m_view->scale - m_view->ext; };
+	for (size_t i = 0; i < count; i++) {
+		left[group[i]] = std::min(left[group[i]], x_of(i));
+		right[group[i]] = std::max(right[group[i]], x_of(i));
 	}
 	for (size_t i = 0; i < count; i++) {
-		const size_t group = root(i);
-		pin_hud_point(&points[i], hud_edge_offset(left[group], right[group]));
+		if (left[group[i]] > 0.5f || right[group[i]] < SCREEN_W - 0.5f) continue;
+		const float x = x_of(i);
+		if (x <= 0.5f) pin_hud_point(&points[i], -m_view->ext);
+		else if (x >= SCREEN_W - 0.5f) pin_hud_point(&points[i], m_view->ext);
 	}
 }
 

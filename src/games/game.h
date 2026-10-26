@@ -158,6 +158,10 @@ struct gameplay_callbacks
 	std::function<std::vector<uint32_t>(std::string_view)> screen_hashes;
 	std::function<std::optional<std::string_view>(uint32_t)> screen_name;
 	std::function<bool(uint32_t, bool)> wide_scene;
+	// Widescreen: a tile layer (non-opaque) as drawn this game frame, `ext` columns each side of the
+	// arcade's 496 (`width` = 496 + 2 * ext, pixels 0x00rrggbb, 0xff000000 for nothing). The game may
+	// fill the sides, which are otherwise empty; true when it did.
+	std::function<bool(int layer, uint32_t *pixels, int width, int height, int ext)> layer_sides;
 };
 
 // What the shared video code (src/machine) needs to know about a game's own data: none of it is
