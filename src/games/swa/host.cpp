@@ -90,18 +90,30 @@ public:
 			[this](int) {
 				invert_y = !invert_y;
 				ctx->settings_changed();
-			} },
-			{ "Gunner assist", "On: in PILOT & GUNNER mode, the Gunner's stick and laser aim at the nearest moving "
-								"enemy in reach, for one player to fly with both seats firing. Only the cabinet's "
-								"inputs: recordings replay without it.",
+			} } };
+	}
+
+	std::vector<menu_item> menu_items_after_controls() override
+	{
+		return { { "Cheats", "Gunner assist.", {}, {}, [this] { ctx->push_page(cheats_page()); } } };
+	}
+
+private:
+	menu_page cheats_page()
+	{
+		menu_page p{ "Cheats", "", {} };
+		p.items.push_back({ "Gunner assist", "On: in PILOT & GUNNER mode, the Gunner's stick and laser aim at the nearest moving "
+											 "enemy in reach, for one player to fly with both seats firing. Only the cabinet's "
+											 "inputs: recordings replay without it.",
 			[this] { return assist ? "On" : "Off"; },
 			[this](int) {
 				assist = !assist;
 				ctx->settings_changed();
-			} } };
+			} });
+		p.items.push_back(ctx->back_item());
+		return p;
 	}
 
-private:
 	host_context *ctx = nullptr;
 	bool invert_y = false;
 	bool assist = false;

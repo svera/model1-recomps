@@ -1584,6 +1584,27 @@ distance Full's added cells are coarse cells too, so with LOD off they get their
 in the same way. This is renderer-only, like the draw distance. The whole-game recording's native
 run gives about 1.2 million coarse cells their fine cells.
 
+The second attract demo's globe approach is separate from those surface layers. `D558C` draws
+three complete globe components (`23B682`, `23B686`, `23B68A`, 1,680 polygons in total); the
+script later calls `D55FA`, which replaces them with smaller approach patches (`23B68E`,
+`23B692`, `23B696`, 584 polygons). These share the globe's coordinates and translation, but
+cover less of its surface. With LOD off, the same operand-specific `C1869` read hooks used
+for the fleet retain the complete components and their matching colour tables (`44F9F`,
+`450DA`, `451A7`) instead of the patches' tables (`451A8`, `45224`, `452A0`). The script,
+camera, trench geometry and object RAM are unchanged. LOD on retains the original swap,
+independently of the draw-distance setting. The profile test checks all six replacements
+with both settings; `test-swa-wrap` checks the actual submitted models and colour tables
+through the second demo on the interpreter and native backend.
+
+SWA's widescreen keeps one attract screen 4:3, the music credits. The opening's cruiser chase and
+crawl (sequence 2, subsequence 2) are 3D and open out like the demos. Every few attract loops the asteroid demo's third-person ending (sequence 3,
+subsequence 3) squeezes the 3D into a panel on the left and scrolls the Star Wars logo and the
+song list on the right. The game draws that text in the same tile maps it also draws opaque,
+and widescreen stretches opaque layers across the sides. In 16:9 each line then appeared
+twice at two scales. The byte at `0x40f783` becomes 1 when this ending starts and stays set until
+the next demo, and it is 0 in every other 3/3, so that sequence with this flag set is drawn 4:3.
+The profile test checks the decision.
+
 ### SWA's draw distance
 
 Display > Draw distance defaults to Full and persists as `draw_distance = extended` (or
@@ -1825,7 +1846,7 @@ own checksum and replays exactly like any other.
 build/bin/swa build/swa --replay-inputs build/swa-continue-try2.inputs --replay-until 30000 --record-inputs build/swa-retry.inputs
 ```
 
-One player can fly with both seats firing: **Esc → game menu → Gunner assist: On**
+One player can fly with both seats firing: **Esc → Cheats → Gunner assist: On**
 (or `gunner_assist = on` in `settings.ini`). In PILOT & GUNNER mode, the default on the
 start and continue mode menus while the Pilot stick is centred, the Gunner's stick and
 laser then aim at the nearest moving enemy in reach. It drives only the cabinet's

@@ -150,8 +150,18 @@ struct model1_video_test
 		};
 		struct ship_sample { glm::vec3 view, relative; float fade; bool asteroid; };
 		std::vector<ship_sample> ships;
+		std::set<uint32_t> globe_polygons, approach_models;
 		const auto object = m.m_gameplay.object;
 		m.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+			if (m.read8(0x40f008) == 3 && m.read8(0x40f770) == 2) {
+				for (auto [model, colour] : { std::pair{0x23b682u, 0x44f9fu}, {0x23b686u, 0x450dau},
+					{0x23b68au, 0x451a7u}, {0x23b68eu, 0x451a8u}, {0x23b692u, 0x45224u}, {0x23b696u, 0x452a0u} })
+					if (polygon == (m.read32(model) & 0x7fffff)) {
+						assert(texture == colour);
+						assert(lod || model < 0x23b68e);
+						globe_polygons.insert(model);
+					}
+			}
 			// Track ship bodies and asteroid clusters at their final renderer matrices.
 			const bool asteroid = polygon == (m.read32(0x23ba7a) & 0x7fffff) || polygon == (m.read32(0x23ba76) & 0x7fffff);
 			if (asteroid || polygon == (m.read32(0x9b584) & 0x7fffff) ||
@@ -171,6 +181,16 @@ struct model1_video_test
 		};
 		std::map<int, decltype(ships)> frames;
 		size_t death_star_frames = 0;
+		const auto read32_value = m.m_gameplay.read32_value;
+		m.m_gameplay.read32_value = [&](uint32_t pc, uint32_t address, uint32_t value) {
+			const auto result = read32_value(pc, address, value);
+			if (pc == 0xc18af && address == m.cpu().reg(20) + 2 && m.read8(0x40f008) == 3 && m.read8(0x40f770) == 2 &&
+				(value == 0x23b68e || value == 0x23b692 || value == 0x23b696)) {
+				approach_models.insert(value);
+				assert(result == (lod ? value : value - 12));
+			}
+			return result;
+		};
 		for (int f = 1; f <= 29000; f++) {
 			m.run_frame();
 			arcade.run_frame();
@@ -255,7 +275,11 @@ struct model1_video_test
 			}
 		}
 		assert(death_star_frames >= 30);
-		printf("SWA %s LOD %s: fleet and asteroids present from first scene picture (6072); continuous through 6180 and 6968-6972; no asteroids in Death Star demo; Arcade has no periodic extras\n",
+		assert(approach_models == (std::set<uint32_t>{0x23b68e, 0x23b692, 0x23b696}));
+		assert(globe_polygons == (lod
+			? std::set<uint32_t>{0x23b682, 0x23b686, 0x23b68a, 0x23b68e, 0x23b692, 0x23b696}
+			: std::set<uint32_t>{0x23b682, 0x23b686, 0x23b68a}));
+		printf("SWA %s LOD %s: fleet and asteroids present from first scene picture (6072); continuous through 6180 and 6968-6972; no asteroids in Death Star demo; globe models follow LOD setting; Arcade has no periodic extras\n",
 			native ? "native" : "interpreter", lod ? "on" : "off");
 		game::swa::set_full_draw_distance(m, false);
 		for (int f = 0; f < 10; f++) {

@@ -134,6 +134,9 @@ build/bin/swa
 Two players share one cabinet: the **Pilot** flies and fires, the **Gunner** aims a second
 laser.
 
+Hold **Tab** to fast-forward, including during attract mode; release it to return to normal
+speed. This is useful for quickly reaching scenes to debug. **P** pauses and resumes.
+
 | Action | Pilot keys | Gunner keys | Gamepad |
 | --- | --- | --- | --- |
 | Fly | Arrows | I / J / K / L | Left stick, d-pad |
@@ -146,13 +149,14 @@ laser.
 
 Useful settings (**Esc**):
 
-- **Game > Gunner assist:** one player can fly while the Gunner's laser aims at the nearest
+- **Cheats > Gunner assist:** one player can fly while the Gunner's laser aims at the nearest
   enemy by itself, in PILOT & GUNNER mode.
 - **Game > Invert flight Y:** push forward to climb instead of dive.
 - **Display > Frame rate:** 30 shows the game as the arcade drew it; 60 and 120 smooth the
   motion between pictures, though some of the game is not smoothed yet.
 - **Display > LOD:** Off (default) keeps the most detailed models at every distance; On uses
-  the arcade's simpler distant models.
+  the arcade's simpler distant models. Off also retains the complete Death Star globe through
+  the attract-mode approach instead of switching to smaller surface patches.
 - **Display > Draw distance:** Full (default) shows the Death Star's surface further out and
   pre-draws asteroid clusters and Star Destroyers at the asteroid-field attract scene's opening
   to avoid their pop-in, without adding them to the Death Star demo. Arcade disables these

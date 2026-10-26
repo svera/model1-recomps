@@ -100,12 +100,21 @@ int main()
 	regions.polygons.resize(0xc00000);
 	model1 m(std::move(regions));
 	auto gameplay = create_gameplay(m);
+	// the opening (the cruiser chase, then the crawl): wide
 	m.nvram()[0xf008] = 2;
 	m.nvram()[0xf009] = 2;
-	assert(gameplay.wide_scene && !gameplay.wide_scene(0, true));
+	m.nvram()[0xf783] = 0;
+	assert(gameplay.wide_scene && gameplay.wide_scene(0, false));
 	m.nvram()[0xf008] = 3;
 	m.nvram()[0xf009] = 3;
 	assert(gameplay.wide_scene(0, false));
+	// the music credits (the same demo, with its credits flag): 4:3
+	m.nvram()[0xf783] = 1;
+	assert(!gameplay.wide_scene(0, true));
+	m.nvram()[0xf008] = 4;
+	m.nvram()[0xf009] = 1;
+	assert(gameplay.wide_scene(0, false));
+	m.nvram()[0xf783] = 0;
 	auto state = std::static_pointer_cast<gameplay_state>(gameplay.state);
 	m.cpu().set_reg(25, 0x408000);
 	const auto prepare_frame = [&] { gameplay.frame_begin(); };
@@ -147,6 +156,20 @@ int main()
 	assert(!state->z_wrap_prefetched);
 	gameplay.reset();
 	assert(!state->z_wrap_prefetched);
+	m.cpu().set_reg(20, 0x400100);
+	for (bool lod : { false, true })
+		for (bool full : { false, true }) {
+			state->lod = lod;
+			state->full_distance = full;
+			for (auto [patch, globe] : { std::pair{0x23b68eu, 0x23b682u}, {0x23b692u, 0x23b686u},
+				{0x23b696u, 0x23b68au}, {0x451a8u, 0x44f9fu}, {0x45224u, 0x450dau}, {0x452a0u, 0x451a7u} }) {
+				const bool model = patch >= 0x230000;
+				const uint32_t pc = model ? 0xc18af : 0xc18aa, address = model ? 0x400102 : 0x400106;
+				assert(gameplay.read32_value(pc, address, patch) == (lod ? patch : globe));
+				assert(gameplay.read32_value(pc, 0x40, patch) == patch);
+				assert(gameplay.read32_value(pc + 1, address, patch) == patch);
+			}
+		}
 	m.work_ram()[0] = 0x12;
 	m.work_ram()[1] = 0x34;
 	m.work_ram()[2] = 0x56;

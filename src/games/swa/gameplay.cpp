@@ -66,7 +66,12 @@ constexpr uint32_t ALL_FAR_READ = 0x0dc341;            // cmp.b #2, 7009[R25]
 constexpr uint32_t TURRET_MASK_READ = 0x0dce68;        // and.h 44[R20], R0
 constexpr uint32_t MODE = 0x7009;                      // in the game's variables (R25)
 constexpr uint8_t MODE_ALL_FAR = 2;
-constexpr uint8_t TITLE_CRAWL_SEQUENCE = 2, TITLE_CRAWL_SUBSEQUENCE = 2;
+// An occasional attract loop's asteroid demo ends on the music credits: the 3D squeezed into a
+// panel on the left, the song list scrolling on the right of the same tile maps the game also
+// draws opaque (which widescreen stretches, so the text showed twice). This flag (variables
+// 0x7783) is set from the credits until the next demo starts.
+constexpr uint8_t MUSIC_CREDITS_SEQUENCE = 3, MUSIC_CREDITS_SUBSEQUENCE = 3;
+constexpr uint32_t MUSIC_CREDITS_FLAG = 0x7783;
 constexpr uint8_t Z_WRAP_PREFETCH_SEQUENCE = 3, Z_WRAP_PREFETCH_SUBSEQUENCE = 2;
 constexpr uint32_t ATTRACT_DEMO = 0x7770;   // C3828 alternates demos 1 (asteroid field) and 2 (Death Star)
 constexpr uint8_t ASTEROID_FIELD_DEMO = 1;
@@ -702,7 +707,9 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	callbacks.state = state;
 	callbacks.wide_scene = [&machine](uint32_t, bool) {
 		const auto &ram = machine.nvram();
-		return ram[0xf008] != TITLE_CRAWL_SEQUENCE || ram[0xf009] != TITLE_CRAWL_SUBSEQUENCE;
+		const uint8_t sequence = ram[0xf008], subsequence = ram[0xf009];
+		return !(sequence == MUSIC_CREDITS_SEQUENCE && subsequence == MUSIC_CREDITS_SUBSEQUENCE &&
+				 ram[0x8000 + MUSIC_CREDITS_FLAG] != 0);
 	};
 	callbacks.reset = [state] {
 		state->z_wrap_prefetched = false;
@@ -791,6 +798,16 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	callbacks.read32_value = [&machine, state](uint32_t pc, uint32_t address, uint32_t value) -> uint32_t {
 		if (state->lod || (pc != FLEET_MODEL_READ && pc != FLEET_DATA_READ)) return value;
 		const uint32_t object = machine.cpu().reg(OBJECT_REG);
+		// D55FA replaces D558C's complete globe with three smaller approach patches.
+		// Keep the complete geometry and its matching colour tables across that swap.
+		if (pc == FLEET_MODEL_READ && address == object + FLEET_MODEL &&
+			value >= 0x23b68e && value <= 0x23b696 && (value - 0x23b68e) % 4 == 0)
+			return value - 12;
+		if (pc == FLEET_DATA_READ && address == object + FLEET_DATA) {
+			if (value == 0x451a8) return 0x44f9f;
+			if (value == 0x45224) return 0x450da;
+			if (value == 0x452a0) return 0x451a7;
+		}
 		if (pc == FLEET_MODEL_READ && address == object + FLEET_MODEL && (value == FLEET_FAR_MODEL || value == FLEET_NEAR_MODEL)) {
 			state->destroyers_near++;
 			state->fleet_stern = true;
