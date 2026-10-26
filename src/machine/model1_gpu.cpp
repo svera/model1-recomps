@@ -40,9 +40,11 @@ int model1::render_parts(double now, gpu_parts &p, bool shown)
 		p.d3_changed.clear();
 		p.d3_target = -1;
 		p.d3_edge = false;
-		m_redrawing = true;
-		render_smooth(now, shown);
-		m_redrawing = false;
+		if (m_frame_parts) {
+			m_redrawing = true;
+			render_smooth(now, shown);
+			m_redrawing = false;
+		}
 		return 2;
 	}
 	m_last_parts = &p;

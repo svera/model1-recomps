@@ -1540,10 +1540,20 @@ mode, because the game never runs the turrets there.
 The large Star Destroyers of the fleet that `0D6540` draws (in the attract mode, and the one
 `0EEC62` sets up) use a third scheme. Two TGP results, shifted right by 15 and capped at 3, pick an
 entry in the table at `D6E12`. The routine stores the entry in the object: the model at `2[R20]`
-and its data at `6[R20]`. `C1869` then draws it. The far entry is `23C01A`/`53698` and the near
-one `23C016`/`5360F`. The object keeps what the game stored. Only `C1869`'s 32-bit reads of
-those two fields, at `0C18AF` and `0C18AA`, return the near entry. This uses the existing
-`read32_value` hook, over RAM A, where the objects are.
+and its data at `6[R20]`. `C1869` then draws it. The far entry is `23C01A`/`53698` (29 polygons)
+and the near one `23C016`/`5360F` (197). One ship of the fleet, the one whose index matches
+(`D662B`), is drawn in full instead: its stern `23C022`/`53777` (1,237 polygons, with the lit
+engines) and then its hull `23C01E`/`536AD` (305), with the same matrix. The near entry was still
+much plainer than that ship, which is what the third-person asteroid field of the attract mode
+showed (from frame 33,300), its big Star Destroyers next to the X-wing.
+
+With LOD off every fleet ship is drawn as that full ship. The object keeps what the game stored.
+Only `C1869`'s 32-bit reads of those two fields, at `0C18AF` and `0C18AA`, return the hull
+instead of either entry. This uses the existing `read32_value` hook, over RAM A, where the
+objects are. `matrix_objects` then adds the stern to that matrix command, written at `0C18C1`,
+as an extra drawn with the command's own matrix, so smooth motion moves it with the hull. All four
+models share one frame: the three hulls span about ±3,050 in X and −5,150 to 4,900 in Z, and the
+stern the rear of that, Z −5,120 to −3,951.
 
 The game logic is unchanged, but its timing is not quite: more models take the CPU longer, so
 the point within the game's update where a frame ends can move. At about one frame end in a
@@ -1561,6 +1571,551 @@ checksums match exactly, and native code's game RAM (all but the stack and the d
 matches the interpreter's at each checkpoint. About 17,500 detail results are replaced on the
 native run, and Star Destroyers are drawn near about 8,850 times.
 
+The Death Star's surface has its own distant detail, which the hooks above do not reach: of the
+four cell layers described under the draw distance below, the two farther ones read a coarse map
+(`B40AE`, cells of `1 << 12`, mask `0xF`) instead of the fine one (`B0962`, cells of `1 << 11`, mask
+`0x1F`). A session probe found that each coarse cell's model is a simpler version of exactly the 2 x 2
+fine cells it covers (fine cells 2x and 2x + 1 by 2z and 2z + 1). The coarse cell's centre sits half a
+fine cell past theirs. With LOD off, `matrix_objects` attaches those four fine models, at their
+offsets and turns, to each coarse cell's matrix command at `0EADAE`. The `object` hook then leaves
+out the coarse map's own models, which nothing else draws: in the attract mode's surface demo the
+probe counted 92,624 coarse cells replaced and the same number of coarse models left out. Draw
+distance Full's added cells are coarse cells too, so with LOD off they get their fine cells
+in the same way. This is renderer-only, like the draw distance. The whole-game recording's native
+run gives about 1.2 million coarse cells their fine cells.
+
+### SWA's draw distance
+
+Display > Draw distance defaults to Full and persists as `draw_distance = extended` (or
+`arcade`), the same key and values as VR's. Distant ships are not the limit: the distance cull
+above (`0x6FFF`) never fires in the attract mode and fires about 1.5 times a frame over the Death
+Star. The renderer has no far clip either. What ends the view is the Death Star's surface, the
+only scenery drawn with a fixed reach.
+
+`0EAA2D` draws the surface in four layers of square cells around the camera's cell. Each call
+to `0EACBD` passes a band light-scale table in R28 (`99BE0`, `99C20`, `99C60`, `99CA0`). The
+setup at `0EAE46` takes a cell map (R10), its mask and row shift (R4, R7) and the cell shift
+(R6) from the table at `E9816`, and picks R19, the cell list for the heading (`1A[R20]`, 0 to 31)
+in a table chosen by the camera's height. A list is a band count, then per band a cell count
+and signed `(dx, dz)` byte pairs. A cell's map record starts with its type: 0 (flat), or 3 (turned
+by the angle that follows), then texture and polygon words. The cell's matrix command is written at
+`0EADAE`. After each band, `0EAE2D`-`35` read a light vector from the TGP that the band's scale
+has multiplied. The farthest layer ends about 9 cells out, where flat ground meets space. Its
+scales fall from 0.65 to 0, so its last bands are drawn unlit and flat grey.
+
+Full changes only what is drawn:
+
+- At `0EADAE`, for the far layer's first flat cell, `matrix_objects` attaches the map's cells
+  past the list's reach, out to 18 cells. They are kept within the list's own direction (its
+  mean, plus the widest spread and a margin of 0.7 cells), nearest first. Each is the cell's map
+  model, under that cell's matrix composed with a translation by whole cells (`<< R6`) and the
+  turn of a type-3 cell. The cells are cached per list.
+- `copro_result` replaces a band's light vector at `0EAE2D`-`35` when its scale is below 0.45.
+  The replacement is the direction the near bands gave, at 0.45.
+
+A session probe compared every far-layer cell the game drew over the whole-game recording's
+surface (243,000 cells) with its first flat cell's matrix composed this way. All matched within
+`1e-6` relative error, and none of the added cells repeats a cell the game drew. The added
+cells sort with the game's own by depth. The Death Star's body behind them (polygon data
+`11EDC25`, from z 128,000) and the walls and trenches in front of them order correctly in the
+whole-frame and the blended (60/120 FPS) pictures.
+
+No game RAM changes. The light values and the added cells reach only the display list and the
+renderer, so replays keep the player's choice. `make test-swa-recording` runs the native replays
+of both recordings with Full, and every game RAM check matches the interpreter's arcade run.
+It adds about 860,000 cells over the whole game and lights about 17,900 far bands.
+`make test-swa-profile` checks the added-cell selection without the ROM.
+
+#### The asteroid field
+
+The asteroid field repeats every 131,072 units in X, and in Z while `77C4[R25]` bit 15 is set
+(the attract mode from frame 6969 on). The game keeps one copy of each object in the period
+around the camera (`7724`/`7728`, or a fixed point before mode 3):
+- The asteroid handlers `DB200`/`DB502` rebuild C/14 from 30/34 every frame.
+- The manager `DBEDC` does the same for the Star Destroyers (`DD612`). It does this only while
+  its `30[R20]` and `77C4` share a bit, read at `0DBEE0`, and the mode `7009` is below 4.
+
+The game then culls each object against the view with TGP command 0x32. Asteroids use radius
+1,024, read at `0DB278`, `0DB3C6`, `0DB574` and `0DB672`. Star Destroyers use radius 8,000,
+read at `0DBF96`; a culled one gets `48[obj]` = −1, so its detail byte is 7F and it is not
+drawn. This causes two kinds of pop-in:
+- An object leaving the box behind the camera reappears a period away in front of it, about
+  65,000 units out, in a single frame.
+- A Star Destroyer is far bigger than 8,000 units, so one entering from a screen edge is culled
+  while part of it is already in view (frames 8008 and 8690 of the attract mode, for example).
+
+Full draws, in the renderer only, every repeating object within 262,144 units (2 periods) of
+the camera:
+- **Drawn objects.** At each repeating object's matrix command (`0C18C1`, `0C191B`, `0C1995`,
+  `0C1A12`, `0C1AE6`, the bare `0C1A63`) and each model `C199B`/`C1A69` adds to it, the new
+  model is copied to its other periods. Each copy is translated by the camera rotation
+  (`7570[R25]`) applied to the period offset.
+- **Culled objects.** At the view test's negative result, the object is recorded and drawn where
+  it is as well as where it repeats:
+  - an asteroid with its model (`6[obj]`, `[2[obj]]`) and its rotation, which is TGP 0x15 by
+    −`40[obj]` then 0x16 by −`42[obj]`, scaled by `38[obj]`;
+  - a Star Destroyer with the camera rotation scaled by 2.48 and the models it was last drawn
+    with under its own matrix (`C1A1D`).
+  - The view translation is the camera rotation of the position plus the list's view offset.
+    That offset is the translation of an asteroid's (`C1869`) or Star Destroyer's own matrix,
+    less the camera rotation of that object's position.
+- **Parent matrix.** All copies are drawn with the stars' matrix command (model `1F46A4`, written
+  at `0C18C1` or `0C1AE6` near the list's end). It is the camera rotation alone, in every list of
+  the field. `matrix_objects` names that command, and the list's extras for it are replaced
+  whenever more copies arrive.
+  - Smooth motion blends that slot with the camera's motion. An earlier version hung copies on
+    an asteroid's matrix instead, and the asteroid's tumble, blended between two lists, swung
+    copies 100,000 units away visibly.
+- **Fading in.** A copy beyond 196,608 units (1.5 periods) is darkened toward black, to nothing
+  at 262,144 (`render_object::fade`, applied to its polygons' colours on the CPU and the GPU).
+  With a hard edge instead, a Star Destroyer crossing it popped in about 40 pixels long, and
+  edges further out only made the pop smaller at a higher cost.
+- **View cone.** A copy whose bounding sphere (its model's farthest vertex, scaled by its
+  matrix) lies outside a cone of x/z ±1.5 and y/z ±1 is not drawn. The 4:3 picture spans about
+  ±0.48 by ±0.38, so this leaves room for wider pictures and smooth motion's turns. It keeps
+  the cost per picture near the 1.5-period version's.
+- **Before Z folds.** The stage script sets `77C4` to 1 at `C3B05` (mode 2), then to 8001 at
+  `C3C51`/`C38C4` (mode 3). Until bit 15 is set, objects fold in X only, so they can be several
+  periods from the camera in Z. At the switch (frame 6969 of the attract mode) the game moves
+  three Star Destroyers and four asteroids a whole period in Z, one of them to about 2,700 units
+  in front of the camera. The renderer starts Z-periodic copies in attract sequence 3/subsequence
+  2, before the game sets its Z-wrap bits, and keeps them through sequence 3 so the ships are
+  already there when the game folds their positions. The range of periods tried follows each
+  object's offset from the camera rather than a fixed ±2.
+  Merely enabling copies early was insufficient: the cockpit scene first appears at frame 6072,
+  `DBE82` initializes the ships around frame 6097, and their normal drawing does not provide
+  cached models until around frame 6140. Waiting for either initialization or cached models
+  leaves a visible fleet pop. Before initialization, the renderer reads the seven placements
+  directly from the manager's ROM table at `DF2EC`, including `DD550`'s Y offset from `773A`.
+  It observes the manager's initialization read at `DBE87` and then uses its initialized ship
+  list. Both paths draw the intact models from the same ROM records used by `DC336` and its
+  component routines. Their view matrix uses the camera rotation at `7570` and eye at `7700`. This ends when the manager
+  starts updating the ships, so the pre-drawn ships are replaced by the normal renderer copies
+  without being drawn twice. First-time culled ships can also use those intact models instead
+  of waiting for another ship to populate the cache.
+- **Asteroid-cluster lead-in (Full only).** The 38 cluster placements at `DF38A` through `DF7B2`
+  (exclusive), 28 bytes each, also initialize after the cockpit appears. They are pre-drawn from
+  their ROM positions, scale and model before initialization. Reads of the last angular velocity
+  at `DB1DD` and `DB46D` associate each placement with its initialized object. From then on, the
+  live position and rotation are used; objects whose handlers change are not resurrected.
+  Each display list records which clusters were already drawn or culled, so pre-drawing only
+  supplies those not yet handled by the normal path.
+  Both fleet and cluster pre-drawing require demo 1 at `7770[R25]`, which `C3828` alternates
+  with demo 2. Sequence 3/subsequence 2 alone also identifies the Death Star demo, where these
+  ROM placements do not belong. Changing demos clears the latch and cluster associations.
+  The prefetch latch is disabled in Arcade, and all added copies, pre-drawing and distance fading
+  pass through the Full-only matrix callback. Arcade retains the original visibility timing.
+- **Full-detail rendering cost.** Removing pop-in exposes many complete ship models at once.
+  Copied models cache their vertex bounds; the renderer tests their tight component boxes against
+  the actual, possibly interpolated viewport. Fully clipped objects and polygons skip shading,
+  while still updating the arcade's shared sort-depth register. Within
+  one extras batch, copies with identical models, materials and rotations reuse polygon colours;
+  distance fade still applies separately. Per-object effects bypass this colour cache. The cache
+  is cleared between batches so changes to the light, palette and interpolation cannot leak.
+  Fully inside copied polygons bypass recursive clipping, and cached colours also bypass normal
+  transformation and normalization. Large finite-depth lists use four stable radix passes,
+  preserving descending depth, foreground-last and address-based ties (including signed zero).
+  Small lists and nonfinite depths keep the comparison sort.
+  Lists record whether they contain above-HUD objects. The smooth compositor then chooses a
+  whole picture before drawing, instead of rendering all the geometry in parts and rendering it
+  again after discovering radar blips. HUD stencil snapshots and restores run in independent row
+  bands using the existing worker pool.
+  These avoid redundant work without substituting simpler models or reducing draw distance.
+
+`make test-swa-wrap` checks rendered ship and cluster positions on every frame from the first cockpit picture
+at 6072 through 6180, and from 6968 through 6972 in 16:9, with both LOD settings on the interpreter
+and native backend. It requires ships and clusters before their objects exist, as well as before
+model caching, and checks that the cluster handoff does not duplicate origins.
+Every in-view ship or cluster above 17%
+brightness must have a predecessor within 4,096 world units after removing camera rotation,
+well below the 131,072-unit periodic offset. Each frame's game RAM also matches an arcade-distance
+run using the same LOD setting; native runs have no interpreter fallback. The Arcade run must have
+no periodic extras and no early ships or clusters. After switching the Full run to Arcade, its
+rendered picture must match the Arcade-only run pixel for pixel.
+The run continues through frame 29000 into the second attract demo, checking every 100 frames
+that neither Full nor Arcade draws asteroid clusters in the Death Star scene and that prefetch
+remains disabled there, on both backends and with both LOD settings.
+Optimized copies also match the uncached, unbounded path pixel for pixel over the opening and
+Z-fold transition, with additional 3x-scale snapshots. Bounds and the depth-sort ordering have
+focused tests, including mixed-sign depths, signed zero, and the comparison/radix threshold.
+Smooth pictures at 1x and 3x also match whole-frame drawing at three fractional moments across
+seven opening and later-field snapshots, and above-HUD scenes must execute just one below-HUD
+and one above-HUD pass, not render the whole scene twice.
+A local Metal probe at 3x, AA off and smooth full-detail rendering, compared the previous and
+optimized paths at frames 6142, 6250, 6972, 8000 and 9000. Opening/transition render times fell
+from approximately 5.5–6.1 ms to 3.6–4.0 ms, and later-field times from 16.5–18.2 ms to
+4.5–5.2 ms. Polygon counts and rendered pixel hashes matched at every sampled moment, and Metal
+matched the CPU's pixels. These are rendering measurements, not whole-application FPS guarantees.
+
+A session probe fitted the rotation to every drawn asteroid over 37 matrices (total error
+`3e-4`). Every finished list of the attract mode's field (frames 6100–9700) has the stars. A
+second probe compared each list's drawn objects, copies included, with the list before's,
+turned by the stars' matrix. With Full, no Star Destroyer or asteroid appears on screen at more
+than 17% brightness without being in the list before; the only objects that do are the game's
+own TIE fighters, explosions and debris. No game RAM changes, and `make test-swa-recording` checks that copies of both kinds are
+drawn over the whole game.
+
+### Building, running and testing SWA
+
+The US `swa.zip` set has a registered profile, checked ROM tables and a host that recompiles the game
+to native code when it starts, as Virtua Racing's does:
+
+```sh
+make swa-regions                   # write the development regions to build/swa/
+make swa                           # build build/bin/swa (native recompilation at startup)
+make test-swa-profile test-swa-romset
+make test-swa-boot                  # two 1800-frame cold boots; needs model1io.zip too
+make test-swa-controls              # buttons and axes against the game's own input test
+make test-swa-dsb                   # the Digital Sound Board, stubbed and in the attract sequence
+make test-swa-gameplay              # Rebel Attack (both seats) and Training, to game over and back
+make test-swa-video                 # name-entry priority and real-input destroyer crash regression
+make test-swa-recording             # recorded human runs: continues, and the whole game to its ending
+make swa-coverage                   # record those runs as hints for the recompile
+make swa-native-lockstep            # native code against the interpreter, all scenarios, the whole game
+make swa-lockstep                   # the same for the generated C++
+build/bin/swa --arcade --scale 1 --aspect 4:3
+```
+
+Keep your own `swa.zip` and `model1io.zip` in `roms/`. The runtime ZIP loader and the development
+loader both place the program at `0xf80000`, `0x000000` and `0x080000`, and reload the byte-swapped
+sound program at `0x80000`. The TGP program, polygon/data ROMs and DSB Z80/MPEG ROMs are also loaded
+and checked. These tables target MAME 0.280's US set, including `315-5711.bin` with CRC32
+`c5ddb8fc` (`BAD_DUMP` in that release); loading it is not a claim of verified geometry
+compatibility. Newer sets with a different TGP checksum and the Japanese `swaj` program are
+not supported by these tables.
+
+#### Replay to manual play
+
+The SWA desktop host accepts a recorded cabinet-input prefix. With the current
+session-generated trench recording (not shipped with the game):
+
+```sh
+build/bin/swa build/swa --replay-inputs build/swa-trench.inputs
+```
+
+It cold-boots, fast-forwards those inputs without rendering, verifies the final
+battery/work-RAM checksum, and **pauses at the handoff**. Press **P** to take over
+both seats with the usual keyboard or gamepad controls; no scripted steering or
+firing remains active. Esc cancels during replay and opens the menu afterward.
+Relaunch the command to retry the same phase; F3 is an ordinary game reset.
+
+To keep your play, add `--record-inputs`:
+
+```sh
+build/bin/swa build/swa --replay-inputs build/swa-trench.inputs --record-inputs build/swa-manual.inputs
+```
+
+The output file holds the replayed prefix plus every live frame you play, with the
+RAM checksum after your last frame. It is written each time you pause with **P**,
+when you quit, and when a reset (F3 or the menu) ends the recording. Replaying
+that file with `--replay-inputs` reproduces your run exactly and hands over at the
+point you stopped, so a checkpoint can be extended by recording again from it.
+Pause right after an interesting moment (a hit, a target, the end of the trench) to
+mark it; the frame count in the header tells where you stopped. Each pause updates
+the same file, so copy it to keep an earlier mark. The output name must be new:
+`--record-inputs` refuses a file that is already there, so an earlier recording (or
+the one being replayed) is never written over.
+
+To rewind, add `--replay-until N`: only the recording's first N frames are replayed
+before the handoff, e.g. a few seconds (60 frames each) before a fatal hit. A prefix
+has no checksum of its own to verify; a new `--record-inputs` file from it gets its
+own checksum and replays exactly like any other.
+
+```sh
+build/bin/swa build/swa --replay-inputs build/swa-continue-try2.inputs --replay-until 30000 --record-inputs build/swa-retry.inputs
+```
+
+One player can fly with both seats firing: **Esc → game menu → Gunner assist: On**
+(or `gunner_assist = on` in `settings.ini`). In PILOT & GUNNER mode, the default on the
+start and continue mode menus while the Pilot stick is centred, the Gunner's stick and
+laser then aim at the nearest moving enemy in reach. It drives only the cabinet's
+inputs, which are recorded, so recordings made with it replay without it.
+
+**Esc → Display → LOD** defaults to Off (`lod = off`): ships, scenery, the Death Star's
+surface and every Star Destroyer keep their most detailed models at every distance. On
+restores the arcade's simpler distant models. The game plays the same either way.
+
+**Esc → Display → Draw distance** defaults to Full (`draw_distance = extended`): the
+Death Star's surface reaches further, and in the asteroid field asteroids and Star
+Destroyers no longer pop in. Arcade draws what the cabinet does. Only the picture
+changes, so replays keep the choice.
+
+Replay mode ignores existing battery/EEPROM saves and never writes saves or
+settings, including after manual play. It uses arcade mode, 4:3, 1x and whole-frame
+rendering for reproduction; normal launches are unchanged. A missing, malformed,
+wrong-game or checksum-divergent recording is an explicit error, not a handoff.
+It cannot be combined with `M1_SCRIPT`. This is input replay, **not a save state**:
+the game must still execute every preceding frame, and recordings may need
+regenerating when emulation changes.
+
+The text format starts with `M1INPUT 1 swa FRAME_COUNT RAM_HASH_HEX`, followed by
+one row per machine frame: three decimal pressed-bit bytes, then eight decimal
+raw ADC values (`-1` leaves a channel unchanged). It permits no memory writes.
+The current recording hands over after gameplay frame 12670, with shield 832,
+just before the next constriction; replay takes about 14 seconds on the development
+machine. The session-local route probe can export these prefixes, including the real
+Test/Service inputs that select EASY settings. `make test-host-input-replay`
+checks the format's bounds, truncation and rejection paths.
+
+**This is not finished support yet.** Scripted games play from coins to game over (below), natively
+and on the interpreter, but camera/mode RAM identification remains to be done: those addresses are
+left unset, and the original boot sequence is shown rather than skipped. Release packaging remains
+VR-only.
+
+SWA draws a new 3D picture every two video frames (30 a second) throughout play, like VR. It
+starts at Frame rate 30 (Arcade), each picture as the game drew it; choose 60 or 120 under the
+menu's Frame rate to blend between them. The blending pairs the parts by their place in the list alone (no
+table of the ships or the camera yet). Its parts are taken as separate ships and shots: copies of
+a model pair by the least total move, each part moves as one rigid motion, fast parts (a shot or
+fighter passing the camera) are drawn as the game has them, and a shot appearing is no cut.
+Much of play is still drawn unblended. Replays always run at 30 FPS.
+
+Foreground polygons (display-list command `0x41`) are masked only by the HUD layers' bright
+features, not by the background picture or the regular 3D scene. This keeps the name-entry letters
+in front of the photograph while preserving cockpit/radar features. `test-model1-video` checks
+this separation at 1x/2x and 4:3/16:9; `test-swa-video` also reaches the real name-entry screen
+and checks that the photograph does not cut holes in the letters. It also reproduces the
+destroyer-stage malformed object through real cabinet controls and verifies execution continues
+past the former crash. Object decoding bounds-checks texture and polygon accesses and reports
+invalid requests explicitly; it does not patch ROM execution or claim second-objective completion.
+
+#### Native recompilation
+
+SWA runs its program from the low ROM copy (`0x0c0000`–`0x0fffff`), so the code analyser
+(`src/rt/analyse.cpp`) treats `0x000000`–`0x0fffff` as code as well as Model 1's usual ranges; VR's
+and VF's recompiles are unchanged by it. `assets/games/swa/swa_map.txt` is made from the scripted
+runs (`make swa-coverage`) and the entries the runtime noted when native code fell back to the
+interpreter (`build/cov/swa/runtime_entries.txt`). Most of those are pseudo-calls: the game pushes a
+return address and branches (and its reset pushes one and runs `RETIS`), so the code returned to has
+no caller in the native code and must be an entry of its own. The map was regenerated until the
+lockstep noted no more. `swa-native-lockstep` and `swa-lockstep` run seven scenarios with
+`--strict` (no fallback), comparing registers, RAM and rendered frames with the interpreter. Six
+run to frame 38,400: the five scripted ones and `recording`, a human's recorded run, whose length
+set that figure. The seventh, `complete`, is a human's recorded run of the whole game and runs to
+frame 57,600, through the Death Star and the ending. Coverage replays the same seven.
+`test-swa-gameplay` plays all five scenarios natively with sound. Code the scripts never reach
+(other missions' branches, the test menu) may still fall back to the interpreter, which is correct
+but slower, and is noted for the next map.
+
+The shipped map also includes entries collected during manual play. These remove the recorded
+fallbacks, but the console log does not record inputs, so it cannot replay or validate that manual
+session. All scripted scenarios are rechecked in strict native lockstep after expanding the map.
+
+#### Controls
+
+The ROM's input test names the seats **Pilot** (player 1) and **Gunner** (player 2). Both seats'
+buttons are on the I/O board's player 1 byte, so the host routes player 2 there rather than to the
+player 2 byte; there is one Start button (the Pilot's, `0x10`), and Start 2 is never read.
+
+| Control | Pilot (player 1) | Gunner (player 2) | Keys P1 / P2 | Pad |
+|---|---|---|---|---|
+| Flight stick X / Y | ADC 0 / 1 | ADC 4 / 5 | arrows / IJKL | left stick, d-pad |
+| Throttle | ADC 2 | - | W faster, S slower | right stick Y (up: faster) |
+| Laser | `0x01` | `0x04` | Z / U | RT |
+| Torpedo | `0x02` | `0x08` | X / O | LT |
+| View (VR button) | `0x10` | - | C | Y |
+| Start, coin | system `0x10`, coin slots | same Start | 1 / 2, 5 / 6 | Start, LB |
+
+Analog values are scaled to the factory calibration that the input test (page 2) reads as ±100:
+sticks 27–227 centred on 127, throttle 28 (FAST) to 228 (SLOW) centred on 128. Stick X is reversed
+on the hardware (low values are right), as MAME's `PORT_REVERSE`; stick Y is not, so pushing forward
+dives, as on the cabinet (Game > Invert flight Y swaps that). MAME's throttle range (28–200) stops at
+-72 on SLOW; the host uses the full calibrated travel. Values outside the calibration make the input
+test show INVALID VALUE. The test menu's own calibration (page 2, Start) has not been exercised;
+the host's ranges assume the factory values. The `SWA_*`
+environment variables of `model1run` set raw port values.
+
+The V60 interpreter and ROM-backed MB86233 reach polygon-rendered attract mode with the existing
+sound board enabled, without a SWA HLE implementation. `test-swa-boot` checks two deterministic
+1800-frame cold boots, FIFO word conservation and queue bounds, no empty-result reads or TGP
+execution-limit hits, scanline/timer IRQ cadence, and audio pacing. With the supplied set, the
+first polygons appear at frame 1106; by frame 1800 the TGP has consumed 24,559 input words and
+returned 24,750 output words, with both queues drained.
+
+#### Sound
+
+SWA keeps the Model 1 sound board (68000, YM3438, two MultiPCMs) and adds Sega's Z80 Digital Sound
+Board, which plays the music as MPEG-1 Layer II from its own ROMs (`src/machine/dsbz80.*`, after
+MAME's `dsbz80.cpp`; the decoder `src/machine/mpeg_audio.*` is MAME's). As in MAME, every byte the
+68000 sends on its serial link also reaches the DSB's i8251 (31.25 kbaud, one byte per 320 µs), and
+the Z80 program picks out its commands; it sets start/end addresses (latched while a stream plays,
+for loops and multi-part songs), volume and pan, and the stream plays at 32 kHz. Its output is
+resampled into the host's 48 kHz mix at MAME's gain (1.0), under the music volume. The board is
+created only when the `mpegcpu`/`mpeg` regions are loaded, so VR and VF are unchanged.
+
+The DSB plays the Star Wars theme in the attract sequence: command `01` starts a stereo 32 kHz stream
+at `0x334000` with the opening crawl's STAR WARS logo (frame 3202 from a cold boot; the logo is up
+at 3204). Before that the sound board plays the Star Destroyer fly-by on its own chips, and the DSB
+only receives stop commands. The DSB's samples reach the 48 kHz mix through a linear resampler kept
+two source samples behind the Z80 (it delivers them at instruction boundaries); without that lead,
+the last interpolation of a scanline's slice often ran past the newest sample, distorting the
+music (about 20 dB signal-to-error).
+
+`test-swa-dsb` checks the UART's pacing, receiver enable and overrun and the register latching on a
+stub program, then runs the attract sequence: the theme must start with the logo, MPEG frames must
+decode at 1152 samples per 32 kHz frame, and, with the other boards silent under the theme, the
+mixed output must match the stream's own decode at the board's volume (over 60 dB; it measures
+about 68). The stream's decode also matches ffmpeg's MP2 decoder within 2 LSB. Unverified against
+hardware: the Z80 clock (MAME's 4 MHz guess), the volume register's top bit and the ports
+`0xea`/`0xeb` the program also writes (ignored, as in MAME).
+
+#### Scripted play
+
+`src/games/swa/script.cpp` is SWA's scripted run for `model1run` (`M1_SCRIPT=1`), `model1cov` and the
+tests. From a cold boot it inserts two coins during the attract's Star Destroyer fly-by (frames 1300
+and 1340; SWA needs 2 credits), presses Start to open the mode menu, confirms PILOT with Start and the
+Rebel Attack mission with Start, then flies with a seeded random stick and throttle, firing the
+lasers in bursts and a torpedo every five seconds. The `gunner` scenario inserts a third coin
+(PILOT & GUNNER needs 3 credits), pulls the stick back to pick that mode and fires the Gunner's
+buttons too. From frame 3700 the Gunner's stick repeats right, left, down and up, holding each for
+120 frames with the other axis centred. Channels 4/5 carry these inputs independently of the
+Pilot's seeded controls on 0–2; unused channels remain unchanged.
+The `training` scenario stays in PILOT mode, then pulls the stick back on frames 1510–1539 to
+select Training before confirming the mission. It uses the same seeded flying and firing.
+The `continue` scenario starts a solo Rebel Attack, waits for the failed mission's continue
+offer, inserts one coin, presses Start for YES and confirms PILOT with Start. It reads the
+reference machine's state to time those inputs; it never writes game RAM. A solo continue costs
+one credit, unlike the two-credit fresh game. The resumed attempt must consume the credit,
+reset the score, start a fresh 180-second clock, count down and score again. The second continue
+offer receives no further coins or Start presses and expires before final game over and ranking.
+With seed 12345 the first offer appears at 14506, the fresh clock at 15001, the second offer at
+27045, game over at 31775 and attract at 32718.
+
+With checks on, the original scenarios must be credited, select the expected mission (the initial clock shows
+180 s for Rebel Attack, 120 s for Training), start the flight (the clock counting down), score
+(and, for `gunner`, the Gunner score and all four aim directions), reach game over and return to attract. Rebel Attack must leave
+the final score in the rankings. With seed 12345 its flight starts at frame 3206; the solo run reaches
+game over at frame 16782 and attract at 17725. The moving-Gunner run reaches those at 19614 and
+20557. Training instead must leave the rankings unchanged: this run
+has no name entry, reaches game over at frame 10732 and returns to attract at 10736, after starting
+the flight at 3506. The checks read battery RAM found by watching runs against the
+screen, not from the program's code:
+
+| Address | Observed meaning |
+|---|---|
+| `0x40f008` | sequence: 1–2 attract, 11–13 credited and playing, 14 game over and rankings |
+| `0x40f009` | observed subsequence with sequence 13: 1 mode/intro, 3 opening flight, 4 next-objective briefing, 5 next stage, 12 continue offer (unset clock) |
+| `0x40f0e0` | credit counter |
+| `0x40f334` | time left, 16-bit, in 1/30 s (the HUD's TIME) |
+| `0x40f340`, `0x40f342` | calibrated Gunner Y/X inputs, signed 16-bit |
+| `0x40f410`, `0x40f510` | Pilot and Gunner scores, 32-bit BCD |
+| `0x40f100` | PILOT rankings: ten 8-byte entries, BCD score and name |
+| `0x40f150` | PILOT & GUNNER rankings: ten 12-byte entries, the team's total and both names |
+
+Read-only destroyer-route tracing additionally identified the ship object through the 16-bit
+pointer at `0x40f408`: its address is `0x400000 | pointer`. Offsets `+0x0c/+0x10/+0x14`
+are float32 world X/Y/Z; `+0x18/+0x1a/+0x1c` are 16-bit pitch/yaw/roll angles.
+The authoritative shield word is `0x40f772`. These are diagnostic observations, not cheats
+or new progression checkpoints. See [the course investigation](#tracing-the-destroyer-course)
+for the collision-grid trace, the experimental follower's distinct pitch/yaw control
+models, and its reproducible live-shield passage beyond local Z=130000.
+[Damage-source tracing and experimental target engagement](#separating-trench-damage-and-improving-target-engagement)
+raise the shield word at that checkpoint from 320 to 832.
+[Tracing and dodging the larger launcher volley](#avoiding-the-large-launcher-volley)
+preserves that shield through local Z=135000 and extends live-shield progress to
+161199 units, using a mesh-checked Pilot descent rather than suppressing the shot.
+[Avoiding the next fixed expanding hazard](#avoiding-the-fixed-hazard-at-frame-12644)
+extends the descent, retains shield 832 through local Z=140000, and reaches
+162800 units with live shields.
+[Correcting the constriction planner](#clearing-the-frame-12737-terrain-collision-and-handing-over-to-a-human)
+then gives zero terrain hits through Z=150000 with shield still 832 and maximum
+live-shield progress of 174637 units. Later terrain collisions remain: this probe
+still does not complete the second objective and is not part of the shared scenario.
+
+A human player has since completed the trench objective from that handoff, recorded with
+`--record-inputs`. `test-swa-recording` replays the committed recording
+(`tests/games/swa/recordings/manual-trench-to-continue.inputs`) on the interpreter and on native
+code with sound. It requires the RAM checksums at the trench handoff (16,600 frames), next-stage
+arrival (21,635), continue offer (24,755) and the continued attempt's end (38,123), and every
+sequence, subsequence and shield change from the handoff on: the trench objective at frame 17,961,
+next-stage flight at 22,016, two moving-collision hits and the continue offer at 24,644, then the
+continue (that stage again, full shield), eight more hits and the next offer at 37,987. The same inputs
+are the `recording` scenario of the coverage and lockstep tools, so the native map covers the
+manually reached code with no interpreter fallback.
+
+The test also replays a second recording,
+`tests/games/swa/recordings/manual-complete-game.inputs`: a player finishing the game from
+the same continue offer, using `--replay-until` rewinds and the Gunner assist (both are only
+cabinet inputs in the file). It checks the RAM checksums at 16,600, 21,635 and 24,755 frames
+(shared with the first recording), at the Death Star's continue offer (44,637), in its tunnel
+after continuing (50,523) and at the ending (57,549). It also checks all 72 sequence,
+subsequence and shield changes from the trench handoff on, including phase 3's objective at
+31,872, the Death Star's tunnel at 35,902, the reactor at 54,561 and the ending at 56,742.
+Both recordings must replay with no interpreter fallback; the test takes about two minutes. The
+`complete` coverage scenario replays the same inputs, so the native map covers the whole game.
+
+`test-swa-gameplay` runs the original three scenarios to frame 22,000, `continue` to 36,000
+and `progression` to 10,000
+with sound. In the default run it also checks
+that the DSB plays the in-game music during the flight (a looping stream outside the attract theme;
+it loops about every 3,340 frames) and that a silent run matches one with sound. The scripted Rebel
+Attack runs end by the clock; Training ends earlier. Later stages, the trench run, successful
+mission completion and team-mode continuation are not comprehensively checked. Last, it plays
+all five scenarios again on native code from the shipped map, with no interpreter fallback.
+The continued run must have the same final battery/work RAM hash as its interpreter run.
+Negative tests withhold either the continue coin or Start: neither may resume flight or pass
+the scenario. For a focused continuation check:
+
+```sh
+make build/bin/swa_gameplay_test
+build/bin/swa_gameplay_test build/swa --continue
+```
+
+The gameplay test also compares five controlled runs: centred Gunner, then each axis at its two
+extremes with the Pilot centred and firing released. At frame 4000 the reticle must move over
+100 pixels horizontally or 70 vertically in the correct direction, without moving the other axis
+or changing the picture outside the old/new reticles. The observed shifts are ±141 and ±93 pixels.
+This checks independent in-game aiming, not just score or ADC delivery. To run this focused check:
+
+```sh
+make build/bin/swa_gameplay_test
+build/bin/swa_gameplay_test build/swa --aim
+```
+
+The shared `progression` scenario completes the opening Rebel Attack objective.
+It selects PILOT & GUNNER, holds the Pilot centred at fast throttle, fires both
+lasers and pulses both torpedoes every 90 frames. Every fourth frame, a simple visual heuristic
+aims the Gunner at the blue target pixel nearest the screen centre, using the measured reticle
+calibration. These are ordinary inputs; no scores, enemies, timers or game states are changed.
+Its controls are independent of the random seed. The Super Star Destroyer briefing appears at frame 8568, followed at 9574 by
+the next stage and a 60-second bonus (raw clock 2630 to 4430). The next-stage clock must then
+count down (first observed at frame 9576). These checkpoints are required by `--scenarios`,
+with a minimum of 10,000 frames, instead of requiring game over or a ranking entry.
+The gameplay test runs it on the interpreter with and without sound and on native code with
+sound, requiring identical final battery/work RAM hashes and no native fallback. Repeated
+drivers with different seeds must emit identical controls. A matching run without firing
+must not reach either success transition within 10,000 frames and must fail the scenario.
+Coverage and strict native/generated-C++ lockstep include `progression` for 38,400 frames,
+including playback after its required objective has completed.
+This verifies one successful objective, not completion of Rebel Attack. The blue-pixel aiming
+heuristic can also target engine details; its success checks have been validated at 1x, 4:3.
+
+```sh
+make build/bin/swa_gameplay_test
+build/bin/swa_gameplay_test build/swa --progression
+# --objective remains an alias for the same focused checks.
+
+make build/bin/model1run
+mkdir -p build/swa-progression-frames
+M1_SCRIPT=1 build/bin/model1run --game swa --scenario=progression \
+  build/swa 10000 600 build/swa-progression-frames
+```
+
+For headless screenshots and FIFO diagnostics:
+
+```sh
+make build/bin/model1run
+mkdir -p build/swa-boot
+M1_TGP_TRACE=1 M1_WAV=build/swa-boot/audio.wav \
+  build/bin/model1run --game swa build/swa 1800 300 build/swa-boot
+```
+
+The runner enables the sound board only when `M1_WAV` is set. The game runs the same without it
+(the main CPU's bytes to the board are dropped): `test-swa-gameplay` checks that a silent run's RAM
+matches one with sound after 8000 frames of play, so the silent coverage runs follow the same game. FIFO input waits are normal and resume when more data arrives. The TGP
+still runs on demand, not on a cycle-accurate parallel scheduler: these checks establish a
+repeatable boot and the runtime's timing, not hardware-accurate TGP latency or geometry.
+
 ### What the tests establish, and what remains
 
 The main local checks are:
@@ -1575,7 +2130,7 @@ The main local checks are:
   shared visual progression driver completes the opening objective, with a no-firing control.
 - `make test-model1-video test-swa-video`: synthetic HUD priority and real name-entry rendering.
 - `make test-swa-recording`: two human recordings replayed on the interpreter (arcade LOD, exact
-  RAM checksums) and native code (LOD off, the same game RAM), with exact game-state transitions. The first runs through the trench objective,
+  RAM checksums) and native code (LOD off and Draw distance Full, the same game RAM), with exact game-state transitions. The first runs through the trench objective,
   the next stage, a continue and the following offer. The second plays the whole game, through
   two continues, to the ending.
 - `make swa-native-lockstep swa-lockstep`: all seven scenarios against the interpreter:

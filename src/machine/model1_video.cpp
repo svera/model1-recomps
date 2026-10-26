@@ -663,14 +663,6 @@ void model1::draw_line(bitmap_rgb32 &bitmap, model1::view_t *view, int color, in
 }
 #endif
 
-static int comp_quads(const void *q1, const void *q2)
-{
-	model1::quad_t* const* c1 = static_cast<model1::quad_t* const*>(q1);
-	model1::quad_t* const* c2 = static_cast<model1::quad_t* const*>(q2);
-
-	return (*c1)->compare(*c2);
-}
-
 int model1::quad_t::compare(const model1::quad_t* other) const
 {
 	if (foreground != other->foreground)
@@ -691,11 +683,40 @@ int model1::quad_t::compare(const model1::quad_t* other) const
 void model1::sort_quads() const
 {
 	const int count = m_quadpt - &m_quaddb[0];
+	bool finite = true;
 	for (int i = 0; i < count; i++)
 	{
 		m_quadind[i] = &m_quaddb[i];
+		finite = finite && std::isfinite(m_quaddb[i].z);
 	}
-	qsort(&m_quadind[0], count, sizeof(model1::quad_t*), comp_quads);
+	if (count < 256 || !finite) {
+		std::sort(m_quadind.get(), m_quadind.get() + count, [](const quad_t *a, const quad_t *b) {
+			return a->compare(b) < 0;
+		});
+		return;
+	}
+	// Stable depth passes retain the original address order for equal depths.
+	const auto key = [](const quad_t *q) {
+		const uint32_t bits = q->z == 0 ? 0 : std::bit_cast<uint32_t>(q->z);
+		return bits & 0x80000000u ? bits : bits ^ 0x7fffffffu;
+	};
+	m_quadsort.resize(count);
+	auto *from = m_quadind.get(), *to = m_quadsort.data();
+	for (int shift = 0; shift < 32; shift += 8) {
+		std::array<size_t, 512> offsets{};
+		const auto bucket = [&](const quad_t *q) {
+			return ((key(q) >> shift) & 255) | (shift == 24 && q->foreground ? 256 : 0);
+		};
+		for (int i = 0; i < count; i++) offsets[bucket(from[i])]++;
+		size_t next = 0;
+		for (auto &offset : offsets) {
+			const size_t size = offset;
+			offset = next;
+			next += size;
+		}
+		for (int i = 0; i < count; i++) to[offsets[bucket(from[i])]++] = from[i];
+		std::swap(from, to);
+	}
 }
 
 void model1::unsort_quads() const
@@ -1091,13 +1112,29 @@ float model1::compute_specular(glm::vec3& normal, glm::vec3& light, float diffus
 	return std::min(s * lp.s, 1.0f);
 }
 
+bool model1::view_t::outside(const game::model_bounds &bounds) const
+{
+	const auto beyond = [&](float x, float y, float z) {
+		float distance = x * translation[9] + y * translation[10] + z * translation[11];
+		float support = 0;
+		for (int c = 0; c < 3; c++) {
+			const float v = x * translation[3 * c] + y * translation[3 * c + 1] + z * translation[3 * c + 2];
+			distance += v * bounds.center[c];
+			support += std::fabs(v) * bounds.extent[c];
+		}
+		return distance + support < -1;
+	};
+	return beyond(0, 0, 1) || beyond(1, 0, -a_left) || beyond(-1, 0, a_right) ||
+		beyond(0, -1, a_bottom) || beyond(0, 1, -a_top);
+}
+
 // old_z is the flat-z "reuse" register (poly zmode 0 = keep previous poly's
 // sort z). It persists ACROSS objects within a display-list walk: NetMerc's
 // garage door wings (all-zmode-0 dynamic objects) must inherit the ~325k z of
 // the preceding object so the z~40k wall occludes them (real-hardware
 // capture); resetting per object made them sort at z=0 (nearest) and paint
 // through the wall.
-void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner)
+void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner, const game::model_bounds *bounds)
 {
 	const uint32_t object_texture = tex_adr, object_polygon = poly_adr, object_size = size;
 	auto invalid = [&](const char *reason, uint32_t polygon) {
@@ -1134,6 +1171,14 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	game::object_effects effect;
 	if (m_gameplay.object) effect = m_gameplay.object(owner, tex_adr, poly_adr, size, poly_data);
 	if (effect.hidden) return;
+	const bool clipped_object = bounds && !effect.point && m_view->outside(*bounds);
+	std::vector<uint32_t> *colours = nullptr;
+	// Periodic copies share their rotation and lighting; translation and distance fade do not affect this colour.
+	if (bounds && !clipped_object && !effect.point && !effect.normal && !effect.polygon && !effect.material && !effect.colour && effect.lightmode < 0) {
+		std::array<uint32_t, 12> key{ tex_adr, poly_adr, size };
+		for (int i = 0; i < 9; i++) key[i + 3] = std::bit_cast<uint32_t>(m_view->translation[i]);
+		colours = &m_extra_colours[key];
+	}
 	const float original_viewx = m_view->viewx;
 	const bool pin_object = hud_edge_pinning_active() &&
 		std::find(m_video->right_edge_objects.begin(), m_video->right_edge_objects.end(), poly_adr) != m_video->right_edge_objects.end();
@@ -1268,8 +1313,6 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 
 		int link = (flags >> 8) & 3;
 
-		m_view->transform_vector(vn);
-
 		m_view->transform_point(p0);
 		m_view->transform_point(p1);
 		if (p0->z > 0)
@@ -1309,14 +1352,13 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		quad_t cquad;
 		cquad.foreground = foreground;
 		int appearance = 0;
+		int clip_level = 0;
 
 		if (!link)
 			goto next;
 
 		if (!(flags & 0x00004000) && view_determinant(old_p1, old_p0, p0) > 0)
 			goto next;
-
-		vn = glm::normalize(vn);
 
 		cquad.p[0] = old_p1;
 		cquad.p[1] = old_p0;
@@ -1340,7 +1382,28 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 				break;
 		}
 
-		{
+		if (bounds) {
+			// Preserve the sort-depth update above even when no pixels can survive clipping.
+			if (clipped_object) goto next;
+			unsigned clipped = 15;
+			unsigned crossing = 0;
+			for (const point_t *p : cquad.p) {
+				unsigned code = 0;
+				if (p->x < p->z * m_view->a_left) code |= 1;
+				if (p->x > p->z * m_view->a_right) code |= 2;
+				if (p->y > p->z * m_view->a_bottom) code |= 4;
+				if (p->y < p->z * m_view->a_top) code |= 8;
+				clipped &= code;
+				crossing |= code;
+			}
+			if (clipped) goto next;
+			if (!crossing) clip_level = 4;
+		}
+		if (colours && size_t(i) < colours->size() && (*colours)[i] != UINT32_MAX)
+			cquad.col = (*colours)[i];
+		else {
+			m_view->transform_vector(vn);
+			vn = glm::normalize(vn);
 #if 0
 			float dif = mult_vector(&vn, &view->light);
 			float ln = view->lightparams[lightmode].a + view->lightparams[lightmode].d*MAX(0.0, dif);
@@ -1423,12 +1486,22 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 				cquad.col = c;
 			} else
 				cquad.col = colour_of(lumval);
+			if (colours) {
+				if (size_t(i) >= colours->size()) colours->resize(i + 1, UINT32_MAX);
+				(*colours)[i] = cquad.col;
+			}
+		}
+		if (m_object_fade < 1) {
+			uint32_t c = cquad.col & ~0xffffffu;
+			for (int sh = 0; sh <= 16; sh += 8)
+				c |= uint32_t(std::lround(float((cquad.col >> sh) & 0xff) * m_object_fade)) << sh;
+			cquad.col = c;
 		}
 
 		if (flags & 0x00002000)
 			cquad.col |= MOIRE;
 
-		fclip_push_quad(0, cquad);
+		fclip_push_quad(clip_level, cquad);
 
 	next:
 		poly_adr += 10;
@@ -2075,6 +2148,7 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 						if (auto it = m_list_extra[buffer].find(list_offset); it != m_list_extra[buffer].end()) extra = &it->second;
 					}
 					float extra_z = old_z;
+					m_extra_colours.clear();   // light, palette and smooth shading stay fixed within this batch
 					if (extra)
 						for (const auto &object : *extra) {
 							float blended[12];
@@ -2093,7 +2167,10 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 								m_view->set_translation_matrix(blended);
 							}
 							quad_t *first = m_quadpt;
-							push_object(object.texture, object.polygon, object.size, extra_z, object.owner ? object.owner : owner);
+							m_object_fade = object.fade;
+							push_object(object.texture, object.polygon, object.size, extra_z, object.owner ? object.owner : owner,
+								object.bounds ? &*object.bounds : nullptr);
+							m_object_fade = 1;
 							for (quad_t *q = first; q < m_quadpt; q++) q->obj = object.polygon;
 							m_view->set_translation_matrix(mat);
 							m_shade_from = m_shade_to = m_shade_light = nullptr;
@@ -2270,34 +2347,34 @@ void model1::build_overlay_mask(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		m_overlay_block = std::make_unique<uint8_t[]>(size_t(bitmap.width()) * bitmap.height());
 		m_overlay_hud_snapshot = std::make_unique<uint32_t[]>(size_t(bitmap.width()) * bitmap.height());
 	}
-	for (int y = cliprect.min_y; y <= cliprect.max_y; y++)
-	{
-		const uint32_t *const hud = &m_top.pix(y / m_scale);
-		for (int x = cliprect.min_x; x <= cliprect.max_x; x++)
-		{
-			const uint32_t argb = hud[x / m_scale];
-			int r = (argb >> 16) & 0xff, g = (argb >> 8) & 0xff, b = argb & 0xff;
-			int i = y * m_overlay_stride + x;
-			m_overlay_block[i] = argb != KEY && (r > feature_level || g > feature_level || b > feature_level);
-			m_overlay_hud_snapshot[i] = bitmap.pix(y, x);
+	parallel_rows(cliprect.max_y - cliprect.min_y + 1, [&](int begin, int end) {
+		for (int y = cliprect.min_y + begin; y < cliprect.min_y + end; y++) {
+			const uint32_t *const hud = &m_top.pix(y / m_scale);
+			for (int x = cliprect.min_x; x <= cliprect.max_x; x++) {
+				const uint32_t argb = hud[x / m_scale];
+				int r = (argb >> 16) & 0xff, g = (argb >> 8) & 0xff, b = argb & 0xff;
+				int i = y * m_overlay_stride + x;
+				m_overlay_block[i] = argb != KEY && (r > feature_level || g > feature_level || b > feature_level);
+				m_overlay_hud_snapshot[i] = bitmap.pix(y, x);
+			}
 		}
-	}
+	});
 }
 
 // Restore the bright HUD features over the above-HUD blip pass, so blips only
 // remain where the HUD pixel was transparent / near-black.
 void model1::apply_overlay_stencil(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
-	for (int y = cliprect.min_y; y <= cliprect.max_y; y++)
-	{
-		uint32_t *const dst = &bitmap.pix(y);
-		for (int x = cliprect.min_x; x <= cliprect.max_x; x++)
-		{
-			int i = y * m_overlay_stride + x;
-			if (m_overlay_block[i])
-				dst[x] = m_overlay_hud_snapshot[i];
+	parallel_rows(cliprect.max_y - cliprect.min_y + 1, [&](int begin, int end) {
+		for (int y = cliprect.min_y + begin; y < cliprect.min_y + end; y++) {
+			uint32_t *const dst = &bitmap.pix(y);
+			for (int x = cliprect.min_x; x <= cliprect.max_x; x++) {
+				int i = y * m_overlay_stride + x;
+				if (m_overlay_block[i])
+					dst[x] = m_overlay_hud_snapshot[i];
+			}
 		}
-	}
+	});
 }
 
 void model1::screen_vblank_model1(int state)

@@ -1,6 +1,9 @@
 #include "../../../src/games/swa/controls.h"
+#include "../../../src/games/swa/gameplay.h"
 #include "../../../src/machine/model1.h"
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <set>
@@ -96,6 +99,54 @@ int main()
 	regions.copro_tables.resize(0x40000);
 	regions.polygons.resize(0xc00000);
 	model1 m(std::move(regions));
+	auto gameplay = create_gameplay(m);
+	m.nvram()[0xf008] = 2;
+	m.nvram()[0xf009] = 2;
+	assert(gameplay.wide_scene && !gameplay.wide_scene(0, true));
+	m.nvram()[0xf008] = 3;
+	m.nvram()[0xf009] = 3;
+	assert(gameplay.wide_scene(0, false));
+	auto state = std::static_pointer_cast<gameplay_state>(gameplay.state);
+	m.cpu().set_reg(25, 0x408000);
+	const auto prepare_frame = [&] { gameplay.frame_begin(); };
+	m.nvram()[0xf008] = 2;
+	m.nvram()[0xf009] = 2;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	m.nvram()[0xf008] = 3;
+	m.nvram()[0xf009] = 2;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	state->full_distance = true;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	m.nvram()[0xf770] = 1;
+	prepare_frame();
+	assert(state->z_wrap_prefetched);
+	m.nvram()[0xf009] = 3;
+	prepare_frame();
+	assert(state->z_wrap_prefetched);
+	m.nvram()[0xf770] = 2;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	m.nvram()[0xf009] = 2;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	m.nvram()[0xf770] = 1;
+	prepare_frame();
+	assert(state->z_wrap_prefetched);
+	state->full_distance = false;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	state->full_distance = true;
+	m.nvram()[0xf009] = 2;
+	prepare_frame();
+	assert(state->z_wrap_prefetched);
+	m.nvram()[0xf008] = 4;
+	prepare_frame();
+	assert(!state->z_wrap_prefetched);
+	gameplay.reset();
+	assert(!state->z_wrap_prefetched);
 	m.work_ram()[0] = 0x12;
 	m.work_ram()[1] = 0x34;
 	m.work_ram()[2] = 0x56;
@@ -108,5 +159,21 @@ int main()
 	m.forget_camera();
 	assert(m.work_ram()[0] == 0x12 && m.work_ram()[1] == 0x34);
 	assert(m.work_ram()[2] == 0x56 && m.work_ram()[3] == 0x78);
-	puts("SWA: profile, controls, I/O layout, analog calibration and unset camera/mode RAM checks passed");
+	// Draw distance Full: a far layer's list facing +z (a 90-degree wedge to 9 cells) gains the cells
+	// past it, nearest first, in the same direction only
+	std::vector<std::pair<int, int>> list;
+	for (int z = 0; z <= 9; z++)
+		for (int x = -z; x <= z; x++)
+			if (std::hypot(float(x), float(z)) <= 9) list.emplace_back(x, z);
+	const auto far = game::swa::far_cells(list, 18);
+	assert(!far.empty());
+	auto has = [&](int x, int z) { return std::find(far.begin(), far.end(), std::pair{ x, z }) != far.end(); };
+	assert(has(0, 10) && has(0, 18) && has(10, 10) && !has(0, 9) && !has(0, -12) && !has(18, 0) && !has(-14, 4));
+	for (size_t i = 0; i < far.size(); i++) {
+		const auto [x, z] = far[i];
+		assert(std::hypot(float(x), float(z)) > 9 && std::hypot(float(x), float(z)) <= 18 && z > 0);
+		if (i) assert(far[i - 1].first * far[i - 1].first + far[i - 1].second * far[i - 1].second <= x * x + z * z);
+	}
+	assert(game::swa::far_cells({}, 18).empty());
+	puts("SWA: profile, controls, I/O layout, analog calibration, unset camera/mode RAM and draw distance checks passed");
 }

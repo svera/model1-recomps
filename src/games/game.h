@@ -100,11 +100,19 @@ struct object_effects
 	std::function<void(uint32_t, int, int &, int &, int &)> colour;
 };
 
+struct model_bounds
+{
+	std::array<float, 3> center, extent;
+	float radius = 0;
+};
+
 struct render_object
 {
 	uint32_t texture, polygon, size;
 	uint32_t owner = 0;
 	std::optional<std::array<float, 12>> transform;
+	float fade = 1;                                // its colours scaled toward black (1: as lit)
+	std::optional<model_bounds> bounds;             // optional model-space bound for renderer-only copies
 };
 
 struct record_visibility
@@ -134,8 +142,10 @@ struct gameplay_callbacks
 	// (PC, address, value). These include the instructions' own bytes from the program ROM.
 	uint32_t read_pc_first = 0, read_pc_last = 0;
 	std::function<uint16_t(uint32_t, uint32_t, uint16_t)> read_value;
-	// Extra renderer-only objects attached to a matrix as the CPU writes it.
-	std::function<std::vector<render_object>()> matrix_objects;
+	// Extra renderer-only objects attached to a matrix as the CPU writes it. The argument is the
+	// display-list halfword written; the callback may set it to an earlier matrix command of the
+	// same list, whose extras the result then replaces (an empty result removes them).
+	std::function<std::vector<render_object>(uint32_t &)> matrix_objects;
 	// Snapshot active records when a relevant matrix is written, before visibility advances.
 	std::function<std::vector<game::record_visibility>(uint32_t)> record_visibility;
 	std::function<void()> render_begin;

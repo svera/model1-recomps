@@ -199,6 +199,8 @@ std::vector<state> replay(const std::string &dir, const recorded_run &run, const
 	if (!native) m.run_cpu = [&](int c) { m.cpu().run(c); };
 	m.set_drawing(false);
 	set_lod(m, !native);
+	// native: the player's choices, LOD off and Draw distance Full, which must not move the game
+	set_full_draw_distance(m, native);
 	const auto lod_state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
 	const char *mode = native ? "native" : "interpreter";
 	std::vector<state> changes;
@@ -235,7 +237,16 @@ std::vector<state> replay(const std::string &dir, const recorded_run &run, const
 		assert(lod_state->nearest > 0 && lod_state->destroyers_near > 0);
 		printf("SWA recording (native, LOD off): %llu detail results replaced by the nearest model's, %llu Star Destroyers drawn near\n",
 			(unsigned long long)lod_state->nearest, (unsigned long long)lod_state->destroyers_near);
-	} else assert(lod_state->nearest == 0 && lod_state->destroyers_near == 0);
+		assert(lod_state->fine_cells > 0);
+		printf("SWA recording (native, LOD off): %llu coarse surface cells given their fine cells\n", (unsigned long long)lod_state->fine_cells);
+		assert(lod_state->surface_cells > 0 && lod_state->bands_lit > 0);
+		printf("SWA recording (native, Draw distance Full): %llu surface cells added, %llu far bands lit\n",
+			(unsigned long long)lod_state->surface_cells, (unsigned long long)lod_state->bands_lit);
+		assert(lod_state->wrapped_copies > 0 && lod_state->culled_copies > 0);
+		printf("SWA recording (native, Draw distance Full): %llu asteroid-field copies, %llu of culled objects\n",
+			(unsigned long long)lod_state->wrapped_copies, (unsigned long long)lod_state->culled_copies);
+	} else assert(lod_state->nearest == 0 && lod_state->destroyers_near == 0 && lod_state->surface_cells == 0 && lod_state->bands_lit == 0 &&
+		lod_state->fine_cells == 0 && lod_state->coarse_hidden == 0 && lod_state->wrapped_copies == 0 && lod_state->culled_copies == 0);
 	return changes;
 }
 

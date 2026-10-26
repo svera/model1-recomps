@@ -75,8 +75,11 @@ void model1::list_written(int buffer, uint32_t word)
 {
 	if (m_gameplay.matrix_objects) {
 		m_list_extra[buffer].erase(word);
-		auto extra = m_gameplay.matrix_objects();
-		if (!extra.empty()) m_list_extra[buffer].emplace(word, std::move(extra));
+		uint32_t at = word;
+		auto extra = m_gameplay.matrix_objects(at);
+		at &= 0x7fff;
+		if (!extra.empty()) m_list_extra[buffer][at] = std::move(extra);
+		else if (at != word) m_list_extra[buffer].erase(at);
 	}
 	if ((!m_smooth && !m_gameplay.object) || !m_video->records) return;
 	const game::draw_records &r = *m_video->records;
@@ -106,6 +109,7 @@ void model1::index_objects(logic_frame &lf)
 {
 	const std::vector<uint32_t> &owners = m_list_owner[m_picture_buffer];
 	lf.slots.clear();
+	lf.above_hud = false;
 	lf.visibility = m_list_visibility[m_picture_buffer];
 	lf.slots.push_back({});                        // objects before the first matrix
 	const uint16_t *l = lf.list.data();
@@ -118,6 +122,7 @@ void model1::index_objects(logic_frame &lf)
 		switch (rdi(off)) {
 		case 0: off += 2; break;
 		case 1: case 0x41:
+			if (rdi(off) == 0x41) lf.above_hud = true;
 			lf.slots.back().polys.push_back(rdi(off + 4));
 			if (rdi(off) == 1 && lf.slots.back().visibility)
 				lf.slots.back().objects.push_back({ rdi(off + 2), rdi(off + 4), rdi(off + 6) });
@@ -399,6 +404,12 @@ bool model1::render_smooth(double now, bool shown)
 	}
 	const auto render_done = m_render_done;     // emulation state: drawing again mustn't touch it
 	const int quads = m_last_quads;
+	gpu_parts *const parts = m_parts;
+	if (parts && m_logic[m_replay_older ? 0 : 1].above_hud) {
+		// Parts cannot composite above-HUD objects. Choose the whole picture before drawing its 3D.
+		m_parts = nullptr;
+		m_parts_whole = true;
+	}
 	screen_update(m_bitmap, m_bitmap.cliprect());
 	m_render_done = render_done;
 	m_last_quads = quads;
@@ -406,6 +417,7 @@ bool model1::render_smooth(double now, bool shown)
 	m_replay_older = false;
 	m_replay_extra = false;
 	drawn();
+	m_parts = parts;
 	static const bool log = getenv("M1_LOG_SMOOTH") != nullptr;
 	if (log && alpha < 1)
 		fprintf(stderr, "R %.2f a=%.2f unmatched %d jumped %d blended %d\n", now, alpha, m_smooth_stats[0], m_smooth_stats[1], m_smooth_stats[2]);

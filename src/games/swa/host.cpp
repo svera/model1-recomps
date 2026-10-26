@@ -28,11 +28,16 @@ public:
 			if (it->second == "on" || it->second == "off") *flag = it->second == "on";
 			else fprintf(stderr, "SWA: invalid %s '%s'; expected on or off\n", key, it->second.c_str());
 		}
+		const auto it = settings.find("draw_distance");
+		if (it == settings.end()) return;
+		if (it->second == "arcade" || it->second == "extended") full_distance = it->second == "extended";
+		else fprintf(stderr, "SWA: invalid draw_distance '%s'; expected arcade or extended\n", it->second.c_str());
 	}
 	void save_settings(FILE *f) const override
 	{
 		fprintf(f, "invert_flight_y = %s\n", invert_y ? "on" : "off");
 		fprintf(f, "gunner_assist = %s\n", assist ? "on" : "off");
+		fprintf(f, "draw_distance = %s\n", full_distance ? "extended" : "arcade");
 		fprintf(f, "lod = %s\n", lod ? "on" : "off");
 	}
 
@@ -47,21 +52,34 @@ public:
 		// a replay (and the recording made from it) keeps the arcade's models: LOD off draws more,
 		// which moves where a frame ends in the game's update and so the RAM hash a recording checks
 		set_lod(context.machine, lod || context.replay);
+		// renderer-only: the game runs the same either way, so replays keep it
+		set_full_draw_distance(context.machine, full_distance);
 	}
 
 	std::vector<menu_item> display_menu_items() override
 	{
-		if (ctx->replay)
-			return { { "LOD", "Input replay and recording use the arcade's models, so recordings verify.",
-				[] { return "On (replay)"; }, [](int) {} } };
-		return { { "LOD", "Off keeps the highest-detail models at every distance. On uses the arcade's simpler distant models. "
-						  "Off can lower performance.",
-			[this] { return lod ? "On" : "Off"; },
+		std::vector<menu_item> items{ { "Draw distance", "Full draws the Death Star's surface about twice as far as the arcade and lights its "
+														 "distant buildings, in the renderer only, without changing the game or its timing. "
+														 "Full can lower performance.",
+			[this] { return full_distance ? "Full" : "Arcade"; },
 			[this](int) {
-				lod = !lod;
-				set_lod(ctx->machine, lod);
+				full_distance = !full_distance;
+				set_full_draw_distance(ctx->machine, full_distance);
 				ctx->settings_changed();
 			} } };
+		if (ctx->replay)
+			items.push_back({ "LOD", "Input replay and recording use the arcade's models, so recordings verify.",
+				[] { return "On (replay)"; }, [](int) {} });
+		else
+			items.push_back({ "LOD", "Off keeps the highest-detail models at every distance. On uses the arcade's simpler distant models. "
+									 "Off can lower performance.",
+				[this] { return lod ? "On" : "Off"; },
+				[this](int) {
+					lod = !lod;
+					set_lod(ctx->machine, lod);
+					ctx->settings_changed();
+				} });
+		return items;
 	}
 
 	std::vector<menu_item> game_menu_items() override
@@ -88,6 +106,7 @@ private:
 	bool invert_y = false;
 	bool assist = false;
 	bool lod = false;
+	bool full_distance = true;
 	gunner_assist gunner;
 };
 

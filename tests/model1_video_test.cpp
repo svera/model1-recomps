@@ -1,5 +1,6 @@
 #include "../src/machine/model1.h"
 #include "../src/games/vr/gameplay.h"
+#include "../src/games/swa/gameplay.h"
 #include "../src/games/script.h"
 #include "../src/host/regions.h"
 #include "../src/rt/native.h"
@@ -14,6 +15,261 @@
 
 struct model1_video_test
 {
+	static void swa_wrap_smooth(const char *dir, bool native, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		game::swa::set_full_draw_distance(m, true);
+		if (native) {
+			rec::hints hints;
+			assert(hints.read("assets/games/swa/swa_map.txt"));
+			rec::attach(m.cpu(), "swa");
+			assert(rec::build_native(m.program_rom(), hints));
+			m.run_cpu = [](int n) { rec::run(n); };
+		}
+		while (m.frame_number() < 6000) m.run_frame();
+		m.set_drawing(true);
+		size_t render_passes = 0, hud_frames = 0;
+		const auto render_begin = m.m_gameplay.render_begin;
+		m.m_gameplay.render_begin = [&] {
+			render_passes++;
+			if (render_begin) render_begin();
+		};
+		for (int frame : { 6072, 6142, 6250, 6972, 7400, 8000, 9000 }) {
+			while (m.frame_number() < uint64_t(frame)) m.run_frame();
+			for (int scale : { 1, 3 }) {
+				m.set_render_scale(scale);
+				for (double fraction : { .25, .5, .75 }) {
+					const double now = frame - fraction;
+					model1::gpu_parts parts;
+					render_passes = 0;
+					const int kind = m.render_parts(now, parts, false);
+					assert(kind == (m.m_above_hud_seen ? 2 : 1));
+					assert(render_passes == (m.m_above_hud_seen ? 2u : 1u));
+					hud_frames += m.m_above_hud_seen;
+					std::vector<uint32_t> pixels;
+					if (kind == 1) model1::compose_cpu(parts, m.frame_w(), m.frame_h(), pixels);
+					else pixels.assign(m.frame().data(), m.frame().data() + size_t(m.frame_w()) * m.frame_h());
+					m.m_redrawing = true;
+					assert(m.render_smooth(now, false));
+					m.m_redrawing = false;
+					assert(std::equal(pixels.begin(), pixels.end(), m.frame().data()));
+				}
+			}
+		}
+		assert(hud_frames > 0);
+		if (native) assert(rec::fallback_count() == 0);
+		printf("SWA %s LOD %s: smooth parts match whole frames at 1x/3x; above-HUD scenes render once\n",
+			native ? "native" : "interpreter", lod ? "on" : "off");
+	}
+	static void copy_bounds_and_sort()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		auto &view = *m.m_view;
+		view.init_translation_matrix();
+		view.a_left = view.a_top = -0.5f;
+		view.a_right = view.a_bottom = 0.5f;
+		const game::model_bounds bounds{ { 0, 0, 0 }, { 1, 2, 3 }, 4 };
+		view.translation[11] = 10;
+		assert(!view.outside(bounds));
+		view.translation[9] = 20;
+		assert(view.outside(bounds));
+		view.translation[9] = 5;
+		assert(!view.outside(bounds));   // intersects the right edge
+		view.translation[9] = 0;
+		view.translation[10] = -20;
+		assert(view.outside(bounds));
+		view.translation[10] = 0;
+		view.translation[11] = -10;
+		assert(view.outside(bounds));
+		view.translation[0] = 20;
+		view.translation[11] = 10;
+		view.translation[9] = 20;
+		assert(!view.outside(bounds));   // scaled bounds still intersect
+
+		for (int count : { 0, 1, 255, 256, 4096, 32768 }) {
+			std::vector<model1::quad_t *> expected;
+			uint32_t random = 12345;
+			for (int i = 0; i < count; i++) {
+				auto &q = m.m_quaddb[i];
+				random = random * 1664525u + 1013904223u;
+				q.z = i % 2 ? std::bit_cast<float>(random & 0xff7fffffu) : float((i * 7919) % 127 - 63);
+				if (i % 23 == 0) q.z = 0.0f;
+				if (i % 29 == 0) q.z = -0.0f;
+				q.foreground = i % 17 == 0;
+				expected.push_back(&q);
+			}
+			m.m_quadpt = m.m_quaddb.get() + expected.size();
+			std::qsort(expected.data(), expected.size(), sizeof(expected[0]), [](const void *a, const void *b) {
+				return (*static_cast<model1::quad_t *const *>(a))->compare(*static_cast<model1::quad_t *const *>(b));
+			});
+			m.sort_quads();
+			assert(std::equal(expected.begin(), expected.end(), m.m_quadind.get()));
+		}
+	}
+
+	static void swa_wrap_transition(const char *dir, bool native, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" })), arcade(load_regions(dir, game::id{ "swa" }));
+		for (model1 *machine : { &m, &arcade }) {
+			machine->reset();
+			machine->set_drawing(false);
+			game::swa::set_lod(*machine, lod);
+		}
+		game::swa::set_full_draw_distance(arcade, false);
+		m.set_aspect(16.0f / 9);
+		arcade.set_aspect(16.0f / 9);
+		if (native) {
+			rec::hints hints;
+			assert(hints.read("assets/games/swa/swa_map.txt"));
+			rec::attach(m.cpu(), "swa");
+			assert(rec::build_native(m.program_rom(), hints));
+			m.run_cpu = [](int n) { rec::run(n); };
+		}
+		game::swa::set_full_draw_distance(m, true);
+		const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
+		const auto no_periodic_extras = [](const model1 &machine) {
+			for (const auto &list : machine.m_list_extra)
+				for (const auto &[matrix, extras] : list)
+					for (const auto &extra : extras) assert(!extra.transform);
+		};
+		size_t arcade_asteroids = 0, arcade_ships = 0;
+		const auto arcade_object = arcade.m_gameplay.object;
+		arcade.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+			if (polygon == (arcade.read32(0x23ba7a) & 0x7fffff) || polygon == (arcade.read32(0x23ba76) & 0x7fffff)) arcade_asteroids++;
+			if (polygon == (arcade.read32(0x9b584) & 0x7fffff) || polygon == (arcade.read32(0x9a63c) & 0x7fffff) ||
+				polygon == (arcade.read32(0x9a63c + 8) & 0x7fffff)) arcade_ships++;
+			return arcade_object(owner, texture, polygon, size, data);
+		};
+		struct ship_sample { glm::vec3 view, relative; float fade; bool asteroid; };
+		std::vector<ship_sample> ships;
+		const auto object = m.m_gameplay.object;
+		m.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+			// Track ship bodies and asteroid clusters at their final renderer matrices.
+			const bool asteroid = polygon == (m.read32(0x23ba7a) & 0x7fffff) || polygon == (m.read32(0x23ba76) & 0x7fffff);
+			if (asteroid || polygon == (m.read32(0x9b584) & 0x7fffff) ||
+				polygon == (m.read32(0x9a63c) & 0x7fffff) ||
+				polygon == (m.read32(0x9a63c + 2 * 4) & 0x7fffff)) {
+				const auto *v = m.m_view->translation;
+				glm::mat3 rotation(glm::vec3(v[0], v[1], v[2]) / 2.48f,
+					glm::vec3(v[3], v[4], v[5]) / 2.48f, glm::vec3(v[6], v[7], v[8]) / 2.48f);
+				if (asteroid)
+					for (int c = 0; c < 3; c++)
+						for (int r = 0; r < 3; r++)
+							rotation[c][r] = std::bit_cast<float>(m.read32(0x40f570 + 4 * (3 * c + r)));
+				const glm::vec3 view(v[9], v[10], v[11]);
+				ships.push_back({ view, glm::inverse(rotation) * view, m.m_object_fade, asteroid });
+			}
+			return object(owner, texture, polygon, size, data);
+		};
+		std::map<int, decltype(ships)> frames;
+		size_t death_star_frames = 0;
+		for (int f = 1; f <= 29000; f++) {
+			m.run_frame();
+			arcade.run_frame();
+			assert(m.nvram() == arcade.nvram() && m.work_ram() == arcade.work_ram());
+			if (m.read8(0x40f008) == 3 && m.read8(0x40f770) == 2 && f % 100 == 0) {
+				assert(!state->z_wrap_prefetched && state->asteroid_objects.empty());
+				ships.clear();
+				m.redraw();
+				arcade_asteroids = 0;
+				arcade.redraw();
+				assert(arcade_asteroids == 0);
+				assert(std::none_of(ships.begin(), ships.end(), [](const auto &s) { return s.asteroid; }));
+				death_star_frames++;
+			}
+			if ((f >= 6072 && f <= 6180) || (f >= 6968 && f <= 6972)) {
+				ships.clear();
+				m.redraw();
+				frames[f] = ships;
+				const std::vector<uint32_t> pixels(m.frame().data(), m.frame().data() + m.frame_w() * m.frame_h());
+				auto saved0 = m.m_list_extra[0], saved1 = m.m_list_extra[1];
+				for (auto &list : m.m_list_extra)
+					for (auto &[matrix, extras] : list)
+						for (auto &extra : extras) extra.bounds.reset();
+				m.redraw();
+				assert(std::equal(pixels.begin(), pixels.end(), m.frame().data()));
+				m.m_list_extra[0] = std::move(saved0);
+				m.m_list_extra[1] = std::move(saved1);
+				ships = frames[f];
+				arcade_asteroids = arcade_ships = 0;
+				arcade.redraw();
+				no_periodic_extras(arcade);
+				assert(!std::static_pointer_cast<game::swa::gameplay_state>(arcade.game_state())->z_wrap_prefetched);
+			}
+			if (f == 6072) {
+				assert(!state->destroyer_manager && state->destroyer_models.empty() && state->asteroid_objects.empty());
+				assert(std::count_if(ships.begin(), ships.end(), [](const auto &s) { return s.asteroid; }) >= 5);
+				assert(arcade_asteroids == 0 && arcade_ships == 0);
+			}
+			if (f == 6102) assert(state->asteroid_objects.size() == 38);
+			if (f == 6142) assert(arcade_asteroids > 0 && arcade_ships > 0);
+			if (f == 6142) {
+				size_t duplicates = 0;
+				for (size_t a = 0; a < ships.size(); a++)
+					for (size_t b = 0; b < a; b++)
+						if (ships[a].asteroid && ships[b].asteroid && glm::length(ships[a].view - ships[b].view) < 1) duplicates++;
+				assert(duplicates == 0);
+			}
+			if (f == 6138) assert(state->destroyer_models.empty() && state->destroyer_manager);
+			if (f == 6142 || f == 6972) {
+				m.set_render_scale(3);
+				m.redraw();
+				const std::vector<uint32_t> pixels(m.frame().data(), m.frame().data() + m.frame_w() * m.frame_h());
+				auto saved0 = m.m_list_extra[0], saved1 = m.m_list_extra[1];
+				for (auto &list : m.m_list_extra)
+					for (auto &[matrix, extras] : list)
+						for (auto &extra : extras) extra.bounds.reset();
+				m.redraw();
+				assert(std::equal(pixels.begin(), pixels.end(), m.frame().data()));
+				m.m_list_extra[0] = std::move(saved0);
+				m.m_list_extra[1] = std::move(saved1);
+				m.set_render_scale(1);
+			}
+		}
+		for (const auto &[after, samples] : frames) {
+			const int before = after - 1;
+			if (!frames.contains(before)) {
+				assert(samples.size() >= 5);
+				continue;
+			}
+			assert(frames[before].size() >= 5 && frames[after].size() >= 5);
+			for (const auto &ship : samples) {
+				if (ship.fade <= 0.17f || ship.view.z <= 0 ||
+					std::fabs(ship.view.x) >= ship.view.z || std::fabs(ship.view.y) >= ship.view.z) continue;
+				float nearest = INFINITY;
+				for (const auto &previous : frames[before])
+					if (ship.asteroid == previous.asteroid) nearest = std::min(nearest, glm::length(ship.relative - previous.relative));
+				if (nearest > 4096) {
+					fprintf(stderr, "SWA %s appeared at frame %d: (%g, %g, %g), nearest previous object %g units away\n",
+						ship.asteroid ? "asteroid" : "ship", after, ship.view.x, ship.view.y, ship.view.z, nearest);
+					assert(false);
+				}
+			}
+		}
+		assert(death_star_frames >= 30);
+		printf("SWA %s LOD %s: fleet and asteroids present from first scene picture (6072); continuous through 6180 and 6968-6972; no asteroids in Death Star demo; Arcade has no periodic extras\n",
+			native ? "native" : "interpreter", lod ? "on" : "off");
+		game::swa::set_full_draw_distance(m, false);
+		for (int f = 0; f < 10; f++) {
+			m.run_frame();
+			arcade.run_frame();
+			assert(m.nvram() == arcade.nvram() && m.work_ram() == arcade.work_ram());
+		}
+		m.redraw();
+		arcade.redraw();
+		assert(std::equal(m.frame().data(), m.frame().data() + m.frame_w() * m.frame_h(), arcade.frame().data()));
+		assert(!state->z_wrap_prefetched);
+		if (native) assert(rec::fallback_count() == 0);
+	}
+
 	static void overlay_priority()
 	{
 		for (int scale : { 1, 2 })
@@ -177,7 +433,7 @@ struct model1_video_test
 			return result;
 		};
 		const auto matrix = full.m_gameplay.matrix_objects;
-		full.m_gameplay.matrix_objects = [&] {
+		full.m_gameplay.matrix_objects = [&](uint32_t &word) {
 			if (full.cpu().pc() == 0xff8500) {
 				const uint32_t caller = full.read32(full.cpu().reg(31));
 				if (caller == 0xffb81c || caller == 0xffb859) writes[0]++;
@@ -188,7 +444,7 @@ struct model1_video_test
 				if (caller == 0xffddd4 || caller == 0xffddeb) writes[5]++;
 				if (caller == 0xffd19c) writes[6]++;
 			}
-			auto extra = matrix();
+			auto extra = matrix(word);
 			for (const auto &o : extra)
 				if (o.owner && full.read32(o.owner + 0xa) == 0xffcc7d) {
 					calls[7]++;
@@ -318,8 +574,8 @@ struct model1_video_test
 			return result;
 		};
 		const auto matrix_objects = m.m_gameplay.matrix_objects;
-		m.m_gameplay.matrix_objects = [&] {
-			auto extra = matrix_objects();
+		m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+			auto extra = matrix_objects(word);
 			if (m.cpu().pc() == 0xff8500) {
 				const uint32_t caller = m.read32(m.cpu().reg(31));
 				if (caller == 0xffd9e8 || caller == 0xffda21 || caller == 0xffda67) parts++;
@@ -510,8 +766,8 @@ struct model1_video_test
 		bool collecting = false;
 		std::set<uint8_t> phases;
 		const auto matrix_objects = m.m_gameplay.matrix_objects;
-		m.m_gameplay.matrix_objects = [&] {
-			auto extra = matrix_objects();
+		m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+			auto extra = matrix_objects(word);
 			if (collecting)
 				for (const auto &object : extra)
 					if (!object.owner) assert(drawn.emplace(object.texture, object.polygon).second);
@@ -986,7 +1242,7 @@ struct model1_video_test
 		for (bool smooth : { false, true }) {
 			m.set_smooth(smooth);
 			bool pending = true;
-			m.m_gameplay.matrix_objects = [&] {
+			m.m_gameplay.matrix_objects = [&](uint32_t &) {
 				if (!pending) return std::vector<game::render_object>{};
 				pending = false;
 				return std::vector<game::render_object>{ { 0x40000, 0x1234, 0 } };
@@ -1007,6 +1263,22 @@ struct model1_video_test
 			m.list_written(0, 8);
 			assert(m.m_list_extra[0].empty());
 			assert(frame.slots[1].extra.front().polygon == 0x1234);
+			// a write naming an earlier matrix command: its extras replaced, the written word's dropped
+			m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+				if (word != 20) return std::vector<game::render_object>{};
+				word = 8;
+				return std::vector<game::render_object>{ { 0x40000, 0x5678, 0 } };
+			};
+			m.list_written(0, 8);
+			m.m_list_extra[0][20] = { { 0x40000, 0x9abc, 0 } };
+			m.list_written(0, 20);
+			assert(m.m_list_extra[0].size() == 1 && m.m_list_extra[0].at(8).front().polygon == 0x5678);
+			m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+				word = 8;
+				return std::vector<game::render_object>{};
+			};
+			m.list_written(0, 21);
+			assert(m.m_list_extra[0].empty());
 			m.m_gameplay.matrix_objects = {};
 		}
 	}
@@ -1227,6 +1499,38 @@ struct model1_video_test
 		}
 		assert(stage && malformed);
 		puts("SWA real-input destroyer malformed-object route survived");
+	}
+
+	// an extra object's fade scales its polygons' colours toward black
+	static void object_fade()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = { -1, -1, 10, 1, -1, 10, 0, 0, 0, -1, 1, 1, 10, -1, 1, 10 };
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t flags = 0x00004000 | (1 << 8) | 1;   // a two-sided quad linked to the first edge
+		std::memcpy(poly + 6, &flags, 4);
+		m.m_tgp_ram[0] = 0x400 | 1;   // unlit: full intensity
+		m.m_paletteram16[0x1001] = 0x7fff;
+		for (int channel : { 0, 0x2000, 0x4000 }) m.m_color_xlat[(31 << 8) | 0x3f | channel] = 31 << 3;
+		const auto colour = [&](float fade) {
+			m.m_quadpt = m.m_quaddb.get();
+			m.m_pointpt = m.m_pointdb.get();
+			float old_z = 0;
+			m.m_object_fade = fade;
+			m.push_object(0x40000, 0x800000, 1, old_z);
+			m.m_object_fade = 1;
+			assert(m.m_quadpt > m.m_quaddb.get());
+			return m.m_quaddb[0].col & 0xffffff;
+		};
+		const uint32_t lit = colour(1), half = colour(.5f), none = colour(0);
+		assert(lit != 0 && none == 0);
+		for (int sh = 0; sh <= 16; sh += 8)
+			assert(std::abs(int((half >> sh) & 0xff) - int(std::lround(((lit >> sh) & 0xff) * .5f))) <= 1);
 	}
 
 	static void foreground_order()
@@ -1580,6 +1884,15 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	model1_video_test::copy_bounds_and_sort();
+	if (argc > 2 && (std::string(argv[2]) == "--swa-wrap" || std::string(argv[2]) == "--swa-wrap-smooth")) {
+		for (bool native : { false, true })
+			for (bool lod : { false, true }) {
+				if (std::string(argv[2]) == "--swa-wrap") model1_video_test::swa_wrap_transition(argv[1], native, lod);
+				model1_video_test::swa_wrap_smooth(argv[1], native, lod);
+			}
+		return 0;
+	}
 	model1_video_test::object_bounds();
 	if (argc > 2 && std::string(argv[2]) == "--swa-object-bounds") {
 		model1_video_test::swa_destroyer_bounds(argv[1]);
@@ -1648,6 +1961,7 @@ int main(int argc, char **argv)
 	}
 	model1_video_test::foreground_order();
 	model1_video_test::extra_scenery();
+	model1_video_test::object_fade();
 	model1_video_test::scenery_records();
 	model1_video_test::culled_records();
 	model1_video_test::hud_edge_pinning();

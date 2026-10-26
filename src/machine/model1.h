@@ -320,6 +320,7 @@ private:
 		std::vector<struct slot> slots;              // matrix commands and the objects drawn with each
 		std::vector<game::record_visibility> visibility;
 		int objects = 0;
+		bool above_hud = false;
 		double move = -1, carried = 0;
 		bool still = false;
 		std::array<float, 12> camera{};              // (video_traits::records) the camera as the list was written
@@ -345,6 +346,7 @@ private:
 	bool m_replay_extra = false;                    // the older list drawn carried on past its frame (m_blend from the one before)
 	bool m_smooth = false, m_replaying = false;
 	float m_alpha = 1;
+	float m_object_fade = 1;                        // the extra object being drawn's render_object::fade
 	int m_smooth_stats[3] = {};                     // per picture: unmatched, jumped, blended objects
 	std::vector<std::array<float, 12>> m_blend;     // per slot of the newer list, the blended matrix
 	std::vector<uint8_t> m_blend_ok;
@@ -835,6 +837,7 @@ private:
 		void transform_point(point_t *p) const;
 
 		void recompute_frustum();
+		bool outside(const game::model_bounds &bounds) const;
 
 		int xc = 0, yc = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // x1..y2: clip in render pixels
 		float lx1 = 0, lx2 = 0, ly1 = 0, ly2 = 0;             // the clip as the game set it
@@ -865,6 +868,7 @@ private:
 	std::unique_ptr<quad_t[]> m_quaddb;
 	quad_t      *m_quadpt = nullptr;
 	std::unique_ptr<quad_t *[]> m_quadind;
+	mutable std::vector<quad_t *> m_quadsort;
 
 	uint16_t  m_listctl[2]{};
 	uint16_t  *m_glist = nullptr;
@@ -905,6 +909,7 @@ private:
 	std::vector<rec_batch> m_rec_batches;
 	std::vector<quad_t> m_rec_quads;
 	std::vector<point_t> m_rec_points;
+	std::map<std::array<uint32_t, 12>, std::vector<uint32_t>> m_extra_colours;
 	std::vector<gpu3d_poly> m_rec_polys;
 	std::vector<gpu3d_span> m_rec_spans;
 	int m_rec_y0 = 0, m_rec_y1 = -1, m_rec_m0 = 0, m_rec_m1 = -1;
@@ -937,7 +942,7 @@ private:
 	int push_direct(int list_offset);
 	int draw_direct(bitmap_rgb32 &bitmap, const rectangle &cliprect, int list_offset);
 	int skip_direct(int list_offset) const;
-	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0);
+	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0, const game::model_bounds *bounds = nullptr);
 	void    draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 
 	void set_current_render_list();

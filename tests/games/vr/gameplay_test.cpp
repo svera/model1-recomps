@@ -207,6 +207,7 @@ static void machine_settings(bool board)
 
 static void scenery_lists()
 {
+	uint32_t word = 0;   // the display-list word matrix_objects is told was written
 	model1::regions regions;
 	regions.title = game::id{ "vr" };
 	regions.maincpu.resize(0x1000000, 0xff);
@@ -261,9 +262,9 @@ static void scenery_lists()
 		machine.cpu().pc_ref() = 0xff7dc5;
 		const auto before = ram;
 		callbacks.work_ram_written(0xff);
-		assert(callbacks.matrix_objects().empty());
+		assert(callbacks.matrix_objects(word).empty());
 		machine.cpu().pc_ref() = 0xff8500;
-		const auto objects = callbacks.matrix_objects();
+		const auto objects = callbacks.matrix_objects(word);
 		const int submitted = lod ? std::min(n, budget / 10 + 1) : n;
 		assert(objects.size() == size_t(256 - submitted));
 		std::array<bool, 256> seen{};
@@ -280,7 +281,7 @@ static void scenery_lists()
 			last_distance = distance;
 		}
 		assert(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
-		assert(callbacks.matrix_objects().empty());
+		assert(callbacks.matrix_objects(word).empty());
 		assert(ram == before && machine.program_rom() == original_rom);
 	}
 	for (bool full : { false, true })
@@ -298,7 +299,7 @@ static void scenery_lists()
 		for (uint32_t offset : { 0x2au, 0x2cu, 0x2eu }) machine.write16(0x407900 + offset, 0);
 		const auto before = ram;
 		state->scenery_pending = true;
-		const auto objects = callbacks.matrix_objects();
+		const auto objects = callbacks.matrix_objects(word);
 		int boards = 0;
 		for (const auto &object : objects)
 			if (object.owner) {
@@ -318,12 +319,12 @@ static void scenery_lists()
 	callbacks.work_ram_written(0xff);
 	bus.write32(0x500100, 0xffddd4);
 	machine.cpu().pc_ref() = 0xff8500;
-	assert(callbacks.matrix_objects().empty() && state->scenery_pending);
+	assert(callbacks.matrix_objects(word).empty() && state->scenery_pending);
 	bus.write32(0x500100, 0xff846f);
-	assert(!callbacks.matrix_objects().empty() && !state->scenery_pending);
+	assert(!callbacks.matrix_objects(word).empty() && !state->scenery_pending);
 	state->extended_draw_distance = false;
 	callbacks.work_ram_written(0xff);
-	assert(callbacks.matrix_objects().empty());
+	assert(callbacks.matrix_objects(word).empty());
 	bus.write32(0x5011b0, 5000);
 	assert(bus.read32(0x5011b0) == 5000);
 	state->extended_draw_distance = true;
