@@ -142,6 +142,12 @@ constexpr int MANAGED_REG = 18;
 constexpr uint32_t LIST_POINTER = 0x7068, LIST_BUFFER = 0xffff0000;
 // copies are drawn within WRAP_REACH of the camera, fading in from black beyond WRAP_FADE
 constexpr float WRAP_PERIOD = 131072, WRAP_REACH = 262144, WRAP_FADE = 196608;
+// TGP 0x31: the view test's extents, as 0D7BC0, C2ADA and CADDD send them (50, 50, 248, -248, 192,
+// -192: the 3D view's half width, the screen's) before 0x32's tests; 0D7B85's narrow (+-20) view
+// is a test of its own and stays.
+constexpr uint32_t VIEW_EXTENTS = 0x31;
+constexpr int VIEW_RIGHT = 2, VIEW_LEFT = 3, VIEW_ARGUMENTS = 6;
+constexpr float VIEW_HALF_WIDTH = 248;
 constexpr int LIST_REG = 11;
 }
 
@@ -180,6 +186,14 @@ uint32_t lod_result(bool enabled, uint32_t pc, uint32_t value)
 uint8_t destroyer_detail(bool enabled, uint8_t value)
 {
 	return enabled || value == DESTROYER_HIDDEN ? value : DESTROYER_NEAR;
+}
+
+uint32_t view_extent(int index, uint32_t value, int ext)
+{
+	if (ext <= 0 || (index != VIEW_RIGHT && index != VIEW_LEFT)) return value;
+	const float x = std::bit_cast<float>(value);
+	if (std::fabs(x) != VIEW_HALF_WIDTH) return value;
+	return std::bit_cast<uint32_t>(std::copysign(VIEW_HALF_WIDTH + float(ext), x));
 }
 
 void set_lod(model1 &machine, bool enabled)
@@ -562,7 +576,8 @@ bool add_copy(model1 &machine, gameplay_state &state, const std::array<float, 12
 		scale = std::max(scale, std::sqrt(view[c * 3] * view[c * 3] + view[c * 3 + 1] * view[c * 3 + 1] + view[c * 3 + 2] * view[c * 3 + 2]));
 	const auto bounds = bounds_for(machine, state, model.polygon);
 	const float radius = scale * bounds.radius;
-	if (z < -radius || std::fabs(x) - 1.5f * z > radius * std::sqrt(1 + 1.5f * 1.5f) ||
+	const float wide = 1.5f * (VIEW_HALF_WIDTH + float(machine.wide_ext())) / VIEW_HALF_WIDTH;
+	if (z < -radius || std::fabs(x) - wide * z > radius * std::sqrt(1 + wide * wide) ||
 		std::fabs(y) - z > radius * std::sqrt(2.0f)) return false;
 	render_object faded = model;
 	faded.bounds = bounds;
@@ -809,6 +824,7 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		return layer == COCKPIT_LAYER && state->wide_cockpit && cockpit_shown(machine) && continue_sides(pixels, width, height, ext);
 	};
 	callbacks.reset = [state] {
+		state->view_word = -1;
 		state->z_wrap_prefetched = false;
 		state->destroyers_wrap = false;
 		state->destroyer_manager = 0;
@@ -825,6 +841,16 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		if (state->full_distance && asteroid_field && subsequence == Z_WRAP_PREFETCH_SUBSEQUENCE) state->z_wrap_prefetched = true;
 		else if (!state->full_distance || !asteroid_field) state->z_wrap_prefetched = false;
 		if (!asteroid_field) state->asteroid_objects.clear();
+	};
+	callbacks.copro_write = [&machine, state](uint32_t, uint32_t value) {
+		// (no extent is 0x31 as a float, so a data word that happens to be 0x31 only restarts the count)
+		if (value == VIEW_EXTENTS)
+			state->view_word = 0;
+		else if (state->view_word >= 0) {
+			value = view_extent(state->view_word, value, machine.wide_ext());
+			if (++state->view_word == VIEW_ARGUMENTS) state->view_word = -1;
+		}
+		return value;
 	};
 	callbacks.copro_result = [&machine, state](uint32_t pc, uint32_t value) {
 		if (state->full_distance && int32_t(value) < 0) {

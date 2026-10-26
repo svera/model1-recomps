@@ -77,6 +77,8 @@ public:
 	// sky widen; 2D text stays in the middle 4:3 unless the game anchors its HUD to the edges.
 	void set_aspect(float aspect);
 	float aspect() const { return m_aspect; }
+	// extra arcade pixels each side of the current picture (0: drawn 4:3)
+	int wide_ext() const { return m_wide_frame ? m_ext : 0; }
 	int render_scale() const { return m_scale; }
 	int frame_w() const { return m_bitmap.width(); }
 	int frame_h() const { return m_bitmap.height(); }
@@ -516,7 +518,8 @@ private:
 	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
 	bool stretch_backdrops() const { return !m_video || m_video->stretch_backdrops; }
-	void fill_backdrop_sides(bitmap_rgb32 &pixels) const;
+	void fill_backdrop_sides(bitmap_rgb32 &pixels, int layer = -1, int flags = 0);
+	bitmap_rgb32 m_wrap_tmp;                 // fill_backdrop_sides: a layer drawn wrapping across the sides
 public:
 	static bool s_moire_blend;
 	static int s_mark_y1, s_mark_y2;   // rows holding shading marks this frame (y1 > y2: none)

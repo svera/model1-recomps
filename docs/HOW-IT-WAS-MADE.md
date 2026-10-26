@@ -1626,12 +1626,36 @@ each side the colour of the layer's 4:3 edge column when that column is one colo
 plain backgrounds, space), and black where art reaches the edge (the Rankings photo). The
 edge-colour curtain is skipped for opaque layers. Only the cockpit is extended, as above.
 
+The opening starfield, behind "A long time ago…" and the crawl, is opaque layer 4 too. It is
+nearly all black, but its edge column holds the odd star, so it fell to the black fill and the stars
+stopped at the 4:3 edges. When at least 99% of a layer's middle is one colour, `fill_backdrop_sides`
+now draws the layer again with `segas24_tile::draw_wide`, which carries on into the sides from the
+same scrolling map, and uses those sides when they are mostly that colour too (art reaching the edge
+still gets the plain fill). The starfield uses split mode 2 (ctrl 0x4000): the layer pair sits side
+by side as one 1024-pixel strip, split on screen at the scroll value. `draw_wide` used to hand the
+split modes back to the 4:3 `draw()`. `draw_wide_split` now widens them: column x reads strip column
+(x − h) & 1023, with the first map in the strip's top half. Mode 1, which picks the map by row, just
+wraps the 512-pixel map.
+
 When the player's ship is hit, SWA flashes the screen with a stippled direct (2D) polygon spanning
 exactly the arcade's 496 columns, so in widescreen the flash stopped at the 4:3 edges. In a wide
 frame, `widen_direct` moves the edge points of any direct polygon that reaches both 4:3 edges out
 to the wide picture's edges. A recorded complete game draws no other direct polygon across the
 whole width; the gunner panels that touch only the left edge stay where they are. The Model 1
 video test checks both cases and 4:3 frames.
+
+The game decides what to draw with the TGP's view test: command 0x31 sets its extents (two
+distances, then right, left, top and bottom in screen pixels: 50, 50, 248, -248, 192, -192 from
+`0D7BC0`, `C2ADA` and `CADDD`) and each 0x32 (an object's position and radius) returns its
+distance, or -1/-2 when it is out of view. Every routine skips drawing an object that fails, so in
+widescreen asteroids, TIE fighters, lasers, turrets and towers were missing from the sides and
+popped in at the old 4:3 edges whenever the camera turned. The `copro_write` hook sees each word
+the V60 writes to the TGP; in a wide frame SWA's widens 0x31's ±248 to ±(248 + extra pixels each
+side). `0D7B85`'s narrow ±20 view, a test of its own, is left alone. The same result also gates
+behaviour (turrets and fighters act only on screen), so enemies in the sides now behave as on
+screen: the Death Star demo plays out slightly differently from 4:3, and an input recording made
+at one width can desync at another. Rendering the culled objects alone would need each of the
+dozens of drawing routines handled separately.
 
 ### SWA's draw distance
 
@@ -1721,8 +1745,10 @@ the camera:
   edges further out only made the pop smaller at a higher cost.
 - **View cone.** A copy whose bounding sphere (its model's farthest vertex, scaled by its
   matrix) lies outside a cone of x/z ±1.5 and y/z ±1 is not drawn. The 4:3 picture spans about
-  ±0.48 by ±0.38, so this leaves room for wider pictures and smooth motion's turns. It keeps
-  the cost per picture near the 1.5-period version's.
+  ±1.24 by ±0.96 (248 and 192 pixels at the view's zoom of 200), so this leaves room for smooth
+  motion's turns; in widescreen the x limit grows with the picture (±1.5 × (248 + extra pixels
+  each side) / 248: ±2.0 at 16:9, which spans ±1.66). It keeps the cost per picture near the
+  1.5-period version's.
 - **Before Z folds.** The stage script sets `77C4` to 1 at `C3B05` (mode 2), then to 8001 at
   `C3C51`/`C38C4` (mode 3). Until bit 15 is set, objects fold in X only, so they can be several
   periods from the camera in Z. At the switch (frame 6969 of the attract mode) the game moves

@@ -1,6 +1,9 @@
 // Sega Model 1 glue: memory map, IRQ controller, timers, ROM banking and the per-frame loop.
 // Follows MAME's src/mame/sega/model1.cpp (BSD-3-Clause, copyright-holders: Olivier Galibert).
+#include <algorithm>
 #include <chrono>
+#include <optional>
+#include <unordered_map>
 #include "model1.h"
 
 namespace {
@@ -560,7 +563,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
-		if (flags & segas24_tile::DRAW_OPAQUE) fill_backdrop_sides(c.px);
+		if (flags & segas24_tile::DRAW_OPAQUE) fill_backdrop_sides(c.px, layer, flags);
 		c.sides = m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext);
 		c.x0.assign(SCREEN_H, 0);
@@ -691,11 +694,37 @@ void model1::prepare_layers()
 
 // Widescreen, for a game whose backdrops aren't stretched: an opaque layer's sides (where it has drawn
 // nothing) take its edge's colour when that edge is all one colour (a plain backdrop), else black
-// (art reaching the edge, kept 4:3).
-void model1::fill_backdrop_sides(bitmap_rgb32 &pixels) const
+// (art reaching the edge, kept 4:3). A sparse layer (SWA's starfield: at least 99% one colour) whose
+// map, wrapping round its 512 columns, is as sparse beside the picture continues across the sides
+// from the map instead, as it scrolls (`layer` given).
+void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
 	if (!m_ext || !m_wide_frame || stretch_backdrops()) return;
+	auto background = [&](const bitmap_rgb32 &b, int x0, int x1, uint32_t colour) {
+		std::unordered_map<uint32_t, int> counts;
+		for (int y = 0; y < SCREEN_H; y++)
+			for (int x = x0; x < x1; x++) counts[b.pix(y, x)]++;
+		auto top = std::max_element(counts.begin(), counts.end(), [](auto a, auto b) { return a.second < b.second; });
+		const int share = colour == KEY ? top->second : counts[colour];
+		return share * 100 >= (x1 - x0) * SCREEN_H * 99 ? std::optional<uint32_t>(colour == KEY ? top->first : colour) : std::nullopt;
+	};
+	if (layer >= 0)
+		if (const auto sky = background(pixels, m_ext, m_ext + SCREEN_W, KEY); sky && *sky != KEY) {
+			if (m_wrap_tmp.width() != pixels.width()) m_wrap_tmp.allocate(pixels.width(), SCREEN_H);
+			m_wrap_tmp.fill(KEY);
+			const int ox = m_tiles.m_ox;
+			m_tiles.m_ox = m_ext;
+			m_tiles.draw_wide(m_wrap_tmp, layer, flags, m_ext);
+			m_tiles.m_ox = ox;
+			if (background(m_wrap_tmp, 0, m_ext, *sky) && background(m_wrap_tmp, m_ext + SCREEN_W, pixels.width(), *sky)) {
+				for (int y = 0; y < SCREEN_H; y++) {
+					std::copy_n(&m_wrap_tmp.pix(y, 0), m_ext, &pixels.pix(y, 0));
+					std::copy_n(&m_wrap_tmp.pix(y, m_ext + SCREEN_W), pixels.width() - m_ext - SCREEN_W, &pixels.pix(y, m_ext + SCREEN_W));
+				}
+				return;
+			}
+		}
 	for (int x_edge : { m_ext, m_ext + SCREEN_W - 1 }) {
 		const uint32_t first = pixels.pix(0, x_edge);
 		bool plain = first != KEY;
@@ -740,7 +769,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;
-			fill_backdrop_sides(m_tile_tmp);
+			fill_backdrop_sides(m_tile_tmp, layer, flags);
 			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_wide = m_wide_frame; m_l4_gen++;
 		}
 		if (sky) find_sky();

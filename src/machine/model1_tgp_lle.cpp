@@ -261,6 +261,8 @@ void model1::lle_v60_w(uint32_t a, uint16_t data, uint16_t mem_mask)
 	if (a >= 0xd80000 && a < 0xda0000) {
 		if ((a >> 1) & 1) {
 			m_v60_copro_fifo_w = (m_v60_copro_fifo_w & 0x0000ffff) | (u32(data) << 16);
+			if (m_gameplay.copro_write)
+				m_v60_copro_fifo_w = m_gameplay.copro_write(m_maincpu.pc(), m_v60_copro_fifo_w);
 			t.fifo_in.push_back(m_v60_copro_fifo_w);
 			t.diagnostics.input_written++;
 			t.diagnostics.input_peak = std::max(t.diagnostics.input_peak, t.fifo_in.size());

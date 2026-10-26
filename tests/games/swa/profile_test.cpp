@@ -2,6 +2,7 @@
 #include "../../../src/games/swa/gameplay.h"
 #include "../../../src/machine/model1.h"
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -198,6 +199,18 @@ int main()
 		if (i) assert(far[i - 1].first * far[i - 1].first + far[i - 1].second * far[i - 1].second <= x * x + z * z);
 	}
 	assert(game::swa::far_cells({}, 18).empty());
+	{
+		// widescreen: TGP 0x31's full-width right and left extents widen by the extra pixels; its
+		// distances, top and bottom, a narrow view's (+-20) and 4:3 stay as sent
+		auto word = [](float v) { return std::bit_cast<uint32_t>(v); };
+		assert(game::swa::view_extent(2, word(248), 83) == word(331));
+		assert(game::swa::view_extent(3, word(-248), 186) == word(-434));
+		assert(game::swa::view_extent(2, word(248), 0) == word(248));
+		assert(game::swa::view_extent(0, word(50), 83) == word(50));
+		assert(game::swa::view_extent(4, word(192), 83) == word(192));
+		assert(game::swa::view_extent(2, word(20), 83) == word(20));
+		assert(game::swa::view_extent(3, word(-20), 83) == word(-20));
+	}
 	{
 		// widescreen cockpit: a diagonal band at the left edge carries on outwards along its slope
 		constexpr uint32_t KEY = 0xff000000, WHITE = 0xffffffff;

@@ -1670,6 +1670,36 @@ struct model1_video_test
 		puts("Model 1 unstretched widescreen backdrop checks passed");
 	}
 
+	// A split-mode layer pair (SWA's opening starfield) drawn wide: the two maps sit side by side as
+	// one 1024-pixel strip, so the sides carry on from it instead of staying empty.
+	static void wide_split_tiles()
+	{
+		constexpr int ext = 83, h = 20;
+		segas24_tile t;
+		std::vector<uint32_t> pens(0x2000);
+		for (size_t i = 0; i < pens.size(); i++) pens[i] = uint32_t(i);
+		for (int i = 0; i < 16; i++) { t.char_w(16 + i, 0x1111, 0xffff); t.char_w(32 + i, 0x2222, 0xffff); }
+		for (int e = 0; e < 0x1000; e++) { t.tile_w(0x2000 + e, 1, 0xffff); t.tile_w(0x3000 + e, 2, 0xffff); }
+		t.tile_w(0x5002, 0x200 | h, 0xffff);     // layer 4's scroll, the first map on the left
+		t.tile_w(0x5006, 0x4000, 0xffff);        // split side by side
+		t.update(pens.data());
+		bitmap_rgb32 wide, plain;
+		wide.allocate(496 + 2 * ext, 384);
+		plain.allocate(496 + 2 * ext, 384);
+		wide.fill(0xff000000);
+		plain.fill(0xff000000);
+		t.m_ox = ext;
+		t.draw_wide(wide, 4, segas24_tile::DRAW_OPAQUE, ext);
+		t.draw(plain, plain.cliprect(), 4, 0, segas24_tile::DRAW_OPAQUE);
+		for (int y = 0; y < 384; y += 50)
+			for (int x = -ext; x < 496 + ext; x++) {
+				const uint32_t want = (x < h || x >= 512 + h) ? 1 : 2;
+				assert(wide.pix(y, x + ext) == want);
+				if (x >= 0 && x < 496) assert(plain.pix(y, x + ext) == want);
+			}
+		puts("Model 1 wide split-mode tile checks passed");
+	}
+
 	static void hud_edge_pinning()
 	{
 		model1::regions regions;
@@ -2066,6 +2096,7 @@ int main(int argc, char **argv)
 	model1_video_test::hud_edge_pinning();
 	model1_video_test::wide_direct_overlay();
 	model1_video_test::unstretched_backdrops();
+	model1_video_test::wide_split_tiles();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);

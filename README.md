@@ -164,7 +164,13 @@ Useful settings (**Esc**):
 - **Display > Widescreen cockpit:** On (default) continues the X-wing cockpit's canopy struts
   and side consoles out to the screen edges in 16:9 and wider, following their lines instead of
   stretching the panel. Off leaves the sides of the cockpit open. No other 2D art is stretched:
-  attract-mode screens such as the notices and the Rankings stay at their 4:3 proportions.
+  attract-mode screens such as the notices and the Rankings stay at their 4:3 proportions. The
+  opening starfield carries on across the full width from its own scrolling map.
+
+In 16:9 and wider, the game's own view test is widened to the whole picture, so ships and
+scenery no longer pop in at the old 4:3 edges. Enemies in the extra width therefore act as if on
+screen (turrets and fighters can fire from there), so play differs slightly from 4:3, and an
+input recording should be replayed at the aspect ratio it was recorded in.
 
 Developers can also record and replay play sessions; see
 [how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).

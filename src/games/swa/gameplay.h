@@ -56,6 +56,7 @@ struct gameplay_state : game::gameplay_state
 	std::map<uint32_t, std::vector<std::pair<int, int>>> far_cells;
 	std::array<float, 3> light{};
 	bool light_known = false, far_attached = false;
+	int view_word = -1;            // the TGP 0x31 (view extents) argument being written, else -1
 };
 
 gameplay_callbacks create_gameplay(model1 &machine);
@@ -75,5 +76,9 @@ uint32_t lod_result(bool enabled, uint32_t pc, uint32_t value);
 // A Star Destroyer's detail byte as its drawing routine reads it: with LOD off, the near model's
 // for every Star Destroyer the game draws.
 uint8_t destroyer_detail(bool enabled, uint8_t value);
+// Argument `index` of TGP 0x31 (the view test's extents: 2 distances, then right, left, top and
+// bottom in screen pixels) as the TGP takes it: a full-width view's right and left (+-248) widened
+// by `ext` pixels, so its 0x32 tests pass what the widescreen sides show. Others unchanged.
+uint32_t view_extent(int index, uint32_t value, int ext);
 
 }

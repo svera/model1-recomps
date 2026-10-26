@@ -185,7 +185,7 @@ public:
 	int m_ox = 0;   // destination x of the arcade's column 0 (widescreen draws centre the picture)
 
 	// Widescreen: draws a layer across [-ext, 496 + ext) by letting the 512-pixel map wrap, the
-	// way it scrolls anyway. Only the plain scroll modes; the split modes fall back to draw().
+	// way it scrolls anyway (the split modes through draw_wide_split).
 	void draw_wide(bitmap_rgb32 &bitmap, int layer, int flags_in, int ext)
 	{
 		uint16_t hscr = tile_ram[0x5000 + (layer >> 1)];
@@ -195,7 +195,7 @@ public:
 		uint8_t tpri = uint8_t((layer & 1) | 0x10);
 		int l = layer >> 1;
 		if (vscr & 0x8000) return;
-		if (ctrl & 0x6000) { draw(bitmap, bitmap.cliprect(), layer, 0, flags_in); return; }
+		if (ctrl & 0x6000) { draw_wide_split(bitmap, l, hscr, vscr, ctrl, layer & 1, flags_in, ext); return; }
 		int win = l & 1;
 		const uint16_t *hscrtb = &tile_ram[0x4000 + 0x200 * l];
 		for (int y = 0; y < 384; y++) {
@@ -213,6 +213,38 @@ public:
 				int i = (h + x) & 511;
 				if (srct[i] == tpri || (flags_in & DRAW_OPAQUE))
 					*dst = m_pens[src[i] & 0x1fff];
+			}
+		}
+	}
+
+	// The split modes of draw(), widened. Mode 1 picks the map pair by row, so the sides just wrap
+	// the 512-pixel map; the others put the two maps side by side as one 1024-pixel strip that
+	// scrolls together, so column x reads strip column (x - h) & 1023, the left map in its top half.
+	void draw_wide_split(bitmap_rgb32 &bitmap, int l, uint16_t hscr, uint16_t vscr, uint16_t ctrl,
+						 uint16_t tpri, int flags_in, int ext)
+	{
+		if (l & 1) return;
+		const uint8_t want = uint8_t(tpri | 0x10);
+		const int mode = (ctrl & 0x6000) >> 13;
+		const uint16_t *hscrtb = &tile_ram[0x4000 + 0x200 * l];
+		const int sy = vscr & 0x1ff;
+		for (int y = 0; y < 384; y++) {
+			const uint16_t hs = (hscr & 0x8000) ? hscrtb[y] : hscr;
+			const int h = hs & 0x1ff;
+			int base = l;
+			if (mode == 1) {
+				const uint16_t v = (-vscr) & 0x1ff;
+				if (!((-vscr) & 0x200)) base ^= 1;
+				if (y >= v) base ^= 1;
+			} else if (!(hs & 0x200))
+				base ^= 1;
+			const size_t row = size_t((y + sy) & 511) * 512;
+			uint32_t *dst = &bitmap.pix(y, m_ox - ext);
+			for (int x = -ext; x < 496 + ext; x++, dst++) {
+				const int m = mode == 1 ? base : (((x - h) & 1023) >= 512 ? base : base ^ 1);
+				const size_t i = row + ((x - h) & 511);
+				if (flags[m][i] == want || (flags_in & DRAW_OPAQUE))
+					*dst = m_pens[pix[m][i] & 0x1fff];
 			}
 		}
 	}

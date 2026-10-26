@@ -133,6 +133,8 @@ struct gameplay_callbacks
 	std::function<void(uint16_t)> work_ram_written;
 	// Optional adjustment of a completed TGP result as the V60 reads it.
 	std::function<uint32_t(uint32_t, uint32_t)> copro_result;
+	// Optional adjustment of a word the V60 writes to the TGP's input FIFO (PC, value).
+	std::function<uint32_t(uint32_t, uint32_t)> copro_write;
 	// Optional adjustment of 32-bit reads in an inclusive address range (PC, address, value).
 	// A zero end observes only read32_watch.
 	uint32_t read32_watch = 0;
