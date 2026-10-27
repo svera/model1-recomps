@@ -122,9 +122,11 @@ Every game has the same make targets, made from its `src/games/<game>/game.mk`: 
 
 ### Star Wars Arcade (experimental)
 
-Star Wars Arcade can be played from start to finish, but it is not released as a download
-yet: build it from source (see above), then start it and select your own US **`swa.zip`**
-when asked. Keep **`model1io.zip`** in the same folder.
+<p align="center"><img src="assets/games/swa/icon/icon.png" alt="Star Wars Arcade Recomp" width="160"></p>
+
+Star Wars Arcade can be played from start to finish. It is packaged like VR
+(`StarWarsArcadeRecomp-*`), or build it from source (see above); start it and select your own
+US **`swa.zip`** when asked. Keep **`model1io.zip`** in the same folder.
 
 ```sh
 make swa
@@ -145,21 +147,31 @@ speed. This is useful for quickly reaching scenes to debug. **P** pauses and res
 | Torpedo | X | O | Left trigger |
 | Change view | C | - | Y / Triangle |
 | Start | 1 | 2 | Start |
-| Insert coin | 5 | 6 | Left bumper |
+| Insert coin (Arcade mode) | 5 | 6 | Left bumper |
 
 Useful settings (**Esc**):
 
 - **Cheats > Gunner assist:** one player can fly while the Gunner's laser aims at the nearest
   enemy by itself, in PILOT & GUNNER mode.
+- **Game > Play style:** PC mode is free play (Start begins without coins); Arcade mode uses the
+  cabinet's coin settings, kept while PC mode is in use.
 - **Game > Invert flight Y:** push forward to climb instead of dive.
+- **Game > Service menu:** opens the arcade's own test menu (tests, game and coin settings,
+  bookkeeping). **9** moves and **F2** selects; choose EXIT to return.
+- **Game > Difficulty (player / enemy / timer), Advertise sound:** the test menu's GAME
+  ASSIGNMENT settings (1/5 to 5/5, default 3/5; attract sound Off or On), without the test menu.
+  Changing one restarts the game when the menu closes; they are kept with the game's own settings.
 - **Display > Frame rate:** 30 shows the game as the arcade drew it; 60 and 120 smooth the
-  motion between pictures, though some of the game is not smoothed yet.
+  motion between pictures, including Draw distance Full's extra asteroids, rock clusters and
+  Star Destroyers, though some of the game is not smoothed yet.
 - **Display > LOD:** Off (default) keeps the most detailed models at every distance; On uses
   the arcade's simpler distant models. Off also retains the complete Death Star globe through
   the attract-mode approach instead of switching to smaller surface patches.
 - **Display > Draw distance:** Full (default) shows the Death Star's surface further out and
-  pre-draws asteroid clusters and Star Destroyers at the asteroid-field attract scene's opening
-  to avoid their pop-in, without adding them to the Death Star demo. Arcade disables these
+  pre-draws asteroid clusters, small-rock clusters and Star Destroyers at the asteroid-field attract scene's opening
+  to avoid their pop-in, without adding them to the Death Star demo. In play, it also draws the
+  asteroid field's clusters of small rocks where they repeat, so they no longer pop in at the
+  screen edges or ahead. Arcade disables these
   additions and keeps the cabinet's original pop-in.
 - **Display > Widescreen cockpit:** On (default) continues the X-wing cockpit's canopy struts
   and side consoles out to the screen edges in 16:9 and wider, following their lines instead of
@@ -168,15 +180,17 @@ Useful settings (**Esc**):
   opening starfield carries on across the full width from its own scrolling map.
 
 In 16:9 and wider, the game's own view test is widened to the whole picture, so ships and
-scenery no longer pop in at the old 4:3 edges. Enemies in the extra width therefore act as if on
+scenery no longer pop in at the old 4:3 edges. The Death Star's surface draws only the cells the
+arcade lists for each heading, so in widescreen it also draws the neighbouring headings' cells.
+Enemies in the extra width therefore act as if on
 screen (turrets and fighters can fire from there), so play differs slightly from 4:3, and an
 input recording should be replayed at the aspect ratio it was recorded in.
 
 Developers can also record and replay play sessions; see
 [how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
 
-Release packaging is enabled only for Virtua Racing on macOS, Windows, and Linux. Each platform's
-`package.sh` builds VR by default.
+Release packaging is enabled for Virtua Racing and Star Wars Arcade on macOS, Windows, and Linux.
+Each platform's `package.sh` builds both by default, or the games named (`package.sh swa`).
 
 Useful shared checks:
 
@@ -197,6 +211,7 @@ make test-vr-profile test-vr-gameplay test-vr-tgp-track
 | `src/games/vr` | VR profiles and game-specific behavior |
 | `src/games/swa` | Experimental Star Wars Arcade profile, ROM tables, scripted play and host |
 | `assets/games/vr` | VR address map, icon and other artwork |
+| `assets/games/swa` | SWA address map and icon |
 | `src/gpu` | Metal and SDL_GPU renderers and shaders |
 | `tools/recomp` | Ahead-of-time V60-to-C++ recompiler |
 | `tools/mac`, `tools/win`, `tools/linux` | Each platform's `package.sh [game ...]`: the downloads, the same for every game |

@@ -530,9 +530,15 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 				const double p[3] = { P[i].x - cp[0], P[i].y - cp[1], P[i].z - cp[2] }, q[3] = { Q[i].x - cq[0], Q[i].y - cq[1], Q[i].z - cq[2] };
 				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) H[r][c] += q[r] * p[c];
 			}
-		double M[3][3];
-		memcpy(M, H, sizeof M);
-		for (int it = 0; it < 30; it++) {
+		// (scaled to about 1 first: each step only halves a large singular value, and SWA's places,
+		// tens of thousands of units, left it 13 after 30 steps, a "turn" that matched nothing: every
+		// part off it by many times its depth, each list a cut, its attract unblended)
+		double M[3][3], norm = 0;
+		for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) norm += H[r][c] * H[r][c];
+		if (!(norm > 0)) return 0;
+		norm = std::sqrt(norm / 3);
+		for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) M[r][c] = H[r][c] / norm;
+		for (int it = 0; it < 60; it++) {
 			const double det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
 			if (std::fabs(det) < 1e-30) return 0;
 			double C[3][3];   // the inverse's transpose: cofactors / det
@@ -735,6 +741,55 @@ static bool rigid_blend(const float *pa, const float *pb, double alpha, float *o
 	return true;
 }
 
+// Keyed extras (renderer-only copies, their transforms relative to their slot's matrix) of each
+// blended slot, paired with the nearest of the same key in the older list's slot. SWA's Full
+// copies hang on the stars' matrix, the camera's turn alone: blending only that, the copies moved
+// with the camera's turn but not its flight, a step each game frame. A copy that moved over 60% of
+// its distance (the game moving its object a period on, a different copy) isn't paired.
+void model1::pair_extras(const logic_frame &a, const logic_frame &b, const std::vector<int> &pair)
+{
+	std::unordered_multimap<uint64_t, int> older;
+	for (size_t i = 0; i < b.slots.size(); i++) {
+		if (!m_blend_ok[i] || pair[i] < 0) continue;
+		const auto &to = b.slots[i].extra, &from = a.slots[pair[i]].extra;
+		if (to.empty() || from.empty()) continue;
+		older.clear();
+		for (size_t k = 0; k < from.size(); k++)
+			if (from[k].key && from[k].transform) older.emplace(from[k].key, int(k));
+		if (older.empty()) continue;
+		auto &pairs = m_extra_pair[i];
+		pairs.assign(to.size(), -1);
+		for (size_t k = 0; k < to.size(); k++) {
+			if (!to[k].key || !to[k].transform) continue;
+			const auto &tb = *to[k].transform;
+			const glm::vec3 vb(tb[9], tb[10], tb[11]);
+			float best = INFINITY;
+			const auto [first, last] = older.equal_range(to[k].key);
+			for (auto it = first; it != last; ++it) {
+				const auto &ta = *from[it->second].transform;
+				const glm::vec3 va(ta[9], ta[10], ta[11]);
+				const float d = glm::length(vb - va);
+				if (d < best && d <= 0.6f * std::max({ glm::length(va), glm::length(vb), 1.0f })) best = d, pairs[k] = it->second;
+			}
+		}
+		m_extra_from[i] = &from;
+	}
+}
+
+// The extra `n` of the slot being drawn: its transform `local` (the newer list's), blended with
+// its pair's in the older list as its slot's matrix is.
+void model1::smooth_extra(size_t n, const std::array<float, 12> &local, float *out) const
+{
+	std::copy(local.begin(), local.end(), out);
+	if (!m_replaying || (m_replay_older && !m_replay_extra) || m_replay_slot < 0 || m_replay_slot >= int(m_blend_ok.size()) ||
+		!m_blend_ok[m_replay_slot] || size_t(m_replay_slot) >= m_extra_pair.size() || !m_extra_from[m_replay_slot]) return;
+	const auto &pairs = m_extra_pair[m_replay_slot];
+	if (n >= pairs.size() || pairs[n] < 0) return;
+	const auto &from = *(*m_extra_from[m_replay_slot])[pairs[n]].transform;
+	for (int k = 0; k < 12; k++) out[k] = float(from[k] + (local[k] - from[k]) * m_extra_alpha);
+	if (swung(from.data(), local.data())) turn_blend(from.data(), local.data(), m_extra_alpha, out);
+}
+
 void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alpha)
 {
 	m_blend.assign(b.slots.size(), {});
@@ -742,6 +797,9 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	m_blend_from.assign(b.slots.size(), {});
 	m_blend_to.assign(b.slots.size(), {});
 	m_blend_light.assign(b.slots.size(), {});
+	m_extra_pair.assign(b.slots.size(), {});
+	m_extra_from.assign(b.slots.size(), nullptr);
+	m_extra_alpha = alpha;
 	m_blend_cut = false;
 	if (alpha >= 1 && !m_replay_older) return;
 	if (a.slots.empty()) return;
@@ -915,6 +973,7 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 			}
 	}
 	if (m_blend_cut) std::fill(m_blend_ok.begin(), m_blend_ok.end(), 0);
+	else pair_extras(a, b, pair);
 	m_smooth_stats[1] = jumps;
 	static const bool logm = getenv("M1_LOG_SMOOTH") != nullptr;
 	if (logm && (jumps || missing)) fprintf(stderr, "M jumps %d missing %d paired %d slots %zu/%zu\n", jumps, missing, paired, na, nb);

@@ -546,6 +546,8 @@ void model1::redraw()
 
 bool model1::past_boot() const
 {
+	// a game with no camera RAM (SWA) holds a Test press made in its boot until the boot's over
+	if (!m_profile->camera_ram) return true;
 	return camera() != 0;
 }
 

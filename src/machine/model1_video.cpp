@@ -2177,11 +2177,13 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 					float extra_z = old_z;
 					m_extra_colours.clear();   // light, palette and smooth shading stay fixed within this batch
 					if (extra)
-						for (const auto &object : *extra) {
+						for (size_t n = 0; n < extra->size(); n++) {
+							const auto &object = (*extra)[n];
 							float blended[12];
 							if (m_replaying && smooth_matrix(object.polygon, blended)) m_view->set_translation_matrix(blended);
 							if (object.transform) {
-								const auto &local = *object.transform;
+								float local[12];
+								smooth_extra(n, *object.transform, local);
 								float parent[12];
 								std::copy_n(m_view->translation, 12, parent);
 								for (int c = 0; c < 3; c++)

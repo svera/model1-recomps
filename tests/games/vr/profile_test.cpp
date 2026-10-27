@@ -72,7 +72,7 @@ int main(int argc, char **argv)
 	assert(vr.display_name == "Virtua Racing");
 	assert(vr.romset == "vr");
 	assert(vr.recompiler_map == "games/vr/vr_map.txt");
-	assert(vr.mode_ram == 0x3002 && vr.test_menu_mode == 18);   // 13 in attract, 18 in the test menu
+	assert(vr.mode_ram == 0x503002 && vr.test_menu_mode == 18);   // 13 in attract, 18 in the test menu
 
 	const auto &vr_io = game::get_io_profile(game::vr::ID);
 	assert(vr_io.digital_controls[12] == "Shift Down");

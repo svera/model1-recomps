@@ -34,6 +34,9 @@
 // Full adds the cells past the far layer's list, within its direction, to the matrix of one of its
 // type-0 cells, in the renderer only, and keeps every band's light at least 0.45 (the far layer's
 // fifth band). Neither changes what the V60 runs or writes outside the display list.
+// The lists span only the 4:3 view; in a wide frame the cells the other headings' lists draw that
+// this heading's don't (side_cells) are added the same way, band by band, with bounds so the
+// renderer culls those outside the wide view.
 //
 // The coarse layers are the surface's own distant detail: each coarse cell's model is a simpler
 // version of the 2 x 2 fine cells it covers (fine cells 2x, 2x + 1 by 2z, 2z + 1; its centre is half
@@ -46,7 +49,13 @@
 // (far bigger than its test's radius) appears at once at a screen edge. Full draws every object
 // within 2 periods, where it is and where it repeats, fading in from black beyond 1.5: drawn
 // objects' models copied from their matrix, culled ones from their own fields (see
-// wrapped_copies), in the renderer only.
+// wrapped_copies), in the renderer only. The small rocks' clusters (DB88C) are a denser field of
+// their own: each repeats every 32,768 units in X and 65,536 in Z (while the mode is below 4), so
+// the game's one copy pops in 16,384 units to a side; Full draws their repeats within 65,536 units,
+// fading in beyond 49,152. The game also keeps each within 4,096 units of the camera's height
+// (8,192 apart), moving it from above to below at once; copies stay at the game's height (stacked
+// ones would fill the sky with columns) but one within 2,048 of that edge is also drawn where it
+// moves to, fading in, so that the move shows no change.
 #include "gameplay.h"
 #include "../../machine/model1.h"
 #include <algorithm>
@@ -106,6 +115,10 @@ constexpr uint32_t POLYGON_ADDRESS = 0x7fffff;   // as the renderer takes a mode
 constexpr float FULL_LIGHT = 0.45f;
 constexpr int FULL_RADIUS = 18;      // cells of the far layer: twice the arcade's
 constexpr int MASK_REG = 4, SHIFT_REG = 6, ROW_SHIFT_REG = 7, MAP_REG = 10, CENTER_X_REG = 13, CENTER_Z_REG = 14;
+constexpr uint32_t LAYER_LIGHTS_SIZE = 0x40;   // each layer's band lights in the tables at 99BE0
+constexpr int COARSE_SHIFT = 12;     // the coarse layers' cells: 4,096 units, the fine ones' half
+// a surface pass's layers in later frames than its first only when the V60 runs late
+constexpr uint64_t SIDE_PASS_FRAMES = 4;
 constexpr int LAYER_REG = 18;        // the layer's list table, + 4
 constexpr int LIGHTS_REG = 28;       // the band's light scale in its layer's table
 constexpr uint32_t HEADING = 0x1a;   // in the surface's object (R20)
@@ -124,6 +137,7 @@ constexpr uint32_t ASTEROID_RECORD_SIZE = 28;
 constexpr uint32_t ASTEROID_INIT_READS[] = { 0x0db1dd, 0x0db46d };   // last angular velocity, 26 bytes into the placement
 constexpr uint32_t WRAP_FLAG_READ = 0x0dbee0;   // and.h 77C4[R25], R0 (R0: the manager's 30[R20])
 constexpr uint32_t WRAP_FLAGS = 0x77c4, CAMERA_X = 0x7724, CAMERA_Z = 0x7728, CAMERA_ROTATION = 0x7570;
+constexpr uint32_t CAMERA_Y = 0x7704;   // the eye's, a float (7700-7708)
 // 77C4: bit 15 folds Z into the camera's period too. C3B05 sets 1 before 8001 (C3C51/C38C4);
 // prime the renderer's Z copies during sequence 3/subsequence 2 so ships are already present.
 constexpr uint16_t WRAP_Z = 0x8000, WRAP_Z_NEXT = 0x0001;
@@ -131,6 +145,20 @@ constexpr uint8_t DESTROYERS_WRAP_BELOW = 4;    // the mode 7009 below which DBE
 constexpr uint32_t HANDLER = 0x24, POSITION_X = 0xc, POSITION_Y = 0x10, POSITION_Z = 0x14;   // in an object
 constexpr uint32_t ASTEROID_HANDLERS[] = { 0x0db200, 0x0db502 };
 constexpr uint32_t DESTROYER_HANDLER = 0x0dd612;
+// DB88C: a cluster of small rocks, placed from its halfwords' differences from the camera's
+constexpr uint32_t CLUSTER_HANDLER = 0x0db88c;
+constexpr uint32_t CLUSTER_CULL_READ = 0x0db927;   // its TGP 0x32 view test (radius 2560)
+constexpr uint32_t CLUSTER_ROLL = 0x1c;
+constexpr float CLUSTER_SCALE = 2.5f;              // 40200000
+constexpr float CLUSTER_PERIOD_X = 32768, CLUSTER_PERIOD_Y = 8192, CLUSTER_PERIOD_Z = 65536;
+constexpr float CLUSTER_HANDOVER = 2048;   // the copy the game moves it to fades in over this much height
+constexpr uint8_t CLUSTERS_WRAP_Z_BELOW = 4;       // the mode 7009 below which DB88C places Z
+constexpr float CLUSTER_REACH = 65536;
+constexpr uint32_t CLUSTER_X = 0x30, CLUSTER_Y = 0x32;   // DB833: the placement's X and Y (and Z at 34) low halfwords
+// DBE82's cluster placements after the asteroids': handler, initializer (DB833), then X, Y, Z
+constexpr uint32_t ATTRACT_CLUSTERS = 0x0df7b2, ATTRACT_CLUSTERS_END = 0x0df816, CLUSTER_RECORD_SIZE = 20;
+constexpr uint32_t CLUSTER_INIT_READ = 0x0db85b;   // mov.w [R4+], R0: Z, 16 bytes into the placement
+constexpr uint32_t CLUSTER_MODEL = 0x23beba, CLUSTER_DATA = 0x5222b;
 constexpr uint32_t ASTEROID_MATRIX_WRITE = 0x0c18c1;   // C1869's
 constexpr uint32_t STARS_MODEL = 0x1f46a4;            // drawn with the camera's rotation alone
 constexpr uint32_t ASTEROID_MODEL = 2, ASTEROID_DATA = 6, ASTEROID_SCALE = 0x38, ASTEROID_YAW = 0x40, ASTEROID_ROLL = 0x42;
@@ -148,6 +176,9 @@ constexpr float WRAP_PERIOD = 131072, WRAP_REACH = 262144, WRAP_FADE = 196608;
 constexpr uint32_t VIEW_EXTENTS = 0x31;
 constexpr int VIEW_RIGHT = 2, VIEW_LEFT = 3, VIEW_ARGUMENTS = 6;
 constexpr float VIEW_HALF_WIDTH = 248;
+constexpr float VIEW_SLOPE = 1.24f;      // the half-width's slope: 248 pixels at the zoom of 200
+constexpr int SURFACE_HEADINGS = 32;     // the surface's lists per layer, 11.25 degrees apart
+constexpr uint32_t SURFACE_TABLE_SIZE = 4 * SURFACE_HEADINGS;   // one layer's; the four follow each other
 constexpr int LIST_REG = 11;
 }
 
@@ -173,6 +204,57 @@ std::vector<std::pair<int, int>> far_cells(const std::vector<std::pair<int, int>
 		}
 	std::stable_sort(cells.begin(), cells.end(), [](auto a, auto b) { return a.first * a.first + a.second * a.second < b.first * b.first + b.second * b.second; });
 	return cells;
+}
+
+std::vector<side_cell> side_cells(const std::array<cell_bands, 4> &own, const std::vector<std::array<cell_bands, 4>> &others,
+	const std::array<float, 4> &reach)
+{
+	using cell = std::pair<int, int>;
+	std::set<cell> own_fine, own_coarse;
+	for (int layer = 0; layer < 4; layer++)
+		for (const auto &band : own[layer])
+			for (const cell c : band) (layer < 2 ? own_fine : own_coarse).insert(c);
+	// each neighbour cell the heading lacks, with the layer and band it first comes in
+	std::map<cell, std::pair<int, int>> fine, coarse;
+	for (const auto &lists : others)
+		for (int layer = 0; layer < 4; layer++)
+			for (int band = 0; band < int(lists[layer].size()); band++)
+				for (const cell c : lists[layer][band]) {
+					auto &to = layer < 2 ? fine : coarse;
+					if (std::hypot(float(c.first), float(c.second)) <= reach[layer] && !(layer < 2 ? own_fine : own_coarse).count(c))
+						to.emplace(c, std::pair{ layer, band });
+				}
+	const auto coarse_of = [](cell f) { return cell{ f.first >> 1, f.second >> 1 }; };
+	std::set<cell> covered = own_coarse;   // coarse cells drawn whole
+	std::vector<side_cell> cells;
+	std::set<cell> split;                  // fine cells drawn for a coarse cell the heading half draws
+	for (const auto &[c, at] : coarse) {
+		bool partial = false;
+		for (int j = 0; j < 2; j++)
+			for (int i = 0; i < 2; i++) partial |= own_fine.count({ 2 * c.first + i, 2 * c.second + j }) > 0;
+		if (!partial) {
+			covered.insert(c);
+			cells.push_back({ at.first, at.second, true, c.first, c.second });
+			continue;
+		}
+		for (int j = 0; j < 2; j++)
+			for (int i = 0; i < 2; i++) {
+				const cell f{ 2 * c.first + i, 2 * c.second + j };
+				if (!own_fine.count(f) && split.insert(f).second) cells.push_back({ at.first, at.second, false, f.first, f.second });
+			}
+	}
+	for (const auto &[f, at] : fine)
+		if (!covered.count(coarse_of(f)) && !split.count(f)) cells.push_back({ at.first, at.second, false, f.first, f.second });
+	std::stable_sort(cells.begin(), cells.end(), [](const side_cell &a, const side_cell &b) { return std::pair{ a.layer, a.band } < std::pair{ b.layer, b.band }; });
+	return cells;
+}
+
+int side_headings(int ext)
+{
+	if (ext <= 0) return 0;
+	// the arcade's half-width at its zoom (the view cone's 1.24), and its widescreen one
+	const float extra = std::atan(VIEW_SLOPE * (VIEW_HALF_WIDTH + float(ext)) / VIEW_HALF_WIDTH) - std::atan(VIEW_SLOPE);
+	return int(std::ceil(extra / (6.2831853f / SURFACE_HEADINGS)));
 }
 
 uint32_t lod_result(bool enabled, uint32_t pc, uint32_t value)
@@ -335,6 +417,8 @@ std::optional<cell_model> map_cell(model1 &machine, uint32_t map, uint32_t mask,
 	return cell_model{ machine.read32(at + 2), machine.read32(at + 6), angle };
 }
 
+model_bounds bounds_for(model1 &machine, gameplay_state &state, uint32_t polygon);
+
 // a model at `offset` from a parent cell's centre turned by `parent`, in that cell's matrix
 render_object placed(const cell_model &model, float parent, float x, float z)
 {
@@ -362,32 +446,118 @@ void add_coarse_cell(model1 &machine, gameplay_state &state, std::vector<render_
 }
 
 // at a coarse layer's cell matrix: with LOD off its fine cells, and (Full) the cells past the far
-// layer's list, attached to its first type-0 cell
+// layer's list, attached to its first type-0 cell; in a wide frame the cells the sides show
+// (side_cells), each band's attached to the first type-0 cell drawn in it or after
 std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 {
 	auto reg = [&](int r) { return machine.cpu().reg(r); };
 	const uint32_t lights = reg(LIGHTS_REG);
-	if (lights < COARSE_BAND_LIGHTS || lights >= BAND_LIGHTS_END) return {};
-	if (lights < FAR_BAND_LIGHTS) state.far_attached = false;
+	if (lights < BAND_LIGHTS || lights >= BAND_LIGHTS_END) return {};
+	const int layer = int((lights - BAND_LIGHTS) / LAYER_LIGHTS_SIZE);
 	const int shift = int(reg(SHIFT_REG)), row_shift = int(reg(ROW_SHIFT_REG));
 	const uint32_t mask = reg(MASK_REG), map = reg(MAP_REG);
 	const int px = int32_t(reg(0)) >> shift, pz = int32_t(reg(1)) >> shift;
+	const int cx = int32_t(reg(CENTER_X_REG)), cz = int32_t(reg(CENTER_Z_REG));
 	const auto own = map_cell(machine, map, mask, row_shift, px, pz);
 	std::vector<render_object> objects;
+	const auto heading_list = [&](uint32_t table, int heading) {
+		return machine.read32(table + 4 * uint32_t(heading & (SURFACE_HEADINGS - 1)));
+	};
+	const auto read_list = [&](uint32_t at) {
+		cell_bands bands(machine.read8(at++));
+		for (auto &band : bands)
+			for (int n = machine.read8(at++); n > 0; n--, at += 2) band.emplace_back(int8_t(machine.read8(at)), int8_t(machine.read8(at + 1)));
+		return bands;
+	};
+	const bool wide = machine.wide_ext() > 0;
+	const uint32_t table = machine.read32(reg(LAYER_REG) - 4);
+	const int heading = machine.read16(reg(OBJECT_REG) + HEADING) & (SURFACE_HEADINGS - 1);
+	if (wide && (state.side_layer < 0 || layer < state.side_layer || machine.frame_number() > state.side_frame + SIDE_PASS_FRAMES)) {
+		// a new pass: its four layers' tables follow each other
+		const uint32_t first = table - SURFACE_TABLE_SIZE * uint32_t(layer);
+		const int steps = side_headings(machine.wide_ext());
+		const uint64_t key = uint64_t(first) << 16 | uint64_t(heading) << 8 | uint64_t(steps) << 1 | uint64_t(state.full_distance);
+		auto entry = state.sides.find(key);
+		if (entry == state.sides.end()) {
+			const auto lists = [&](int h) {
+				std::array<cell_bands, 4> l;
+				for (int i = 0; i < 4; i++) l[i] = read_list(heading_list(first + SURFACE_TABLE_SIZE * uint32_t(i), h));
+				return l;
+			};
+			gameplay_state::surface_sides sides;
+			const auto mine = lists(heading);
+			std::vector<std::array<cell_bands, 4>> others;   // nearest first
+			for (int d = 1; d <= SURFACE_HEADINGS / 2; d++) {
+				others.push_back(lists(heading + d));
+				if (d < SURFACE_HEADINGS / 2) others.push_back(lists(heading - d));
+			}
+			// each layer out to its own list's reach; (Full) the far layer to the reach of those
+			// covering the picture's width, past which far_cells continues
+			std::array<float, 4> reach{};
+			const auto extend = [&](int i, const cell_bands &bands) {
+				for (const auto &band : bands)
+					for (auto [x, z] : band) reach[i] = std::max(reach[i], std::hypot(float(x), float(z)));
+			};
+			for (int i = 0; i < 4; i++) extend(i, mine[i]);
+			std::vector<std::pair<int, int>> far;
+			for (const auto &band : mine[3]) far.insert(far.end(), band.begin(), band.end());
+			for (int n = 0; n < 2 * steps && n < int(others.size()); n++) {
+				if (state.full_distance) extend(3, others[n][3]);
+				for (const auto &band : others[n][3]) far.insert(far.end(), band.begin(), band.end());
+			}
+			sides.cells = side_cells(mine, others, reach);
+			for (int i = 0; i < 4; i++)
+				for (int b = 0; b < int(mine[i].size()); b++)
+					for (auto c : mine[i][b]) sides.band[i].emplace(c, b);
+			sides.far = far_cells(far, FULL_RADIUS);
+			entry = state.sides.emplace(key, std::move(sides)).first;
+		}
+		state.side_pass = &entry->second;
+		state.side_next = 0;
+		state.side_frame = machine.frame_number();
+	}
+	if (!wide) state.side_pass = nullptr;
+	state.side_layer = layer;
+	if (const auto *sides = state.side_pass; sides && own && own->angle == 0) {
+		const auto band = sides->band[layer].find({ px - cx, pz - cz });
+		if (band != sides->band[layer].end()) {
+			// the centre cell in each kind's units: the fine layers' is twice the coarse layers'
+			const int coarse_x = layer < 2 ? cx >> 1 : cx, coarse_z = layer < 2 ? cz >> 1 : cz;
+			for (; state.side_next < sides->cells.size(); state.side_next++) {
+				const side_cell &c = sides->cells[state.side_next];
+				if (std::pair{ c.layer, c.band } > std::pair{ layer, band->second }) break;
+				const int cell_shift = c.coarse ? COARSE_SHIFT : COARSE_SHIFT - 1;
+				const int x = (c.coarse ? coarse_x : 2 * coarse_x) + c.x, z = (c.coarse ? coarse_z : 2 * coarse_z) + c.z;
+				const float ox = float(x * (1 << cell_shift) - px * (1 << shift)), oz = float(z * (1 << cell_shift) - pz * (1 << shift));
+				const size_t from = objects.size();
+				if (c.coarse) {
+					if (const auto model = map_cell(machine, COARSE_MAP, COARSE_MASK, COARSE_ROW_SHIFT, x, z))
+						add_coarse_cell(machine, state, objects, *model, x, z, COARSE_SHIFT, 0, ox, oz);
+				} else if (const auto model = map_cell(machine, FINE_MAP, FINE_MASK, FINE_ROW_SHIFT, x, z))
+					objects.push_back(placed(*model, 0, ox, oz));
+				// most are out of view: the renderer leaves those out by their bounds
+				for (size_t i = from; i < objects.size(); i++) objects[i].bounds = bounds_for(machine, state, objects[i].polygon);
+				state.side_cells_drawn++;
+			}
+		}
+	}
+	if (lights < COARSE_BAND_LIGHTS) return objects;
+	if (lights < FAR_BAND_LIGHTS) state.far_attached = false;
 	if (!state.lod && own) add_coarse_cell(machine, state, objects, *own, px, pz, shift, own->angle, 0, 0);
 	if (!state.full_distance || lights < FAR_BAND_LIGHTS || state.far_attached || !own || own->angle != 0) return objects;
 	state.far_attached = true;
-	const uint32_t list = machine.read32(machine.read32(reg(LAYER_REG) - 4) + 4 * machine.read16(reg(OBJECT_REG) + HEADING));
-	auto cached = state.far_cells.find(list);
-	if (cached == state.far_cells.end()) {
-		std::vector<std::pair<int, int>> cells;
-		uint32_t at = list;
-		for (int bands = machine.read8(at++); bands > 0; bands--)
-			for (int n = machine.read8(at++); n > 0; n--, at += 2) cells.emplace_back(int8_t(machine.read8(at)), int8_t(machine.read8(at + 1)));
-		cached = state.far_cells.emplace(list, far_cells(cells, FULL_RADIUS)).first;
+	const std::vector<std::pair<int, int>> *far = state.side_pass ? &state.side_pass->far : nullptr;
+	if (!far) {
+		const uint32_t list = heading_list(table, heading);
+		auto cached = state.far_cells.find(list);
+		if (cached == state.far_cells.end()) {
+			std::vector<std::pair<int, int>> cells;
+			for (const auto &band : read_list(list)) cells.insert(cells.end(), band.begin(), band.end());
+			cached = state.far_cells.emplace(list, far_cells(cells, FULL_RADIUS)).first;
+		}
+		far = &cached->second;
 	}
-	const int cx = int32_t(reg(CENTER_X_REG)), cz = int32_t(reg(CENTER_Z_REG));
-	for (auto [dx, dz] : cached->second) {
+	for (auto [dx, dz] : *far) {
 		const int x = cx + dx, z = cz + dz;
 		if (const auto model = map_cell(machine, map, mask, row_shift, x, z)) {
 			add_coarse_cell(machine, state, objects, *model, x, z, shift, 0, float((x - px) << shift), float((z - pz) << shift));
@@ -441,21 +611,64 @@ std::array<float, 3> position(model1 &machine, uint32_t object)
 	return { read_float(machine, object + POSITION_X), read_float(machine, object + POSITION_Y), read_float(machine, object + POSITION_Z) };
 }
 
-// the world's periodic offsets of an object at `at` within WRAP_REACH of the camera; its own place too with `own`
-std::vector<std::array<float, 3>> wrap_offsets(model1 &machine, const gameplay_state &state, const std::array<float, 3> &at, bool own)
+// a repeating field: its period on each axis (0: none), how far from the camera copies are drawn and
+// (handover, 0: none) the period in Y within which the game keeps an object around the camera's height
+struct wrap_field {
+	std::array<float, 3> period;
+	float reach;
+	float handover = 0;
+};
+
+// a place an object repeats at, and its copy's fade
+struct wrap_offset {
+	std::array<float, 3> d;
+	float fade = 1;
+};
+
+wrap_field asteroid_field(model1 &machine, const gameplay_state &state)
 {
 	const uint32_t vars = machine.cpu().reg(VARIABLES_REG);
-	const float ox = at[0] - float(int32_t(machine.read32(vars + CAMERA_X)));
-	const float oz = at[2] - float(int32_t(machine.read32(vars + CAMERA_Z)));
 	const bool wrap_z = state.z_wrap_prefetched || (machine.read16(vars + WRAP_FLAGS) & (WRAP_Z | WRAP_Z_NEXT));
+	return { { WRAP_PERIOD, 0, wrap_z ? WRAP_PERIOD : 0 }, WRAP_REACH };
+}
+
+wrap_field cluster_field(model1 &machine)
+{
+	const bool wrap_z = machine.read8(machine.cpu().reg(VARIABLES_REG) + MODE) < CLUSTERS_WRAP_Z_BELOW;
+	return { { CLUSTER_PERIOD_X, 0, wrap_z ? CLUSTER_PERIOD_Z : 0 }, CLUSTER_REACH, CLUSTER_PERIOD_Y };
+}
+
+// the world's periodic offsets of an object at `at` within the field's reach of the camera (or `center`); its own place too with `own`.
+// With a handover, an object within CLUSTER_HANDOVER of the edge of its band around the camera's height is also
+// drawn where the game moves it at the edge, fading in, so that neither copy appears at once.
+std::vector<wrap_offset> wrap_offsets(model1 &machine, const std::array<float, 3> &at, bool own, const wrap_field &field,
+	const std::optional<std::array<float, 3>> &center = std::nullopt)
+{
+	const uint32_t vars = machine.cpu().reg(VARIABLES_REG);
+	const std::array<float, 3> camera = center ? *center : std::array<float, 3>{ float(int32_t(machine.read32(vars + CAMERA_X))),
+		read_float(machine, vars + CAMERA_Y), float(int32_t(machine.read32(vars + CAMERA_Z))) };
+	const std::array<float, 3> o{ at[0] - camera[0], at[1] - camera[1], at[2] - camera[2] };
 	// (before the game folds them, objects can be periods away from the camera)
-	const auto first = [](float o) { return int(std::ceil((-WRAP_REACH - o) / WRAP_PERIOD)); };
-	const auto last = [](float o) { return int(std::floor((WRAP_REACH - o) / WRAP_PERIOD)); };
-	std::vector<std::array<float, 3>> offsets;
-	for (int j = wrap_z ? first(oz) : 0; j <= (wrap_z ? last(oz) : 0); j++)
-		for (int i = first(ox); i <= last(ox); i++)
-			if ((own || i || j) && std::hypot(ox + i * WRAP_PERIOD, oz + j * WRAP_PERIOD) <= WRAP_REACH)
-				offsets.push_back({ i * WRAP_PERIOD, 0, j * WRAP_PERIOD });
+	std::array<int, 3> first{}, last{};
+	for (int a = 0; a < 3; a++)
+		if (field.period[a]) {
+			first[a] = int(std::ceil((-field.reach - o[a]) / field.period[a]));
+			last[a] = int(std::floor((field.reach - o[a]) / field.period[a]));
+		}
+	std::vector<std::pair<float, float>> heights{ { 0.0f, 1.0f } };   // (Y offset, fade)
+	if (field.handover) {
+		const float into = std::fabs(o[1]) - (field.handover / 2 - CLUSTER_HANDOVER);
+		if (into > 0) heights.push_back({ o[1] > 0 ? -field.handover : field.handover, std::min(1.0f, into / CLUSTER_HANDOVER) });
+	}
+	std::vector<wrap_offset> offsets;
+	for (const auto &[dy, fade] : heights)
+		for (int k = first[2]; k <= last[2]; k++)
+			for (int j = first[1]; j <= last[1]; j++)
+				for (int i = first[0]; i <= last[0]; i++) {
+					const std::array<float, 3> d{ i * field.period[0], j * field.period[1] + dy, k * field.period[2] };
+					if ((own || i || j || k || dy) && std::hypot(o[0] + d[0], o[1] + d[1], o[2] + d[2]) <= field.reach)
+						offsets.push_back({ d, fade });
+				}
 	return offsets;
 }
 
@@ -495,7 +708,8 @@ std::vector<render_object> intact_destroyer(model1 &machine, bool lod, uint8_t a
 bool repeats(model1 &machine, gameplay_state &state, uint32_t object)
 {
 	const uint32_t handler = machine.read32(object + HANDLER);
-	if (std::find(std::begin(ASTEROID_HANDLERS), std::end(ASTEROID_HANDLERS), handler) != std::end(ASTEROID_HANDLERS)) return true;
+	if (std::find(std::begin(ASTEROID_HANDLERS), std::end(ASTEROID_HANDLERS), handler) != std::end(ASTEROID_HANDLERS) ||
+		handler == CLUSTER_HANDLER) return true;
 	return handler == DESTROYER_HANDLER && (state.destroyers_wrap || state.z_wrap_prefetched) &&
 		machine.read8(machine.cpu().reg(VARIABLES_REG) + MODE) < DESTROYERS_WRAP_BELOW;
 }
@@ -564,13 +778,26 @@ model_bounds bounds_for(model1 &machine, gameplay_state &state, uint32_t polygon
 	return state.copied_bounds[polygon] = bounds;
 }
 
+// What a copy repeats, the same from its ROM placement on (smooth motion pairs a copy with the
+// older list's of the same source and model): an attract asteroid's or cluster's placement, a Star
+// Destroyer's (the manager's in placement order), else the object.
+uint32_t copy_source(model1 &machine, const gameplay_state &state, uint32_t object)
+{
+	for (const auto &[record, placed] : state.asteroid_objects)
+		if (placed == object) return record;
+	if (state.destroyer_manager && machine.read32(state.destroyer_manager + HANDLER) == DESTROYER_MANAGER_HANDLER)
+		for (uint32_t i = 0, count = std::min<uint32_t>(machine.read16(state.destroyer_manager + 0x32), machine.read16(ATTRACT_DESTROYERS + 2)); i < count; i++)
+			if ((OBJECTS_FIRST | machine.read16(state.destroyer_manager + 0x36 + 2 * i)) == object) return ATTRACT_DESTROYERS + 4 + i * 20;
+	return object;
+}
+
 // a model drawn with view matrix `view` (as the display list's: rotation, then translation), unless
-// it is beyond WRAP_REACH or wide of the view (generously: wider pictures, smooth motion's turns)
-bool add_copy(model1 &machine, gameplay_state &state, const std::array<float, 12> &view, const render_object &model)
+// it is beyond `reach` or wide of the view (generously: wider pictures, smooth motion's turns)
+bool add_copy(model1 &machine, gameplay_state &state, const std::array<float, 12> &view, const render_object &model, float reach, uint32_t source)
 {
 	const float x = view[9], y = view[10], z = view[11];
 	const float distance = std::sqrt(x * x + y * y + z * z);
-	if (distance >= WRAP_REACH) return false;
+	if (distance >= reach) return false;
 	float scale = 0;
 	for (int c = 0; c < 3; c++)
 		scale = std::max(scale, std::sqrt(view[c * 3] * view[c * 3] + view[c * 3 + 1] * view[c * 3 + 1] + view[c * 3 + 2] * view[c * 3 + 2]));
@@ -581,7 +808,8 @@ bool add_copy(model1 &machine, gameplay_state &state, const std::array<float, 12
 		std::fabs(y) - z > radius * std::sqrt(2.0f)) return false;
 	render_object faded = model;
 	faded.bounds = bounds;
-	faded.fade *= std::min(1.0f, (WRAP_REACH - distance) / (WRAP_REACH - WRAP_FADE));
+	faded.fade *= std::min(1.0f, (reach - distance) / (reach * (1 - WRAP_FADE / WRAP_REACH)));
+	faded.key = uint64_t(source) << 24 | (model.polygon & 0xffffff);
 	state.wrap_list.copies.push_back({ view, faded });
 	state.wrap_list.dirty = true;
 	return true;
@@ -589,14 +817,15 @@ bool add_copy(model1 &machine, gameplay_state &state, const std::array<float, 12
 
 // copies of the models at a view matrix moved by the world's periodic offsets (camera rotation k)
 void add_copies(model1 &machine, gameplay_state &state, const std::array<float, 12> &view, const std::vector<render_object> &models, const mat3 &k,
-	const std::vector<std::array<float, 3>> &offsets)
+	const std::vector<wrap_offset> &offsets, uint32_t source, float reach = WRAP_REACH)
 {
 	for (const auto &offset : offsets) {
-		const auto d = apply(k, offset);
+		const auto d = apply(k, offset.d);
 		auto moved = view;
 		for (int r = 0; r < 3; r++) moved[9 + r] += d[r];
-		for (const auto &model : models) {
-			if (add_copy(machine, state, moved, model)) state.wrapped_copies++;
+		for (auto model : models) {
+			model.fade *= offset.fade;
+			if (add_copy(machine, state, moved, model, reach, source)) state.wrapped_copies++;
 		}
 	}
 }
@@ -609,24 +838,24 @@ void prefetch_destroyers(model1 &machine, gameplay_state &state)
 	const uint32_t vars = machine.cpu().reg(VARIABLES_REG);
 	const mat3 k = camera_rotation(machine);
 	const auto eye = apply(k, { read_float(machine, vars + 0x7700), read_float(machine, vars + 0x7704), read_float(machine, vars + 0x7708) });
-	const auto draw = [&](const std::array<float, 3> &here, uint8_t animation) {
+	const auto draw = [&](const std::array<float, 3> &here, uint8_t animation, uint32_t source) {
 		const auto at = apply(k, here);
 		std::array<float, 12> view;
 		for (int j = 0; j < 9; j++) view[j] = k[j] * DESTROYER_SCALE;
 		for (int j = 0; j < 3; j++) view[9 + j] = at[j] - eye[j];
-		add_copies(machine, state, view, intact_destroyer(machine, state.lod, animation), k, wrap_offsets(machine, state, here, true));
+		add_copies(machine, state, view, intact_destroyer(machine, state.lod, animation), k, wrap_offsets(machine, here, true, asteroid_field(machine, state)), source);
 	};
 	if (state.destroyer_manager && machine.read32(state.destroyer_manager + HANDLER) == DESTROYER_MANAGER_HANDLER) {
 		for (uint32_t i = 0, count = machine.read16(state.destroyer_manager + 0x32); i < count; i++) {
 			const uint32_t object = OBJECTS_FIRST | machine.read16(state.destroyer_manager + 0x36 + 2 * i);
-			draw(position(machine, object), machine.read8(object + 0x3b));
+			draw(position(machine, object), machine.read8(object + 0x3b), copy_source(machine, state, object));
 		}
 	} else {
 		for (uint32_t i = 0, count = machine.read16(ATTRACT_DESTROYERS + 2); i < count; i++) {
 			const uint32_t record = ATTRACT_DESTROYERS + 4 + i * 20;
 			draw({ float(int32_t(machine.read32(record + 8))),
 				float(int32_t(machine.read32(record + 12)) + int32_t(machine.read32(vars + 0x773a))),
-				float(int32_t(machine.read32(record + 16))) }, 0);
+				float(int32_t(machine.read32(record + 16))) }, 0, record);
 		}
 	}
 }
@@ -665,27 +894,85 @@ void prefetch_asteroids(model1 &machine, gameplay_state &state)
 		for (int j = 0; j < 3; j++) view[9 + j] = at[j] - eye[j];
 		const render_object model{ object ? machine.read32(object + ASTEROID_DATA) : large ? 0x51962u : 0x51961u,
 			machine.read32(object ? machine.read32(object + ASTEROID_MODEL) : large ? 0x23ba7au : 0x23ba76u), 0, 0, std::nullopt };
-		add_copies(machine, state, view, { model }, k, wrap_offsets(machine, state, here, true));
+		add_copies(machine, state, view, { model }, k, wrap_offsets(machine, here, true, asteroid_field(machine, state)), record);
 	}
 }
 
-// the culled objects so far, where they are and where they repeat, once the view offset is known
+// where DB88C places a cluster with halfwords x and y (X's also its Z) around the camera at `eye`
+// (7724/7728 are the eye's, but the list that creates the clusters has others there)
+std::array<float, 3> cluster_position(model1 &machine, const std::array<float, 3> &eye, uint16_t x, uint16_t y, float z)
+{
+	const uint32_t vars = machine.cpu().reg(VARIABLES_REG);
+	const int32_t camera_x = int32_t(eye[0]), camera_y = int32_t(std::lround(eye[1])), camera_z = int32_t(eye[2]);
+	const auto wrap = [](uint16_t to, int32_t from, int bits) {
+		return int32_t(int16_t(uint16_t((to - uint16_t(from)) << (16 - bits))) >> (16 - bits));
+	};
+	if (machine.read8(vars + MODE) < CLUSTERS_WRAP_Z_BELOW) z = float(camera_z + wrap(x, camera_z, 16));
+	return { float(camera_x + wrap(x, camera_x, 15)), float(camera_y + wrap(y, camera_y, 13)), z };
+}
+
+// The cockpit is visible before DBE82 creates the rock clusters, and DB88C first places and draws
+// them with the fleet. Until then they are drawn where it will place them, from their ROM placements
+// and then their objects (with no roll before DB833 picks it).
+void prefetch_clusters(model1 &machine, gameplay_state &state)
+{
+	if (!state.z_wrap_prefetched) return;
+	const mat3 k = camera_rotation(machine);
+	const uint32_t vars = machine.cpu().reg(VARIABLES_REG);
+	const std::array<float, 3> camera{ read_float(machine, vars + 0x7700), read_float(machine, vars + 0x7704), read_float(machine, vars + 0x7708) };
+	const auto eye = apply(k, camera);
+	for (uint32_t record = ATTRACT_CLUSTERS; record < ATTRACT_CLUSTERS_END; record += CLUSTER_RECORD_SIZE) {
+		const auto found = state.asteroid_objects.find(record);
+		const uint32_t object = found == state.asteroid_objects.end() ? 0 : found->second;
+		// (DBE82 sets the handler after DB833: until then it is not yet a cluster, rather than gone)
+		const bool live = object && machine.read32(object + HANDLER) == CLUSTER_HANDLER;
+		if (live) state.live_clusters.insert(object);
+		if (object && (state.wrap_list.asteroids.contains(object) || (!live && state.live_clusters.contains(object)))) continue;
+		const auto here = object ? cluster_position(machine, camera, machine.read16(object + CLUSTER_X), machine.read16(object + CLUSTER_Y), read_float(machine, object + POSITION_Z))
+			: cluster_position(machine, camera, uint16_t(machine.read32(record + 8)), uint16_t(machine.read32(record + 12)), float(int32_t(machine.read32(record + 16))));
+		const mat3 rotation = multiply(k, asteroid_rotation(CLUSTER_SCALE, 0, object ? machine.read16(object + CLUSTER_ROLL) : 0));
+		const auto at = apply(k, here);
+		std::array<float, 12> view;
+		std::copy(rotation.begin(), rotation.end(), view.begin());
+		for (int j = 0; j < 3; j++) view[9 + j] = at[j] - eye[j];
+		const render_object model{ object ? machine.read32(object + ASTEROID_DATA) : CLUSTER_DATA,
+			machine.read32(object ? machine.read32(object + ASTEROID_MODEL) : CLUSTER_MODEL), 0, 0, std::nullopt };
+		const uint64_t before = state.wrapped_copies;
+		const auto field = cluster_field(machine);
+		add_copies(machine, state, view, { model }, k, wrap_offsets(machine, here, true, field, camera), record, field.reach);
+		state.cluster_copies += state.wrapped_copies - before;
+	}
+}
+
+// the culled objects so far, where they are and where they repeat
 void place_culled(model1 &machine, gameplay_state &state)
 {
 	auto &list = state.wrap_list;
-	if (list.culled.empty() || !list.view_offset) return;
+	if (list.culled.empty()) return;
 	const mat3 k = camera_rotation(machine);
+	// (with nothing drawn yet, as the field starts out of view: the camera's rotation of the eye's place)
+	std::array<float, 3> view_offset;
+	if (list.view_offset) view_offset = *list.view_offset;
+	else {
+		const uint32_t vars = machine.cpu().reg(VARIABLES_REG);
+		const auto eye = apply(k, { read_float(machine, vars + 0x7700), read_float(machine, vars + 0x7704), read_float(machine, vars + 0x7708) });
+		view_offset = { -eye[0], -eye[1], -eye[2] };
+	}
 	for (const auto &object : list.culled) {
 		const mat3 rotation = multiply(k, object.rotation);
-		for (const auto &offset : wrap_offsets(machine, state, object.position, true)) {
+		const auto field = object.cluster ? cluster_field(machine) : asteroid_field(machine, state);
+		for (const auto &offset : wrap_offsets(machine, object.position, true, field)) {
 			std::array<float, 3> world;
-			for (int i = 0; i < 3; i++) world[i] = object.position[i] + offset[i];
+			for (int i = 0; i < 3; i++) world[i] = object.position[i] + offset.d[i];
 			const auto at = apply(k, world);
 			std::array<float, 12> view;
 			std::copy(rotation.begin(), rotation.end(), view.begin());
-			for (int r = 0; r < 3; r++) view[9 + r] = at[r] + (*list.view_offset)[r];
-			for (const auto &model : object.models) {
-				if (add_copy(machine, state, view, model)) state.culled_copies++;
+			for (int r = 0; r < 3; r++) view[9 + r] = at[r] + view_offset[r];
+			for (auto model : object.models) {
+				model.fade *= offset.fade;
+				if (!add_copy(machine, state, view, model, field.reach, object.source)) continue;
+				state.culled_copies++;
+				if (object.cluster) state.cluster_copies++;
 			}
 		}
 	}
@@ -757,6 +1044,7 @@ std::vector<render_object> wrapped_copies(model1 &machine, gameplay_state &state
 		wl.stars_matrix = read_matrix();
 		prefetch_destroyers(machine, state);
 		prefetch_asteroids(machine, state);
+		prefetch_clusters(machine, state);
 		wl.dirty = true;
 		return star_extras(machine, state, word);
 	}
@@ -782,7 +1070,11 @@ std::vector<render_object> wrapped_copies(model1 &machine, gameplay_state &state
 			state.destroyer_models[object].push_back(model);
 			state.last_destroyer_models = state.destroyer_models[object];
 		}
-		add_copies(machine, state, view, { model }, k, wrap_offsets(machine, state, here, false));
+		const bool cluster = machine.read32(object + HANDLER) == CLUSTER_HANDLER;
+		const auto field = cluster ? cluster_field(machine) : asteroid_field(machine, state);
+		const uint64_t before = state.wrapped_copies;
+		add_copies(machine, state, view, { model }, k, wrap_offsets(machine, here, false, field), copy_source(machine, state, object), field.reach);
+		if (cluster) state.cluster_copies += state.wrapped_copies - before;
 	}
 	return wl.stars ? star_extras(machine, state, word) : std::vector<render_object>{};
 }
@@ -792,6 +1084,7 @@ void record_culled(model1 &machine, gameplay_state &state, uint32_t object, bool
 {
 	gameplay_state::culled_object culled;
 	culled.position = position(machine, object);
+	culled.source = copy_source(machine, state, object);
 	if (destroyer) {
 		const auto own = state.destroyer_models.find(object);
 		culled.models = own != state.destroyer_models.end() ? own->second :
@@ -799,8 +1092,10 @@ void record_culled(model1 &machine, gameplay_state &state, uint32_t object, bool
 		culled.rotation = { DESTROYER_SCALE, 0, 0, 0, DESTROYER_SCALE, 0, 0, 0, DESTROYER_SCALE };
 	} else {
 		culled.models.push_back({ machine.read32(object + ASTEROID_DATA), machine.read32(machine.read32(object + ASTEROID_MODEL)), 0, 0, std::nullopt });
-		culled.rotation = asteroid_rotation(read_float(machine, object + ASTEROID_SCALE),
-			machine.read16(object + ASTEROID_YAW), machine.read16(object + ASTEROID_ROLL));
+		culled.cluster = machine.read32(object + HANDLER) == CLUSTER_HANDLER;
+		// DB88C: TGP 0x16 (its roll), then 0x13 (its scale)
+		culled.rotation = culled.cluster ? asteroid_rotation(CLUSTER_SCALE, 0, machine.read16(object + CLUSTER_ROLL)) :
+			asteroid_rotation(read_float(machine, object + ASTEROID_SCALE), machine.read16(object + ASTEROID_YAW), machine.read16(object + ASTEROID_ROLL));
 	}
 	if (culled.models.empty()) return;
 	begin_list(state, machine.read32(machine.cpu().reg(VARIABLES_REG) + LIST_POINTER));
@@ -825,10 +1120,13 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	};
 	callbacks.reset = [state] {
 		state->view_word = -1;
+		state->side_pass = nullptr;
+		state->side_layer = -1;
 		state->z_wrap_prefetched = false;
 		state->destroyers_wrap = false;
 		state->destroyer_manager = 0;
 		state->asteroid_objects.clear();
+		state->live_clusters.clear();
 		state->destroyer_models.clear();
 		state->last_destroyer_models.clear();
 		state->destroyer_matrix = state->wrap_matrix = 0;
@@ -840,7 +1138,10 @@ gameplay_callbacks create_gameplay(model1 &machine)
 			machine.read8(machine.cpu().reg(VARIABLES_REG) + ATTRACT_DEMO) == ASTEROID_FIELD_DEMO;
 		if (state->full_distance && asteroid_field && subsequence == Z_WRAP_PREFETCH_SUBSEQUENCE) state->z_wrap_prefetched = true;
 		else if (!state->full_distance || !asteroid_field) state->z_wrap_prefetched = false;
-		if (!asteroid_field) state->asteroid_objects.clear();
+		if (!asteroid_field) {
+			state->asteroid_objects.clear();
+			state->live_clusters.clear();
+		}
 	};
 	callbacks.copro_write = [&machine, state](uint32_t, uint32_t value) {
 		// (no extent is 0x31 as a float, so a data word that happens to be 0x31 only restarts the count)
@@ -854,7 +1155,8 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	};
 	callbacks.copro_result = [&machine, state](uint32_t pc, uint32_t value) {
 		if (state->full_distance && int32_t(value) < 0) {
-			if (std::find(std::begin(ASTEROID_CULL_READS), std::end(ASTEROID_CULL_READS), pc) != std::end(ASTEROID_CULL_READS))
+			if (std::find(std::begin(ASTEROID_CULL_READS), std::end(ASTEROID_CULL_READS), pc) != std::end(ASTEROID_CULL_READS) ||
+				pc == CLUSTER_CULL_READ)
 				record_culled(machine, *state, machine.cpu().reg(OBJECT_REG), false);
 			else if (pc == DESTROYER_CULL_READ && (state->destroyers_wrap || state->z_wrap_prefetched) &&
 				machine.read8(machine.cpu().reg(VARIABLES_REG) + MODE) < DESTROYERS_WRAP_BELOW)
@@ -868,7 +1170,7 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		return result;
 	};
 	callbacks.matrix_objects = [&machine, state](uint32_t &word) -> std::vector<render_object> {
-		if (state->lod && !state->full_distance) return {};
+		if (state->lod && !state->full_distance && !machine.wide_ext()) return {};
 		if (state->fleet_stern && machine.cpu().pc() == FLEET_MATRIX_WRITE) {
 			const uint32_t matrix = (machine.cpu().reg(LIST_REG) - MATRIX_SIZE - OBJECT_SIZE) >> 1 & 0x7fff;
 			if (word == matrix + 1) {
@@ -894,6 +1196,9 @@ gameplay_callbacks create_gameplay(model1 &machine)
 			address == machine.cpu().reg(4) && address >= ATTRACT_ASTEROIDS + 26 && address < ATTRACT_ASTEROIDS_END &&
 			(address - ATTRACT_ASTEROIDS - 26) % ASTEROID_RECORD_SIZE == 0)
 			state->asteroid_objects[address - 26] = machine.cpu().reg(LIST_REG);
+		if (pc == CLUSTER_INIT_READ && address == machine.cpu().reg(4) && address >= ATTRACT_CLUSTERS + 16 && address < ATTRACT_CLUSTERS_END &&
+			(address - ATTRACT_CLUSTERS - 16) % CLUSTER_RECORD_SIZE == 0)
+			state->asteroid_objects[address - 16] = machine.cpu().reg(LIST_REG);
 		if (pc == DESTROYER_MANAGER_INIT && address == machine.cpu().reg(4)) {
 			state->destroyer_manager = machine.cpu().reg(OBJECT_REG);
 			state->destroyers_wrap = false;
@@ -940,6 +1245,99 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		return value;
 	};
 	return callbacks;
+}
+
+// The settings (R25 + 7C80, battery-backed RAM): "S32A", a ROM word, then a record (CRC, a count
+// of saves, the settings) and its backup copy; 736DC loads the 0x80 bytes from the I/O board's
+// EEPROM at boot (the backup if the record's CRC fails, defaults if both do) and 737BB saves them.
+namespace {
+constexpr uint32_t SETTINGS = 0xfc80, SETTINGS_SIZE = 0x80;   // in nvram()
+constexpr uint32_t RECORD = 0x08, BACKUP = 0x44, RECORD_SIZE = 0x3c, CRC_FROM = 2, CRC_SIZE = 0x3a;
+constexpr std::array<uint32_t, 4> ASSIGNMENT_BYTE{ 0x1d, 0x1e, 0x1f, 0x0e };   // in the block (the record's from 0x08)
+constexpr std::array<int, 4> ASSIGNMENT_COUNT{ 5, 5, 5, 2 };
+constexpr std::array<int, 4> ASSIGNMENT_STORED_FROM{ 1, 1, 1, 0 };   // the difficulties are stored 1-5
+// COIN ASSIGNMENT's coin/credit setting: a 4-byte entry of the table at 70482 (setting #1-#26) or
+// MANUAL SETTING's own values, then the byte MANUAL SETTING's COIN TO CREDIT also sets
+constexpr uint32_t COIN = 0x0f, COIN_SIZE = 5;
+
+uint8_t *settings_block(model1 &machine)
+{
+	uint8_t *s = &machine.nvram()[SETTINGS];
+	if (memcmp(s, "S32A", 4)) return nullptr;
+	const uint8_t *r = s + RECORD;
+	if (settings_crc(r + CRC_FROM, CRC_SIZE) != uint16_t(r[0] | r[1] << 8)) return nullptr;
+	return s;
+}
+}
+
+uint16_t settings_crc(const uint8_t *data, size_t size)
+{
+	uint32_t r = 0xdebdeb00;
+	auto shift = [&] {
+		for (int b = 0; b < 8; b++) r = (r & 0x80000000) ? (r << 1) ^ 0x10210000 : r << 1;
+	};
+	for (size_t i = 0; i < size; i++) {
+		r = (r & 0xffffff00) | data[i];
+		shift();
+	}
+	shift();
+	return uint16_t(r >> 16);
+}
+
+int game_assignment_value(model1 &machine, game_assignment setting)
+{
+	const auto i = size_t(setting);
+	const uint8_t *s = settings_block(machine);
+	if (i >= ASSIGNMENT_BYTE.size() || !s) return -1;
+	const int value = s[ASSIGNMENT_BYTE[i]] - ASSIGNMENT_STORED_FROM[i];
+	return value >= 0 && value < ASSIGNMENT_COUNT[i] ? value : -1;
+}
+
+namespace {
+// The record's CRC and backup copy, then the block into the EEPROM
+void save_settings(model1 &machine, uint8_t *s)
+{
+	uint8_t *r = s + RECORD;
+	const uint16_t crc = settings_crc(r + CRC_FROM, CRC_SIZE);
+	r[0] = uint8_t(crc);
+	r[1] = uint8_t(crc >> 8);
+	memcpy(s + BACKUP, r, RECORD_SIZE);
+	// the EEPROM's words hold the bytes high first, as the I/O board stores them
+	if (uint16_t *words = machine.eeprom_words())
+		for (uint32_t w = 0; w < SETTINGS_SIZE / 2; w++) words[w] = uint16_t(s[2 * w] << 8 | s[2 * w + 1]);
+	else memcpy(machine.eeprom(), s, SETTINGS_SIZE);
+}
+}
+
+bool set_game_assignment(model1 &machine, game_assignment setting, int value)
+{
+	const auto i = size_t(setting);
+	uint8_t *s = settings_block(machine);
+	if (i >= ASSIGNMENT_BYTE.size() || !s || value < 0 || value >= ASSIGNMENT_COUNT[i]) return false;
+	s[ASSIGNMENT_BYTE[i]] = uint8_t(value + ASSIGNMENT_STORED_FROM[i]);
+	save_settings(machine, s);
+	return true;
+}
+
+int64_t coin_setting(model1 &machine)
+{
+	const uint8_t *s = settings_block(machine);
+	if (!s) return -1;
+	int64_t value = 0;
+	for (uint32_t i = 0; i < COIN_SIZE; i++) value = value << 8 | s[COIN + i];
+	return value;
+}
+
+bool set_coin_setting(model1 &machine, int64_t value)
+{
+	uint8_t *s = settings_block(machine);
+	if (!s || value < 0 || value >> (8 * COIN_SIZE)) return false;
+	uint8_t bytes[COIN_SIZE];
+	for (uint32_t i = 0; i < COIN_SIZE; i++) bytes[i] = uint8_t(value >> (8 * (COIN_SIZE - 1 - i)));
+	if (!memcmp(s + COIN, bytes, COIN_SIZE)) return false;
+	memcpy(s + COIN, bytes, COIN_SIZE);
+	save_settings(machine, s);
+	return true;
 }
 
 }

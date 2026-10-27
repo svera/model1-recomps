@@ -148,7 +148,7 @@ struct model1_video_test
 				polygon == (arcade.read32(0x9a63c + 8) & 0x7fffff)) arcade_ships++;
 			return arcade_object(owner, texture, polygon, size, data);
 		};
-		struct ship_sample { glm::vec3 view, relative; float fade; bool asteroid; };
+		struct ship_sample { glm::vec3 view, relative; float fade; bool asteroid, cluster = false; };
 		std::vector<ship_sample> ships;
 		std::set<uint32_t> globe_polygons, approach_models;
 		const auto object = m.m_gameplay.object;
@@ -162,8 +162,9 @@ struct model1_video_test
 						globe_polygons.insert(model);
 					}
 			}
-			// Track ship bodies and asteroid clusters at their final renderer matrices.
-			const bool asteroid = polygon == (m.read32(0x23ba7a) & 0x7fffff) || polygon == (m.read32(0x23ba76) & 0x7fffff);
+			// Track ship bodies, asteroid clusters and DB88C's small-rock clusters at their final renderer matrices.
+			const bool cluster = polygon == (m.read32(0x23beba) & 0x7fffff);
+			const bool asteroid = cluster || polygon == (m.read32(0x23ba7a) & 0x7fffff) || polygon == (m.read32(0x23ba76) & 0x7fffff);
 			if (asteroid || polygon == (m.read32(0x9b584) & 0x7fffff) ||
 				polygon == (m.read32(0x9a63c) & 0x7fffff) ||
 				polygon == (m.read32(0x9a63c + 2 * 4) & 0x7fffff)) {
@@ -175,7 +176,7 @@ struct model1_video_test
 						for (int r = 0; r < 3; r++)
 							rotation[c][r] = std::bit_cast<float>(m.read32(0x40f570 + 4 * (3 * c + r)));
 				const glm::vec3 view(v[9], v[10], v[11]);
-				ships.push_back({ view, glm::inverse(rotation) * view, m.m_object_fade, asteroid });
+				ships.push_back({ view, glm::inverse(rotation) * view, m.m_object_fade, asteroid, cluster });
 			}
 			return object(owner, texture, polygon, size, data);
 		};
@@ -226,10 +227,11 @@ struct model1_video_test
 			}
 			if (f == 6072) {
 				assert(!state->destroyer_manager && state->destroyer_models.empty() && state->asteroid_objects.empty());
-				assert(std::count_if(ships.begin(), ships.end(), [](const auto &s) { return s.asteroid; }) >= 5);
+				assert(std::count_if(ships.begin(), ships.end(), [](const auto &s) { return s.asteroid && !s.cluster; }) >= 5);
+				assert(std::count_if(ships.begin(), ships.end(), [](const auto &s) { return s.cluster; }) >= 5);
 				assert(arcade_asteroids == 0 && arcade_ships == 0);
 			}
-			if (f == 6102) assert(state->asteroid_objects.size() == 38);
+			if (f == 6102) assert(state->asteroid_objects.size() == 38 + 5);
 			if (f == 6142) assert(arcade_asteroids > 0 && arcade_ships > 0);
 			if (f == 6142) {
 				size_t duplicates = 0;
@@ -266,10 +268,10 @@ struct model1_video_test
 					std::fabs(ship.view.x) >= ship.view.z || std::fabs(ship.view.y) >= ship.view.z) continue;
 				float nearest = INFINITY;
 				for (const auto &previous : frames[before])
-					if (ship.asteroid == previous.asteroid) nearest = std::min(nearest, glm::length(ship.relative - previous.relative));
+					if (ship.asteroid == previous.asteroid && ship.cluster == previous.cluster) nearest = std::min(nearest, glm::length(ship.relative - previous.relative));
 				if (nearest > 4096) {
 					fprintf(stderr, "SWA %s appeared at frame %d: (%g, %g, %g), nearest previous object %g units away\n",
-						ship.asteroid ? "asteroid" : "ship", after, ship.view.x, ship.view.y, ship.view.z, nearest);
+						ship.cluster ? "rock cluster" : ship.asteroid ? "asteroid" : "ship", after, ship.view.x, ship.view.y, ship.view.z, nearest);
 					assert(false);
 				}
 			}
@@ -279,7 +281,7 @@ struct model1_video_test
 		assert(globe_polygons == (lod
 			? std::set<uint32_t>{0x23b682, 0x23b686, 0x23b68a, 0x23b68e, 0x23b692, 0x23b696}
 			: std::set<uint32_t>{0x23b682, 0x23b686, 0x23b68a}));
-		printf("SWA %s LOD %s: fleet and asteroids present from first scene picture (6072); continuous through 6180 and 6968-6972; no asteroids in Death Star demo; globe models follow LOD setting; Arcade has no periodic extras\n",
+		printf("SWA %s LOD %s: fleet, asteroids and rock clusters present from first scene picture (6072); continuous through 6180 and 6968-6972; no asteroids in Death Star demo; globe models follow LOD setting; Arcade has no periodic extras\n",
 			native ? "native" : "interpreter", lod ? "on" : "off");
 		game::swa::set_full_draw_distance(m, false);
 		for (int f = 0; f < 10; f++) {
@@ -1043,6 +1045,58 @@ struct model1_video_test
 		if (native) assert(rec::fallback_count() == 0);
 		printf("VR opening car (%s, %s): all three parts retained for one update, visible in both missing-frame pictures; CPU, RAM and lists unchanged\n",
 			extended ? "extended" : "arcade", native ? "native" : "interpreter");
+	}
+
+	// SWA's places are tens of thousands of units: the camera's move between two lists fits them
+	// (no cut, every part blended), and keyed copies on the stars' slot blend with their pairs.
+	static void swa_far_blend()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame z, a, b;
+		z.frame = 8, a.frame = 10, b.frame = 12;
+		auto copy = [](uint64_t key, float x, float z) {
+			game::render_object o{ 0, 0x100, 0, 0, std::nullopt };
+			o.key = key;
+			o.transform = std::array<float, 12>{ 1, 0, 0, 0, 1, 0, 0, 0, 1, x, 0, z };
+			return o;
+		};
+		model1::slot stars;
+		stars.polys = { 0x10 };
+		z.slots.push_back(stars);
+		a.slots.push_back(stars);
+		b.slots.push_back(stars);
+		a.slots[0].extra = { copy(1, 1000, 5000), copy(2, 0, 9000), copy(2, 40000, 9000), copy(3, 0, 20000), copy(0, 0, 3000) };
+		b.slots[0].extra = { copy(1, 1100, 5000), copy(2, 40010, 9000), copy(2, 10, 9000), copy(3, 0, 6000), copy(0, 0, 3000) };
+		uint32_t seed = 1;
+		auto next = [&] { seed = seed * 1103515245 + 12345; return float((seed >> 8) & 0xffff) / 65536; };
+		for (int i = 0; i < 24; i++) {
+			model1::slot sa;
+			sa.polys = { 0x200u + i };
+			sa.mat[9] = (next() - 0.5f) * 90000, sa.mat[10] = (next() - 0.5f) * 30000, sa.mat[11] = 3000 + next() * 60000;
+			const float v[3] = { 50 + (next() - 0.5f) * 60, -30 + (next() - 0.5f) * 60, -150 + (next() - 0.5f) * 60 };
+			model1::slot sz = sa, sb = sa;
+			for (int k = 0; k < 3; k++) sz.mat[9 + k] -= v[k], sb.mat[9 + k] += v[k];
+			z.slots.push_back(sz);
+			a.slots.push_back(sa);
+			b.slots.push_back(sb);
+		}
+		m.blend_slots(z, a, 0.5);
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut && m.m_camera_sure && !m.m_camera_cut);
+		for (size_t i = 0; i < b.slots.size(); i++) assert(m.m_blend_ok[i]);
+		m.m_replaying = true;
+		m.m_replay_slot = 0;
+		const float expect[] = { 1050, 40005, 5, 0, 0 };   // (the last two: a far jump and no key, unblended)
+		const float expect_z[] = { 5000, 9000, 9000, 6000, 3000 };
+		for (size_t n = 0; n < b.slots[0].extra.size(); n++) {
+			float out[12];
+			m.smooth_extra(n, *b.slots[0].extra[n].transform, out);
+			assert(std::fabs(out[9] - expect[n]) < 0.01f && std::fabs(out[11] - expect_z[n]) < 0.01f);
+		}
+		m.m_replaying = false;
+		printf("SWA far places: no cut, all parts blended; keyed copies blended with their nearest pair\n");
 	}
 
 	// A camera swaying (turning back and forth over a degree a list) about a car it keeps in place:
@@ -2097,6 +2151,7 @@ int main(int argc, char **argv)
 	model1_video_test::wide_direct_overlay();
 	model1_video_test::unstretched_backdrops();
 	model1_video_test::wide_split_tiles();
+	model1_video_test::swa_far_blend();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);

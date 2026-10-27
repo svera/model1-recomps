@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <set>
 
 int main()
@@ -17,7 +18,7 @@ int main()
 	assert(p.display_name == "Star Wars Arcade");
 	assert(p.romset == "swa");
 	assert(p.recompiler_map == "games/swa/swa_map.txt");
-	assert(!p.camera_ram && !p.mode_ram);
+	assert(!p.camera_ram && p.mode_ram == 0x40f003 && p.test_menu_mode == 1);
 	assert(p.cpu_cycles_per_instruction == 8);
 	const auto &io = game::get_io_profile(ID);
 	assert(io.digital_controls[4] == "Start");
@@ -177,9 +178,11 @@ int main()
 	m.work_ram()[3] = 0x78;
 	assert(!m.tgp_has_hle());
 	assert(m.camera() == 0);
-	assert(m.game_mode() == 0);
-	assert(!m.past_boot());
-	assert(!m.in_test_menu_mode());
+	// the test mode flag, in battery-backed RAM; with no camera RAM, the boot counts as over
+	m.nvram()[0xf003] = 1;
+	assert(m.game_mode() == 1 && m.in_test_menu_mode() && m.past_boot());
+	m.nvram()[0xf003] = 0;
+	assert(m.game_mode() == 0 && !m.in_test_menu_mode() && m.past_boot());
 	m.forget_camera();
 	assert(m.work_ram()[0] == 0x12 && m.work_ram()[1] == 0x34);
 	assert(m.work_ram()[2] == 0x56 && m.work_ram()[3] == 0x78);
@@ -212,6 +215,29 @@ int main()
 		assert(game::swa::view_extent(3, word(-20), 83) == word(-20));
 	}
 	{
+		// widescreen surface sides: the neighbouring headings' cells the heading lacks, within each
+		// layer's reach, a coarse cell the heading half draws split into its missing fine cells,
+		// fine cells a coarse one already stands for dropped, in (layer, band) order
+		using game::swa::cell_bands;
+		std::array<cell_bands, 4> own{ cell_bands{ { { 0, 1 } } }, cell_bands{}, cell_bands{ { { 0, 3 } } }, cell_bands{} };
+		std::array<cell_bands, 4> other{
+			cell_bands{ { { 0, 1 }, { 5, 0 } }, { { 9, 9 } } },   // own, a fine cell, one past reach (6)
+			cell_bands{ { { 6, 0 } } },                           // inside the new coarse (3, 0)
+			cell_bands{ {}, { { 0, 3 }, { 0, 0 }, { 3, 0 } } },   // own, half drawn by own fine (0, 1), whole
+			cell_bands{} };
+		const auto sides = game::swa::side_cells(own, { other }, { 6, 8, 4, 8 });
+		auto has = [&](bool coarse, int x, int z) {
+			return std::count_if(sides.begin(), sides.end(), [&](const auto &c) { return c.coarse == coarse && c.x == x && c.z == z; });
+		};
+		assert(has(false, 5, 0) == 1 && has(true, 2, 0) == 0);
+		assert(has(true, 3, 0) == 1 && has(false, 6, 0) == 0 && has(false, 9, 9) == 0 && has(true, 0, 3) == 0);
+		assert(has(true, 0, 0) == 0 && has(false, 0, 0) == 1 && has(false, 1, 0) == 1 && has(false, 1, 1) == 1 && has(false, 0, 1) == 0);
+		for (size_t i = 1; i < sides.size(); i++)
+			assert((std::pair{ sides[i - 1].layer, sides[i - 1].band } <= std::pair{ sides[i].layer, sides[i].band }));
+		assert(game::swa::side_cells(own, {}, { 4, 8, 4, 8 }).empty());
+		assert(game::swa::side_headings(0) == 0 && game::swa::side_headings(83) == 1 && game::swa::side_headings(186) == 2);
+	}
+	{
 		// widescreen cockpit: a diagonal band at the left edge carries on outwards along its slope
 		constexpr uint32_t KEY = 0xff000000, WHITE = 0xffffffff;
 		constexpr int EXT = 83, W = 496 + 2 * EXT, H = 384;
@@ -231,5 +257,46 @@ int main()
 		assert(!game::swa::continue_sides(empty.data(), W, H, EXT));
 		assert(!game::swa::continue_sides(px.data(), 496, H, 0));
 	}
-	puts("SWA: profile, controls, I/O layout, analog calibration, unset camera/mode RAM, draw distance and widescreen cockpit checks passed");
+	{
+		// the defaults' settings (as 736DC writes them): the game's CRC is 6D3A
+		static const uint8_t defaults[0x44] = { 'S', '3', '2', 'A', 0x13, 0x01, 0, 0, 0x3a, 0x6d, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1, 2, 0, 1, 0, 1, 0, 1,
+			0, 3, 3, 3, 3, 0x20, 0xe0, 0x20, 0xe0, 0x20, 0xe0, 0x20, 0xe0, 0x20, 0xe0, 0x20, 0xe0, 0x20, 0xe0, 0x20, 0xe0 };
+		assert(settings_crc(defaults + 10, 0x3a) == 0x6d3a);
+		uint8_t *block = &m.nvram()[0xfc80];
+		memset(block, 0xff, 0x80);
+		assert(game_assignment_value(m, game_assignment::player_difficulty) == -1);   // not loaded yet
+		assert(!set_game_assignment(m, game_assignment::player_difficulty, 0));
+		memcpy(block, defaults, sizeof defaults);
+		memcpy(block + 0x44, defaults + 8, 0x3c);
+		for (int i = 0; i < 3; i++) assert(game_assignment_value(m, game_assignment(i)) == 2);   // 3/5
+		assert(game_assignment_value(m, game_assignment::advertise_sound) == 0);
+		assert(!set_game_assignment(m, game_assignment::enemy_difficulty, 5));
+		assert(!set_game_assignment(m, game_assignment::advertise_sound, 2));
+		assert(set_game_assignment(m, game_assignment::enemy_difficulty, 4));
+		assert(set_game_assignment(m, game_assignment::advertise_sound, 1));
+		assert(block[0x1e] == 5 && block[0x0e] == 1 && block[0x1d] == 3);
+		assert(game_assignment_value(m, game_assignment::enemy_difficulty) == 4);
+		assert(game_assignment_value(m, game_assignment::advertise_sound) == 1);
+		const uint16_t crc = settings_crc(block + 10, 0x3a);
+		assert(crc != 0x6d3a && block[8] == uint8_t(crc) && block[9] == crc >> 8);
+		assert(!memcmp(block + 8, block + 0x44, 0x3c));   // the backup copy
+		// the EEPROM: the same bytes, high first in each word
+		const uint8_t *e = m.eeprom();
+		if (const uint16_t *w = m.eeprom_words())
+			for (int i = 0; i < 0x40; i++) assert(w[i] == (block[2 * i] << 8 | block[2 * i + 1]));
+		else assert(!memcmp(e, block, 0x80));
+		// COIN ASSIGNMENT's coin/credit setting: #1 by default, then free play (MANUAL SETTING's byte kept)
+		const int64_t coins = coin_setting(m);
+		assert(coins == 0x0101010001 && !is_free_play(coins));
+		const int64_t free = with_coin_entry(coins, COIN_SETTING_FREE_PLAY);
+		assert(free == 0x0101010101 && is_free_play(free));
+		assert(set_coin_setting(m, free) && !set_coin_setting(m, free));   // (already so: no boot again)
+		assert(coin_setting(m) == free && block[0x12] == 1 && block[0x13] == 1);
+		assert(game_assignment_value(m, game_assignment::enemy_difficulty) == 4);   // the CRC still holds
+		assert(!memcmp(block + 8, block + 0x44, 0x3c));
+		if (const uint16_t *w = m.eeprom_words()) assert(w[9] == (block[0x12] << 8 | block[0x13]));
+		assert(with_coin_entry(free, COIN_SETTING_1) == coins);
+		assert(!set_coin_setting(m, -1) && !set_coin_setting(m, int64_t(1) << 40));
+	}
+	puts("SWA: profile, controls, I/O layout, analog calibration, unset camera RAM, mode byte, draw distance, widescreen cockpit, game and coin assignment checks passed");
 }

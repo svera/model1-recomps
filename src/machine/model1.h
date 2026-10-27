@@ -128,7 +128,8 @@ public:
 	uint32_t backdrop_hash() const;
 	int sky_identity();                 // the stage sky in the map (-1: none known), see model1_sky.cpp
 
-	// The boot is over (the game has sent its first camera: the attract has started).
+	// The boot is over (the game has sent its first camera: the attract has started). Always, for a
+	// game with no camera RAM.
 	bool past_boot() const;
 	// Work RAM survives a reset: the last camera forgotten, so past_boot waits for the new boot's.
 	void forget_camera() { if (m_profile->camera_ram) std::fill_n(&m_ram_b[*m_profile->camera_ram], 4, 0); }
@@ -213,7 +214,12 @@ public:
 		return p[0] | p[1] << 8 | p[2] << 16 | uint32_t(p[3]) << 24;
 	}
 	// the profile's test_menu_mode in its TEST MENU (VF: 3), but also for a moment in attract
-	uint8_t game_mode() const { return m_profile->mode_ram ? m_ram_b[*m_profile->mode_ram] : 0; }
+	uint8_t game_mode() const
+	{
+		if (!m_profile->mode_ram) return 0;
+		const uint32_t a = *m_profile->mode_ram;
+		return a >= 0x500000 ? m_ram_b[a - 0x500000] : m_ram_a[a - 0x400000];
+	}
 	bool in_test_menu_mode() const { return m_profile->mode_ram && game_mode() == m_profile->test_menu_mode; }
 	// Raw board EEPROM image for persistence; words are available only on the real I/O board.
 	uint8_t *eeprom() { return m_ioboard ? reinterpret_cast<uint8_t *>(m_ioboard->eeprom) : &m_dpram[0x100]; }
@@ -356,6 +362,10 @@ private:
 	// frames' matrices and the older frame's light (the newer's is the list's own as it's drawn)
 	std::vector<std::array<float, 12>> m_blend_from, m_blend_to;
 	std::vector<std::array<float, 4>> m_blend_light;   // x, y, z, and 1 when known
+	// per slot of the newer list, its keyed extras' pairs in the older list's paired slot (-1: none)
+	std::vector<std::vector<int>> m_extra_pair;
+	std::vector<const std::vector<game::render_object> *> m_extra_from;
+	double m_extra_alpha = 1;
 	// while an object is drawn blended: its shades too (push_object)
 	const float *m_shade_from = nullptr, *m_shade_to = nullptr, *m_shade_light = nullptr;
 	int m_replay_slot = -1;                          // the slot being drawn while replaying
@@ -385,6 +395,7 @@ private:
 	uint64_t m_sky_written = ~0ull;                  // the frame they were written in
 	void sky_scroll_written(uint32_t a);
 	void blend_slots(const logic_frame &a, const logic_frame &b, double alpha);
+	void pair_extras(const logic_frame &a, const logic_frame &b, const std::vector<int> &pair);
 	void smooth_turn(logic_frame &lf, const logic_frame &before);
 	void follow_records(logic_frame &lf, const logic_frame &before);
 	void blend_by_records(const logic_frame &a, const logic_frame &b, double alpha);
@@ -401,6 +412,7 @@ private:
 	void retain_culled_records(logic_frame &frame, const logic_frame &previous);
 	void record_frame();
 	bool smooth_matrix(uint32_t poly_adr, float *out);
+	void smooth_extra(size_t n, const std::array<float, 12> &local, float *out) const;
 	void smooth_sky_shift(float &dx, float &dy) const;
 	// That shift in output pixels at scale s, rounded as the game rounds its scroll (the fraction
 	// of the scroll dropped): at a frame's own moment, the game's own placing.

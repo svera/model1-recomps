@@ -282,6 +282,12 @@ The AI wrote nearly all the code. A person decided what was right.
 - **Players' setups** → portable mode (a `portable.txt` beside the program keeps everything in its folder) and a ROM
   folder of the player's own (`--roms`, `M1_ROMS` or `roms_folder` in `settings.ini`), only read, so an update can't
   touch it.
+- **SWA's asteroid-field attract drawn at 30 pictures a second** → smooth motion fits the camera's move between two
+  lists to the parts' places. The rotation came from 30 Newton steps on their covariance, and each step only halves a
+  large value. SWA's places are tens of thousands of units, so the "rotation" still had entries around 13. Every part
+  then missed the fit by many times its depth, and from frame 6143 nearly every list was taken for a camera cut and
+  shown unblended (1,414 cuts in 12,000 frames) → the covariance is scaled to about 1 first, with up to 60 steps.
+  SWA now has 74 cuts, all real view changes. VF's 75 cuts are unchanged; VR matches by records and never fits.
 - **A crash at exit on Linux** → a widescreen write ran past the end of each line in the tile chip → found with ASan
   and fixed. ASan now runs clean at several scales and shapes.
 
@@ -1657,6 +1663,20 @@ screen: the Death Star demo plays out slightly differently from 4:3, and an inpu
 at one width can desync at another. Rendering the culled objects alone would need each of the
 dozens of drawing routines handled separately.
 
+The Death Star's surface does not use the view test: each of its four layers draws a fixed list of
+cells per heading (one of 32, 11.25° apart; see the draw distance below), and the lists span only
+the 4:3 view, about 45–60° wide. In widescreen the buildings beside the camera popped in and out
+at the edges as the heading changed. `side_cells` collects the cells of every heading's lists (each
+layer only as far out as its own list reaches) that the current heading's lists don't draw, and
+the renderer draws them as extras of the surface's matrices, each in the band they belong to.
+Coarse and fine cells must not overlap: the fine centre is always twice the coarse one, so a coarse
+cell stands for fine cells 2x, 2x + 1 by 2z, 2z + 1. A coarse cell part of which the heading
+already draws in fine cells is added as its missing fine cells, and a fine cell whose coarse cell
+is drawn is dropped. Each extra carries its model's bounds, so the renderer culls those outside
+the wide view. With Full, the far cells come from the heading's list plus those
+`side_headings` (1 in 16:9, 2 in 21:9) either side. The sets are cached per list table, heading
+and setting; 4:3 frames draw nothing extra.
+
 ### SWA's draw distance
 
 Display > Draw distance defaults to Full and persists as `draw_distance = extended` (or
@@ -1739,6 +1759,13 @@ the camera:
   - Smooth motion blends that slot with the camera's motion. An earlier version hung copies on
     an asteroid's matrix instead, and the asteroid's tumble, blended between two lists, swung
     copies 100,000 units away visibly.
+  - That slot's matrix is only the camera's turn, so each copy's own transform (its place
+    relative to the camera) is blended too. Each copy carries a `render_object::key`: its
+    source (an attract placement in ROM, or the object when it has none) and its model. Smooth
+    motion pairs it with the nearest copy that has the same key in the older list. If that copy
+    is more than 60% of its distance away, it's a different repeat and the two aren't paired.
+    Before this, copies moved with the camera's turn but not its flight. They stepped about half
+    a pixel once per game frame while the game's own objects moved every picture.
 - **Fading in.** A copy beyond 196,608 units (1.5 periods) is darkened toward black, to nothing
   at 262,144 (`render_object::fade`, applied to its polygons' colours on the CPU and the GPU).
   With a hard edge instead, a Star Destroyer crossing it popped in about 40 pixels long, and
@@ -1768,6 +1795,21 @@ the camera:
   starts updating the ships, so the pre-drawn ships are replaced by the normal renderer copies
   without being drawn twice. First-time culled ships can also use those intact models instead
   of waiting for another ship to populate the cache.
+- **Small-rock clusters (`DB88C`).** In play, the clusters of small rocks (model `[2[obj]]`,
+  data `6[obj]`, at `1F540B` and its LOD models) are a separate, denser field. `DB88C` keeps
+  each one in a box around the camera: X is `7724` plus the 15-bit wrap of halfword `30[obj]`
+  less it (period 32,768); Y is `7704` plus the 13-bit wrap of halfword `32[obj]` less it
+  (period 8,192); Z is `7728` plus the 16-bit wrap of halfword `30[obj]` less it (period
+  65,536), only while mode `7009` is below 4. It culls them with TGP 0x32 at radius 2,560, read
+  at `0DB927`, and draws them with 0x12, 0x16 by `1C[obj]`, 0x13 by 2.5 and `C1869`. So a
+  cluster jumped 32,768 units in X at the 16:9 sides, 65,536 in Z ahead, or 8,192 in Y, often
+  only 6,000 to 23,000 units ahead at the top or bottom of the picture. Full copies them like
+  the asteroids, in X and Z within 65,536 units (fading from 49,152), and records their culls.
+  Repeating them in Y as well filled the sky with columns of clusters, so instead one copy is
+  drawn at the opposite Y edge as a cluster nears its ±4,096 limit, fading in over the last
+  2,048 units, which takes over where the game's own cluster reappears. A list whose clusters
+  are all culled has no drawn object for the view offset; it is then the camera rotation of the
+  eye (`7700`) negated, which matches the drawn objects' offset. `cluster_copies` counts them.
 - **Asteroid-cluster lead-in (Full only).** The 38 cluster placements at `DF38A` through `DF7B2`
   (exclusive), 28 bytes each, also initialize after the cockpit appears. They are pre-drawn from
   their ROM positions, scale and model before initialization. Reads of the last angular velocity
@@ -1775,6 +1817,16 @@ the camera:
   live position and rotation are used; objects whose handlers change are not resurrected.
   Each display list records which clusters were already drawn or culled, so pre-drawing only
   supplies those not yet handled by the normal path.
+  The five small-rock clusters follow at `DF7B2` through `DF816` (exclusive), 20 bytes each:
+  handler `DB88C`, initializer `DB833`, then X, Y and Z. `DBE82` creates them around frame 6101,
+  but `DB88C` first places and draws them at 6142, so without a lead-in they appeared all at once
+  70 frames into the scene. Until then each is drawn where `DB88C` will place it (from its X and Y
+  low halfwords, the record's or `30`/`32[obj]`), with model `23BEBA`, data `5222B` and its
+  repeats, and roll `1C[obj]` once `DB833` has picked one (none before). The initializer's read of
+  Z at `DB85B` associates each placement with its object. `DBE82` writes the handler only after
+  the initializer, so an object is taken as gone only once it has been seen with `DB88C`. The
+  lead-in measures from the eye (`7700`-`7708`), not `7724`/`7728`: in the list that creates the
+  clusters those hold other values, which placed them beyond reach for two frames.
   Both fleet and cluster pre-drawing require demo 1 at `7770[R25]`, which `C3828` alternates
   with demo 2. Sequence 3/subsequence 2 alone also identifies the Death Star demo, where these
   ROM placements do not belong. Changing demos clears the latch and cluster associations.
@@ -1911,8 +1963,8 @@ surface and every Star Destroyer keep their most detailed models at every distan
 restores the arcade's simpler distant models. The game plays the same either way.
 
 **Esc → Display → Draw distance** defaults to Full (`draw_distance = extended`): the
-Death Star's surface reaches further, and in the asteroid field asteroids and Star
-Destroyers no longer pop in. Arcade draws what the cabinet does. Only the picture
+Death Star's surface reaches further, and in the asteroid field asteroids, clusters of
+small rocks and Star Destroyers no longer pop in. Arcade draws what the cabinet does. Only the picture
 changes, so replays keep the choice.
 
 Replay mode ignores existing battery/EEPROM saves and never writes saves or
@@ -1933,9 +1985,9 @@ Test/Service inputs that select EASY settings. `make test-host-input-replay`
 checks the format's bounds, truncation and rejection paths.
 
 **This is not finished support yet.** Scripted games play from coins to game over (below), natively
-and on the interpreter, but camera/mode RAM identification remains to be done: those addresses are
-left unset, and the original boot sequence is shown rather than skipped. Release packaging remains
-VR-only.
+and on the interpreter, but camera RAM identification remains to be done: that address is left
+unset, and the original boot sequence is shown rather than skipped (the mode byte is `40F003`,
+below). Release packaging covers VR and SWA (`tools/games/swa/release`).
 
 SWA draws a new 3D picture every two video frames (30 a second) throughout play, like VR. It
 starts at Frame rate 30 (Arcade), each picture as the game drew it; choose 60 or 120 under the
@@ -1997,8 +2049,49 @@ on the hardware (low values are right), as MAME's `PORT_REVERSE`; stick Y is not
 dives, as on the cabinet (Game > Invert flight Y swaps that). MAME's throttle range (28–200) stops at
 -72 on SLOW; the host uses the full calibrated travel. Values outside the calibration make the input
 test show INVALID VALUE. The test menu's own calibration (page 2, Start) has not been exercised;
-the host's ranges assume the factory values. The `SWA_*`
+the host's ranges assume the factory values.
+
+Game > Service menu opens the test menu as VR's does: the host presses Test, then follows the
+game's mode to know when the test menu is up and when it closes. SWA keeps its variables in
+battery-backed RAM at R25 = `408000`, so the profile's `mode_ram` (an absolute address since then)
+is `40F003` (`7003[R25]`): 1 from the Test press until EXIT, through every test, else 0. The scene
+state beside it (`7009[R25]`) is no use: the test menu's list and its tests take its values 0–3,
+as the attract's scenes do, so the host took entering a test for leaving the menu and restarted
+the game. SWA sets no camera RAM, so its boot is not skipped and `past_boot` is always true: a
+Test press during the boot opens the menu once the boot is over.
+Service moves the cursor and Test selects; the stick being analog, only **9** and **F2** (or Start
+for Test) do it. After EXIT, PC mode restarts the game, as VR does. The `SWA_*`
 environment variables of `model1run` set raw port values.
+
+The Game menu also has the test menu's GAME ASSIGNMENT settings, as VR's has its machine settings.
+SWA keeps its settings at `7C80[R25]` (`40FC80`), 0x80 bytes: "S32A", the ROM halfword at `FF08C`,
+two zero bytes, then a 0x3C-byte record and its backup copy at `+44`. The record starts with a CRC
+(little-endian) and a count of saves; ADVERTISE SOUND is at `+0E` (0/1) and GAME DIFFICULTY #1–#3
+(PLAYER, ENEMY, TIMER) at `+1D`–`+1F` (1–5, default 3). The CRC (`73780`) is CCITT's polynomial
+from `DEBD` over the record's 0x3A bytes after the CRC, then 16 zero bits; the defaults' is `6D3A`.
+At boot `736DC` loads the block from the I/O board's 93C46 EEPROM (command 3), takes the backup if
+the record's CRC fails and the ROM's defaults (`73698`) if both do; leaving GAME ASSIGNMENT saves
+it (`72074`: the count, the CRC, the backup, then `737BB` writes it through command 2). The host
+sets a value the same way, in RAM and in the EEPROM's words (each holds two bytes, high first),
+and restarts the game when the menu closes. The items show "-" until the game has loaded its
+settings. On a blank EEPROM the boot's own save of the defaults does not last: the I/O board acks
+command 3 before it has copied the EEPROM into the shared RAM, so its copy (about 30 ms) overwrites
+part of the defaults the V60 has put there for command 2 by then. Each boot then starts from the
+defaults again, which is harmless; the first save from the test menu or the Game menu makes the
+EEPROM valid, and a valid EEPROM is never rewritten at boot.
+
+Game > Play style works as VR's: PC mode is free play and Arcade mode has the cabinet's coins.
+COIN ASSIGNMENT's coin/credit setting is the block's `+0F`–`+12`, one of the 26 4-byte entries
+of the table at `70482` (#26, FREE PLAY, is `01 01 01 01`) or MANUAL SETTING's own values; MANUAL
+SETTING's COIN TO CREDIT also sets `+13`. CREDIT TO PLAY is at `+14`/`+18` (start, PILOT/GUNNER)
+and `+16`/`+1A` (continue). The game takes the setting at boot (setting it while the attract runs
+still asks for coins), so `booted()` sets #26 in PC mode, keeping `+13`, and has the game boot
+again; Arcade mode puts back the setting it had, kept in settings.ini as `arcade_coins` (the five
+bytes in hex), or #1 after free play left by PC mode before one was kept. A coin setting changed in
+the service menu in PC mode becomes Arcade mode's. SWA's boot isn't skipped (no camera RAM), so
+`booted()` comes straight after the reset: with no settings saved yet it runs the game until it
+has loaded its defaults (8 frames) before setting free play. The boot is about four seconds of black
+before the attract either way.
 
 The V60 interpreter and ROM-backed MB86233 reach polygon-rendered attract mode with the existing
 sound board enabled, without a SWA HLE implementation. `test-swa-boot` checks two deterministic
@@ -2217,8 +2310,10 @@ input test and scripted play, and a solo failed-mission continue/restart is chec
 The opening objective and next-stage entry are now checked in all three execution backends, and a
 recorded human run checks the trench objective and the following stage's start. Later
 objectives, mission victories and team-mode continuation still lack comprehensive checks.
-Camera/mode RAM is still unidentified, so boot skipping and SWA-specific widescreen
-behaviour are not established. Release packaging remains VR-only.
+Camera RAM is still unidentified, so the boot is not skipped. Release packaging covers VR and
+SWA: `tools/games/swa/release/game.sh`, with an icon drawn from scratch by
+`tools/games/swa/release/make_icon.py` ("SW" in VR's chiselled low-poly letters, in yellow, over
+stars and a trench), written to `assets/games/swa/icon` as `icon.png`, `SWA.icns` and `SWA.ico`.
 
 The useful pattern was to keep three claims separate: the program runs reproducibly, native code
 matches the interpreter, and the result matches the cabinet. Each needs different evidence.

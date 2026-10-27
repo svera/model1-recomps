@@ -32,9 +32,10 @@ struct profile
 	std::string_view romset;
 	std::string_view recompiler_map;
 	std::string_view make_regions;   // how a development build gets the regions (src/host/regions.h)
-	// work RAM (0x500000 on) the shared code reads: the camera pointer the game last sent (0 between
-	// scenes, and until the boot's over), and the game's mode byte, test_menu_mode in its test menu.
-	// Unset until the game's RAM layout is known.
+	// RAM the shared code reads: the camera pointer the game last sent (an offset in work RAM,
+	// 0x500000 on; 0 between scenes, and until the boot's over), and the address of the game's mode
+	// byte (in work RAM or the battery-backed 0x400000 on), test_menu_mode in its test menu. Unset
+	// until the game's RAM layout is known.
 	std::optional<uint32_t> camera_ram;
 	std::optional<uint32_t> mode_ram;
 	uint8_t test_menu_mode;
@@ -113,6 +114,9 @@ struct render_object
 	std::optional<std::array<float, 12>> transform;
 	float fade = 1;                                // its colours scaled toward black (1: as lit)
 	std::optional<model_bounds> bounds;             // optional model-space bound for renderer-only copies
+	// (smooth motion) nonzero: a copy with a transform that pairs with the nearest one with the same
+	// key in the older list's paired slot, its transform blended with that one's
+	uint64_t key = 0;
 };
 
 struct record_visibility

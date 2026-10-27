@@ -5,7 +5,10 @@ namespace game::swa {
 const profile PROFILE{
 	ID, "Star Wars Arcade", "swa", "games/swa/swa_map.txt",
 	"run `make swa-regions` with your roms/swa.zip, or tools/romset.py --game swa",
-	std::nullopt, std::nullopt, 0
+	// No camera RAM (the boot isn't skipped). For the mode, 7003[R25] (R25 = 408000): 1 from the Test
+	// press until the test menu's EXIT, every test included, else 0. (Its scene state 7009[R25] takes
+	// the same values in attract as in the test menu.)
+	std::nullopt, 0x40f003, 1
 };
 
 // As the ROM's input test (and MAME's swa ports): the seats are Pilot and Gunner, both on the player 1
