@@ -248,6 +248,9 @@ struct video_traits
 	// polygon ROM addresses below this are the scenery a moving model's shadow falls on, which
 	// above 1x has its shadows kept off the models (0: no such split, shadows drawn as the arcade)
 	uint32_t scenery_polys_end = 0;
+	// models (first polygon's ROM address, [first, last)) that never move by themselves: blended
+	// between game frames by the camera's move only (SWA's Death Star surface; 0, 0: none known)
+	uint32_t still_models[2] = { 0, 0 };
 	std::vector<sky_record> skies;    // empty: no hi-res skies
 	int sky_tile_map = 0, sky_first_row = 0;   // where the game streams the panoramas
 	std::optional<sky_camera> sky_scroll;      // none: the sky's scroll as the tile chip has it

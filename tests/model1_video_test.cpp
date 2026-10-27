@@ -1099,6 +1099,111 @@ struct model1_video_test
 		printf("SWA far places: no cut, all parts blended; keyed copies blended with their nearest pair\n");
 	}
 
+	// SWA's Death Star surface: cells of a few models round the camera, the list's order changing as
+	// the camera crosses into the next cell (one leaving it, one coming in). Each cell pairs with
+	// the older copy the camera's move carries onto it, the new one is moved with the camera, and
+	// all of them blend by one move (cells drawn from their own pairs' moves cracked apart); a
+	// ship of its own model, moving by itself, keeps its pair.
+	static void swa_surface_cells()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame z, a, b;
+		z.frame = 8, a.frame = 10, b.frame = 12;
+		const double turn = 2 * M_PI / 180, T[3] = { 40, -20, -300 };
+		const double c = std::cos(turn), s = std::sin(turn);
+		auto move = [&](model1::slot sl, int times) {   // the camera's move: x' = R x + T, `times` over
+			for (int t = 0; t < times; t++) {
+				float out[12];
+				for (int col = 0; col < 4; col++) {
+					const float *v = sl.mat + 3 * col;
+					out[3 * col + 0] = float(c * v[0] + s * v[2] + (col == 3 ? T[0] : 0));
+					out[3 * col + 1] = float(v[1] + (col == 3 ? T[1] : 0));
+					out[3 * col + 2] = float(-s * v[0] + c * v[2] + (col == 3 ? T[2] : 0));
+				}
+				std::copy_n(out, 12, sl.mat);
+			}
+			return sl;
+		};
+		std::vector<model1::slot> cells;
+		for (int i = 0; i < 30; i++) {
+			model1::slot sl;
+			sl.polys = { 0x300u + uint32_t(i % 3) };
+			sl.mat[9] = float((i % 6 - 2.5) * 3000), sl.mat[10] = float(-400 - (i % 4) * 600), sl.mat[11] = float(800 + (i / 6) * 3500);
+			cells.push_back(sl);
+		}
+		model1::slot ship;
+		ship.polys = { 0x900 };
+		ship.mat[9] = 200, ship.mat[10] = -100, ship.mat[11] = 2000;
+		model1::slot stars;
+		stars.polys = { 0x10 };
+		for (auto *lf : { &z, &a }) lf->slots.push_back(stars);
+		for (size_t i = 0; i < cells.size(); i++) z.slots.push_back(cells[i]), a.slots.push_back(move(cells[i], 1));
+		z.slots.push_back(ship), a.slots.push_back(move(ship, 1));
+		// the newer list in another order: cell 4 left it, one came in at the back, of a model in use
+		b.slots.push_back(move(stars, 0));
+		for (size_t i = 5; i < cells.size(); i++) b.slots.push_back(move(cells[i], 2));
+		for (size_t i = 0; i < 4; i++) b.slots.push_back(move(cells[i], 2));
+		model1::slot arrived;
+		arrived.polys = { 0x301 };
+		arrived.mat[9] = -9000, arrived.mat[10] = -400, arrived.mat[11] = 21000;
+		b.slots.push_back(move(arrived, 2));
+		model1::slot ship_b = move(ship, 2);
+		ship_b.mat[9] += 60;   // (its own move, 3% of its depth)
+		b.slots.push_back(ship_b);
+		m.blend_slots(z, a, 0.5);
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut && m.m_camera_sure && !m.m_camera_cut);
+		for (size_t i = 0; i < b.slots.size(); i++) assert(m.m_blend_ok[i]);
+		// every cell from its own older place (the camera's move undone), every one blended by one
+		// move: the turn halfway back, from the newer place
+		const double ch = std::cos(-turn / 2), sh = std::sin(-turn / 2);
+		const size_t first = 1, last = b.slots.size() - 2;
+		for (size_t i = first; i <= last; i++) {
+			const float *pb = b.slots[i].mat, *from = m.m_blend_from[i].data();
+			const double x = pb[9] - T[0], y = pb[10] - T[1], zz = pb[11] - T[2];
+			assert(std::fabs(from[9] - (c * x - s * zz)) < 0.5 && std::fabs(from[10] - y) < 0.5 && std::fabs(from[11] - (s * x + c * zz)) < 0.5);
+			const float *b0 = b.slots[first].mat, *m0 = m.m_blend[first].data(), *mi = m.m_blend[i].data();
+			const double dx = pb[9] - b0[9], dy = pb[10] - b0[10], dz = pb[11] - b0[11];
+			assert(std::fabs((mi[9] - m0[9]) - (ch * dx + sh * dz)) < 0.5);
+			assert(std::fabs((mi[10] - m0[10]) - dy) < 0.5);
+			assert(std::fabs((mi[11] - m0[11]) - (-sh * dx + ch * dz)) < 0.5);
+		}
+		const size_t s_i = b.slots.size() - 1;
+		for (int k = 0; k < 12; k++) assert(m.m_blend_from[s_i][k] == a.slots.back().mat[k]);
+		// a fit most slots are off (the trench's walls, a move one cell along fitting a third of
+		// them): not the camera's, nothing moved by it; each blends from its own pair
+		{
+			model1::regions tr;
+			tr.title = game::id{ "swa" };
+			model1 t(std::move(tr));
+			model1::logic_frame tb;
+			tb.frame = 12;
+			tb.slots.push_back(stars);
+			for (size_t i = 0; i < cells.size(); i++) {
+				model1::slot sl = move(cells[i], 2);
+				if (i % 3) sl.mat[9] += float((i % 2 ? 0.08 : -0.08) * sl.mat[11]);
+				tb.slots.push_back(sl);
+			}
+			model1::logic_frame ta = a;
+			ta.slots.pop_back();
+			model1::logic_frame tz = z;
+			tz.slots.pop_back();
+			t.blend_slots(tz, ta, 0.5);
+			t.blend_slots(ta, tb, 0.5);
+			assert(!t.m_cam_carried);
+			int own = 0;
+			for (size_t i = 1; i < tb.slots.size(); i++)
+				if ((i - 1) % 3 && t.m_blend_ok[i]) {
+					for (int k = 0; k < 12; k++) assert(t.m_blend_from[i][k] == ta.slots[i].mat[k]);
+					own++;
+				}
+			assert(own >= 12);
+		}
+		printf("SWA surface cells: re-ordered and new cells paired by the camera's move, all blended by one move; a ship keeps its pair; a fit most are off moves none\n");
+	}
+
 	// A camera swaying (turning back and forth over a degree a list) about a car it keeps in place:
 	// its own turn, not evened out, for a while; a steady uneven turn still is.
 	static void swaying_camera()
@@ -2063,6 +2168,170 @@ struct model1_video_test
 			smooth ? "smooth" : "arcade motion", extended ? "extended distance" : "arcade distance",
 			scale, aspect, tested, logo_pixels, originally_hidden);
 	}
+	// SWA's free-play attract run: a TIE overtakes the X-wing on the Death Star surface, closing on
+	// the camera (TIME 147, game frames 54188-54191). Its parts were moved with the camera as
+	// scenery, from a place nearer the camera than either list had it: each list's pictures started
+	// too big and shrank, a trail of copies. Its wings, a finer model as it nears, have no older copy.
+	static void swa_passing_tie(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < FROM - 8) m.run_frame();
+		m.set_drawing(true);
+		std::vector<size_t> blue;
+		while (m.frame_number() < 54191) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			if (f < FROM) continue;
+			for (int q = 0; q < 4; q++) {
+				m.render_smooth(f - 1 + q / 4.0);
+				size_t n = 0;
+				const uint32_t *px = m.frame().data();
+				for (int y = m.frame_h() / 6; y < m.frame_h(); y++)
+					for (int x = 0; x < m.frame_w(); x++) {
+						const uint32_t c = px[size_t(y) * m.frame_w() + x];
+						n += (c & 255) > 120 && (c >> 16 & 255) < 60 && (c >> 8 & 255) < 60;
+					}
+				blue.push_back(n);
+			}
+		}
+		// the TIE's wings (blue) fill more of the screen in each picture, never shrinking or leaping
+		std::string seq;
+		for (size_t n : blue) seq += " " + std::to_string(n);
+		printf("SWA passing TIE, wing pixels by picture:%s\n", seq.c_str());
+		assert(blue.size() == size_t(54191 - FROM + 1) * 4);
+		assert(blue.back() > 10 * blue.front());
+		for (size_t i = 1; i < blue.size(); i++) {
+			assert(blue[i] * 50 >= blue[i - 1] * 49);
+			assert(blue[i] * 3 <= blue[i - 1] * 4 + 3000);
+		}
+	}
+	static constexpr uint64_t FROM = 54188;
+	// The same run at TIME 151 (game frames 53947-53949), drawn as at 60 frames a second: one
+	// picture a frame, a quarter and three quarters into each pair of lists. A dark polygon lies
+	// under the surface, hidden by its cells. The pair's camera move was fitted to cells still
+	// paired with other copies of their model, and none followed it, and a cell was paired with
+	// another copy a cell along as a ship. The first picture of the pair swept the cells off it:
+	// a dark slab at the top of the surface for one picture, as the arcade never shows.
+	static void swa_surface_slab(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 53940) m.run_frame();
+		m.set_drawing(true);
+		std::string seq;
+		size_t worst = 0;
+		while (m.frame_number() < 53956) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 53946) continue;
+			// the slab's grey, over the surface at the top of the screen, left of the trench
+			size_t n = 0;
+			const uint32_t *px = m.frame().data();
+			const int w = m.frame_w(), h = m.frame_h();
+			for (int y = h * 10 / 100; y < h * 16 / 100; y++)
+				for (int x = w * 28 / 100; x < w * 38 / 100; x++) {
+					const uint32_t c = px[size_t(y) * w + x];
+					const int r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+					n += r >= 35 && r <= 65 && g >= 35 && g <= 65 && b >= 35 && b <= 65;
+				}
+			seq += " " + std::to_string(n);
+			worst = std::max(worst, n);
+		}
+		printf("SWA surface at TIME 151, slab pixels by picture:%s\n", seq.c_str());
+		assert(worst < 50);
+	}
+
+	// At TIME 150 cells of the trench's rim were paired as ships with another copy most of their
+	// depth away, beyond the ships' far guard, so they were jumped: drawn a picture unblended.
+	static void swa_trench_jump(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 54020) m.run_frame();
+		m.set_drawing(true);
+		std::string seq;
+		int total = 0;
+		while (m.frame_number() < 54053) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 54030) continue;
+			seq += " " + std::to_string(m.m_smooth_stats[1]);
+			total += m.m_smooth_stats[1];
+		}
+		printf("SWA trench at TIME 150, jumped slots by picture:%s\n", seq.c_str());
+		assert(total == 0);
+	}
+	// The attract's run over the Death Star in the cockpit (TIME 124): as the camera crossed into the
+	// next cell, the surface's list in another order, the camera's move was lost, dozens of its cells
+	// drawn unblended for a picture, the surface shaking. Each picture's unblended cells counted.
+	static void swa_cockpit_surface(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 28280) m.run_frame();
+		m.set_drawing(true);
+		int worst = 0, worst_frame = 0;
+		while (m.frame_number() < 28420) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 28290 || m.m_replay_older) continue;   // (the camera's move not known yet; a cut)
+			const auto &slots = m.m_logic[1].slots;
+			int n = 0;
+			for (size_t i = 0; i < slots.size() && i < m.m_blend_ok.size(); i++)
+				n += !slots[i].polys.empty() && slots[i].polys[0] >= 0x1020000 && slots[i].polys[0] < 0x1050000 && !m.m_blend_ok[i];
+			if (n > worst) worst = n, worst_frame = f;
+		}
+		printf("SWA cockpit over the Death Star (TIME 124): at most %d surface cells unblended a picture (frame %d)\n", worst, worst_frame);
+		assert(worst == 0);
+	}
 };
 
 int main(int argc, char **argv)
@@ -2079,6 +2348,13 @@ int main(int argc, char **argv)
 	model1_video_test::object_bounds();
 	if (argc > 2 && std::string(argv[2]) == "--swa-object-bounds") {
 		model1_video_test::swa_destroyer_bounds(argv[1]);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-ships") {
+		model1_video_test::swa_passing_tie(argv[1]);
+		model1_video_test::swa_surface_slab(argv[1]);
+		model1_video_test::swa_trench_jump(argv[1]);
+		model1_video_test::swa_cockpit_surface(argv[1]);
 		return 0;
 	}
 	model1_video_test::overlay_priority();
@@ -2152,6 +2428,7 @@ int main(int argc, char **argv)
 	model1_video_test::unstretched_backdrops();
 	model1_video_test::wide_split_tiles();
 	model1_video_test::swa_far_blend();
+	model1_video_test::swa_surface_cells();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);

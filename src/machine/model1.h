@@ -405,7 +405,10 @@ private:
 	int m_still_carried = -1;
 	bool m_camera_sure = false;
 	std::vector<float> m_cam_res;
-	struct cam_move { int from = -1, to = -1; double d[3] = {}; double turn = 0, ratio = 0; };
+	bool m_cam_carried = false;   // (SWA: the slots on the camera's move are moved by it, from m_cam_older)
+	std::vector<std::array<float, 12>> m_cam_older;      // (SWA, pair -3 or following the camera) a slot's older matrix, as the camera's move puts it
+	std::vector<char> m_ship;                            // (SWA) a slot paired as a ship, moving by itself: it may move 80% of its depth in a list
+	struct cam_move { int from = -1, to = -1; double d[3] = {}; double turn = 0, ratio = 0; bool fit = false; double R[3][3] = {}, T[3] = {}; std::vector<float> res; };
 	cam_move m_cam_move[16];
 	int m_cam_move_next = 0;
 	void index_objects(logic_frame &lf);

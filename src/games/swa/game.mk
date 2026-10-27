@@ -53,6 +53,7 @@ test-swa-recording: $(BIN)/swa_recording_test swa-regions
 test-swa-video: $(BIN)/model1_video_test swa-regions
 	$(BIN)/model1_video_test build/swa --swa-priority
 	$(BIN)/model1_video_test build/swa --swa-object-bounds
+	$(BIN)/model1_video_test build/swa --swa-ships
 
 test-swa-wrap: $(BIN)/model1_video_test swa-regions
 	$(BIN)/model1_video_test build/swa --swa-wrap

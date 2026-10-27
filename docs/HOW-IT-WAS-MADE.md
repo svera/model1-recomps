@@ -288,6 +288,74 @@ The AI wrote nearly all the code. A person decided what was right.
   then missed the fit by many times its depth, and from frame 6143 nearly every list was taken for a camera cut and
   shown unblended (1,414 cuts in 12,000 frames) → the covariance is scaled to about 1 first, with up to 60 steps.
   SWA now has 74 cuts, all real view changes. VF's 75 cuts are unchanged; VR matches by records and never fits.
+- **Seams, slabs over the trench and cracks on SWA's Death Star surface (around TIME 150)** → the surface is a list
+  of cells around the camera, and the list changes order as the camera crosses into the next cell. Pairing in order
+  matched dozens of cells with the wrong cell, or with none. That spoiled the camera fit, and each mispaired cell was
+  drawn at its own wrong place → each slot is now re-paired with the copy of its model that the camera's last move
+  carries closest to it. A new cell (or one still mispaired) moves with the camera. Every cell that follows the
+  camera blends with one shared rigid move, so neighbouring cells stay joined between lists. The fit is refined on
+  those cells, weighted by 1/depth², so the near surface fits, not the scenery 100,000 units away. A pair counts as a
+  ship only if it moves less than 0.6 of its depth and isn't scenery. The first picture of a pair now fits the
+  previous pair's move first, so it pairs the same way as later pictures. The faint dotted lines that remain also
+  show unsmoothed: they are the arcade's own. VF and VR are unaffected.
+- **A dark slab over the Death Star surface (around TIME 126) and a missing trench wall (TIME 156, "Pull up!")** →
+  both came from the surface fix above. Near the camera, the game swaps a cell for a finer model (5 polygons → 77–1,269).
+  That cell was paired with a copy of its model one cell along and blended across the screen → a cell whose older copy
+  followed the camera in the previous pair, but is now off its move, is moved with the camera instead. In the trench,
+  the 1/depth² refit used z as depth, but there z crosses 0 beside the camera. A few slots took over the fit, and no
+  slot stayed on it. The trench walls repeat a few models, so a move of one cell along fitted a third of them. Each
+  wall was then blended across a cell or more → the refit is kept only if it holds as many slots as the first fit.
+  The surface pairing applies only when most slots are on the fit. Otherwise every slot blends from its own pair, as
+  before.
+- **TIE fighters and proton torpedoes leaving a trail of copies over the Death Star surface (TIME 152–134)** → the
+  surface pairing moved ships with the camera too, so they were drawn from where the camera's move would put them, not
+  where they had been. A close TIE started each list too big and shrank → a ship now pairs with the nearest older copy
+  of its model, up to its depth away (more if it was already moving). Four other causes were also fixed:
+  - Its own older copy counted as taken.
+  - A model flying with the camera counted as scenery for every TIE.
+  - The X-wing's parts alternate between two models each list, so they never paired and wobbled. They now keep their
+    own older slot.
+  - A TIE's wings switch to a finer model as it nears, with no older copy. They now take the shift of the nearest
+    paired ship part within 400 units. Taking its whole matrix blew up the torpedo plume. Without the 400-unit limit,
+    surface cells were dragged and the surface tore.
+  The 60% jump guard snapped the overtaking TIE (it stood still for a list, then leapt). It is now 80% for ship slots
+  only. At 80% for every slot, a dark slab came back over the surface. A regression test (`--swa-ships`) checks that
+  the passing TIE grows in every picture. Laser bolts and objects drawn for a single list stay unsmoothed: that is the
+  arcade's own.
+- **Dark slabs on the Death Star surface for one picture at 60/120 fps (TIME 151)** → two causes, both in the first
+  picture of a list pair (a quarter of the way through):
+  - The camera fit failed. The surface cells lie almost in one plane, so the fit is easily pulled off. About ten cells
+    were still paired with another copy of their model, a cell or two along, and they pulled the first fit away from
+    the rest. With no cell on the fit, every cell was drawn at the newer list's place while its neighbours were
+    blended, and the gaps showed a dark polygon that sits under the surface. The fit now starts from the cells that
+    the previous pair's camera move predicts within 3%.
+  - A cell was paired as a ship with another copy of its model a cell along, about 30% of its depth away. A copy that
+    the camera's move carried the previous pair can no longer pair as a ship when it is now more than 20% of its depth
+    off that move: scenery doesn't set off.
+  The GPU renderer was not the cause; the CPU renderer drew the same pictures. A regression test (in `--swa-ships`)
+  checks that slab region at 60 fps timing.
+- **The trench's rim changed for one picture (TIME 150)** → cells of the rim were paired as ships with another copy
+  of their model 64–100% of their depth away. Past the ships' far guard (80% of depth), such a pair is jumped: the cell
+  was drawn unblended, at the newer list's place, for a picture. The ship searches, including the X-wing's own-slot
+  fallback, now stop at that far guard, so these cells move with the camera instead. A regression test (in
+  `--swa-ships`) checks that no slot is jumped through those pairs.
+- **The Death Star's surface changing shape for a picture, all through its runs (attract and cockpit)** → the
+  fixes above each guessed, pair by pair, whether a cell was scenery or a ship. A scan of every pair of the attract's
+  three surface runs still found dozens of cells blended from another copy of their model. Each was one grid step
+  away (2048, 4096 or 8192 units): a cell coming into the list was paired with one leaving it. The general fix is to
+  say what the surface is. SWA's video traits name its models' ROM range (`still_models`, 0x1020000–0x1050000; no
+  ship's model is in it), and those never move by themselves:
+  - a cell with no copy that the camera's move carries onto it is moved with the camera, never paired as a ship;
+  - when most of the surface comes off the camera's fit, it is fitted again on the surface alone. This happened in the
+    cockpit run (TIME 124), where the cockpit's frame and the ships are half the list, as the camera crossed into the
+    next cell. The fit that carries more of the surface is kept, and a fit that carries most of the surface is not
+    dropped. Before, 55 pairs lost the camera's move, and 30–75 cells were drawn unblended in each.
+  - The surface lies nearly in a plane, so its covariance is nearly singular. The polar iteration went off on it,
+    carrying none of the cells. The surface-only fit uses Horn's quaternion method, which always gives the best
+    rotation.
+
+  Now no surface cell leaves the camera's move in any of the three runs, apart from TIME 156's "Pull up!", where the
+  game's own camera snaps. A regression test (`--swa-ships`) checks the cockpit run.
 - **A crash at exit on Linux** → a widescreen write ran past the end of each line in the tile chip → found with ASan
   and fixed. ASan now runs clean at several scales and shapes.
 
