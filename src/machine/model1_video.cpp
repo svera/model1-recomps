@@ -12,6 +12,7 @@
 
 
 #include <glm/geometric.hpp>
+#include <glm/vec2.hpp>
 
 #define LOG_TGP (1U << 1)
 
@@ -1128,6 +1129,206 @@ bool model1::view_t::outside(const game::model_bounds &bounds) const
 		beyond(0, -1, a_bottom) || beyond(0, 1, -a_top);
 }
 
+// Smooth motion: steps left open. SWA's Death Star surface blocks step from one top to another,
+// inside a block or from one block to the next, often with no face between: the camera of the
+// game's lists sees such an edge only side-on or off the screen. A picture between two lists, the
+// eye between theirs, can look into the step and see the backdrop through it, a black wedge for
+// one picture at the screen's edge. A model's open edges: its tops' edges that no other face of
+// it shares and no wall of it stands on. Worked out once per model from its polygon data.
+constexpr float open_slack = 2;   // model units (the data's coordinates differ in their last bits)
+// Past this many model units (eight cells) the gap a step shows between two lists' eyes is under a
+// pixel or two, and the steps of a whole low flight's cells (50,000 edges) took 25ms a picture.
+constexpr float step_reach = 16000;
+
+const std::vector<model1::open_edge> &model1::open_edges(const float *poly_data, uint32_t poly_adr, size_t polygon_words, uint32_t size, uint32_t object_polygon)
+{
+	const auto found = m_open_edges.find(object_polygon);
+	if (found != m_open_edges.end()) return found->second;
+	auto &edges = m_open_edges[object_polygon];
+	struct face { glm::vec3 p[4], n; uint32_t index; };
+	std::vector<face> faces;
+	const auto at = [&](uint32_t a) { return glm::vec3(poly_data[a], poly_data[a + 1], poly_data[a + 2]); };
+	glm::vec3 old0 = at(poly_adr), old1 = at(poly_adr + 3);
+	poly_adr += 6;
+	for (uint32_t i = 0; i < size && poly_adr + 10 <= polygon_words; i++, poly_adr += 10) {
+		const uint32_t flags = std::bit_cast<uint32_t>(poly_data[poly_adr]);
+		const int type = flags & 3, link = (flags >> 8) & 3;
+		if (!type) break;
+		const glm::vec3 p0 = at(poly_adr + 4), p1 = type == 2 ? p0 : at(poly_adr + 7);
+		if (link) faces.push_back({ { old1, old0, p0, p1 }, at(poly_adr + 1), i });
+		if (link == 0 || link == 2) old0 = p0, old1 = p1;
+		else if (link == 1) old1 = p0;
+		else old0 = p1;
+	}
+	const auto same_point = [](glm::vec3 a, glm::vec3 b) { return glm::length(a - b) < open_slack; };
+	const auto shared = [&](const face &f, glm::vec3 a, glm::vec3 b) {
+		for (const face &g : faces)
+			if (&g != &f)
+				for (int k = 0; k < 4; k++) {
+					const glm::vec3 c = g.p[k], d = g.p[(k + 1) & 3];
+					if ((same_point(a, c) && same_point(b, d)) || (same_point(a, d) && same_point(b, c))) return true;
+				}
+		return false;
+	};
+	// the edge's stretches no face of the model's stands on (a wall in its upright plane, at its height)
+	const auto unwalled = [&](glm::vec3 a, glm::vec3 b, const face &f, glm::vec3 centre) {
+		const float length = glm::length(b - a);
+		const glm::vec3 along = (b - a) / length, across = glm::normalize(glm::cross(along, glm::vec3(0, 1, 0)));
+		std::vector<std::pair<float, float>> walls;
+		for (const face &g : faces) {
+			if (&g == &f) continue;
+			bool in = true, touches = false;
+			float from = length, to = 0;
+			for (const glm::vec3 &q : g.p) {
+				in &= std::fabs(glm::dot(q - a, across)) < open_slack;
+				touches |= std::fabs(q.y - a.y) < open_slack;
+				const float t = glm::dot(q - a, along);
+				from = std::min(from, t), to = std::max(to, t);
+			}
+			if (in && touches && to > from) walls.push_back({ from, to });
+		}
+		std::sort(walls.begin(), walls.end());
+		float at = 0;
+		const auto open_from = [&](float from, float to) {
+			if (to - from > open_slack) edges.push_back({ a + along * from, a + along * to, centre, f.n / glm::length(f.n), f.index });
+		};
+		for (const auto &w : walls) {
+			if (w.first > at) open_from(at, std::min(w.first, length));
+			at = std::max(at, w.second);
+		}
+		if (at < length) open_from(at, length);
+	};
+	for (const face &f : faces) {
+		const float len = glm::length(f.n);
+		if (len <= 0 || std::fabs(f.n.y) < 0.95f * len) continue;   // tops only
+		const glm::vec3 centre = (f.p[0] + f.p[1] + f.p[2] + f.p[3]) * 0.25f;
+		for (int k = 0; k < 4; k++) {
+			const glm::vec3 a = f.p[k], b = f.p[(k + 1) & 3];
+			if (!same_point(a, b) && !shared(f, a, b)) unwalled(a, b, f, centre);
+		}
+	}
+	return edges;
+}
+
+// The batch's open edges (push_object) paired: two level edges on one line in plan, one above the
+// other, of different tops, nothing between. Seen from the lower top's side, the step between them
+// is closed where they overlap, by a face from the lower edge up to the higher in the lower top's
+// colour (as the lists show the step side-on). Sorted behind everything: it only fills where
+// nothing else is drawn, so a pair that a wall of another model already closes changes nothing.
+void model1::close_steps()
+{
+	std::vector<seen_edge> &edges = m_seen_edges;
+	const size_t n = edges.size();
+	// each edge's line in plan, by direction and offset, and the stretches of it the edge covers, for
+	// finding the edges it overlaps without trying every edge on its line (a grid line runs through
+	// many cells). A line's direction is folded into half a turn: one near the fold is filed both ways.
+	std::vector<std::pair<int64_t, uint32_t>> lines;
+	std::vector<std::array<int32_t, 2>> line_of(n);
+	std::vector<std::array<int32_t, 2>> stretch_of(n);
+	std::vector<bool> level(n);
+	const auto key = [](int32_t angle, int32_t offset, int32_t stretch) {
+		return (int64_t(angle) << 48) ^ (int64_t(uint32_t(offset) & 0xffffff) << 24) ^ int64_t(uint32_t(stretch) & 0xffffff);
+	};
+	constexpr float fold = 0.01f;   // radians a line's direction is filed by
+	for (size_t i = 0; i < n; i++) {
+		const seen_edge &e = edges[i];
+		level[i] = std::fabs(glm::dot(e.b - e.a, e.up)) < e.slack && glm::length(e.b - e.a) > e.slack;
+		if (!level[i]) continue;
+		glm::vec3 side = glm::cross(e.up, glm::vec3(0, 0, 1));
+		if (glm::length(side) < 0.1f) side = glm::cross(e.up, glm::vec3(1, 0, 0));
+		side = glm::normalize(side);
+		const glm::vec3 ahead = glm::cross(side, e.up);
+		glm::vec2 d(glm::dot(e.b - e.a, side), glm::dot(e.b - e.a, ahead));
+		d = glm::normalize(d);
+		if (d.x < 0 || (d.x == 0 && d.y < 0)) d = -d;
+		const glm::vec2 a(glm::dot(e.a, side), glm::dot(e.a, ahead)), b(glm::dot(e.b, side), glm::dot(e.b, ahead));
+		const float stretch = 512 * e.slack;
+		const auto file = [&](glm::vec2 d, bool primary) {
+			const int32_t angle = int32_t(std::lround(std::atan2(d.y, d.x) / fold)), offset = int32_t(std::lround((d.x * a.y - d.y * a.x) / (4 * e.slack)));
+			const float sa = glm::dot(d, a), sb = glm::dot(d, b);
+			const int32_t from = int32_t(std::floor((std::min(sa, sb) - e.slack) / stretch)), to = int32_t(std::floor((std::max(sa, sb) + e.slack) / stretch));
+			if (primary) line_of[i] = { angle, offset }, stretch_of[i] = { from, to };
+			for (int32_t k = from; k <= to; k++) lines.push_back({ key(angle, offset, k), uint32_t(i) });
+		};
+		file(d, true);
+		if (std::fabs(d.x) < 2 * fold) file(-d, false);
+	}
+	std::sort(lines.begin(), lines.end());
+	// o against e: the rise from e up to o and where along e they overlap, if o is on e's line
+	struct overlap { size_t other; float rise, from, to; };
+	const auto against = [&](size_t i, size_t j, overlap &r) {
+		const seen_edge &e = edges[i], &o = edges[j];
+		if ((e.object == o.object && e.face == o.face) || glm::dot(e.up, o.up) < 0.999f) return false;
+		const float slack = std::max(e.slack, o.slack), length = glm::length(e.b - e.a);
+		const glm::vec3 along = (e.b - e.a) / length;
+		const auto plan = [&](glm::vec3 p) { p -= e.a; return p - e.up * glm::dot(p, e.up); };
+		const glm::vec3 pa = plan(o.a), pb = plan(o.b);
+		const float sa = glm::dot(pa, along), sb = glm::dot(pb, along);
+		if (glm::length(pa - along * sa) >= slack || glm::length(pb - along * sb) >= slack) return false;
+		r = { j, glm::dot(o.a - e.a, e.up), std::max(0.0f, std::min(sa, sb)), std::min(length, std::max(sa, sb)) };
+		return r.to - r.from > slack && std::fabs(r.rise) > slack;
+	};
+	std::vector<overlap> near;
+	std::vector<uint32_t> candidates;
+	for (size_t i = 0; i < n; i++) {
+		if (!level[i]) continue;
+		near.clear();
+		candidates.clear();
+		for (int da = -1; da <= 1; da++)
+			for (int doff = -1; doff <= 1; doff++)
+				for (int32_t k = stretch_of[i][0]; k <= stretch_of[i][1]; k++) {
+					const int64_t want = key(line_of[i][0] + da, line_of[i][1] + doff, k);
+					for (auto at = std::lower_bound(lines.begin(), lines.end(), std::pair<int64_t, uint32_t>(want, 0)); at != lines.end() && at->first == want; ++at)
+						if (at->second != i) candidates.push_back(at->second);
+				}
+		std::sort(candidates.begin(), candidates.end());
+		candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+		overlap r;
+		for (uint32_t j : candidates)
+			if (against(i, j, r)) near.push_back(r);
+		for (const overlap &m : near) {
+			if (m.other < i) continue;   // (the pair's done from the other edge)
+			// nothing on the line between the two where they overlap
+			bool between = false;
+			for (const overlap &k : near)
+				between |= &k != &m && (k.rise > 0) == (m.rise > 0) && std::fabs(k.rise) < std::fabs(m.rise) && k.to > m.from && k.from < m.to;
+			if (between) continue;
+			const seen_edge &e = edges[i], &o = edges[m.other];
+			const seen_edge &low = m.rise > 0 ? e : o, &high = m.rise > 0 ? o : e;
+			const int64_t col = low.col >= 0 ? low.col : high.col;
+			if (col < 0) continue;
+			const glm::vec3 along = glm::normalize(e.b - e.a), up = e.up * m.rise;
+			const glm::vec3 from = e.a + along * m.from, to = e.a + along * m.to;
+			const glm::vec3 v[4] = { from, to, to + up, from + up };
+			const glm::vec3 nv = glm::cross(v[1] - v[0], v[3] - v[0]);
+			if (glm::dot(nv, -v[0]) * glm::dot(nv, low.centre - v[0]) <= 0) continue;   // seen from the higher top's side: hidden by it
+			require_geometry_space(4, 0);
+			point_t *q[4];
+			unsigned clipped = 31;
+			for (int k = 0; k < 4; k++) {
+				q[k] = m_pointpt++;
+				q[k]->x = v[k].x, q[k]->y = v[k].y, q[k]->z = v[k].z;
+				unsigned code = 0;
+				if (v[k].x < v[k].z * m_view->a_left) code |= 1;
+				if (v[k].x > v[k].z * m_view->a_right) code |= 2;
+				if (v[k].y > v[k].z * m_view->a_bottom) code |= 4;
+				if (v[k].y < v[k].z * m_view->a_top) code |= 8;
+				if (v[k].z <= 0) code |= 16;
+				clipped &= code;
+			}
+			if (clipped) { m_pointpt -= 4; continue; }
+			for (point_t *p : q) {
+				if (p->z > 0) m_view->project_point(p);
+				else { p->s.x = p->s.y = 0; p->fx = p->fy = 0; }
+			}
+			quad_t step(int(col), std::numeric_limits<float>::max(), q[0], q[1], q[2], q[3]);
+			step.foreground = low.foreground;
+			fclip_push_quad(0, step);
+		}
+	}
+	edges.clear();
+}
+
 // old_z is the flat-z "reuse" register (poly zmode 0 = keep previous poly's
 // sort z). It persists ACROSS objects within a display-list walk: NetMerc's
 // garage door wings (all-zmode-0 dynamic objects) must inherit the ~325k z of
@@ -1212,6 +1413,15 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	if (!size)
 		size = 0xffffffff;
 
+	// Smooth motion: a still surface model's open edges (open_edges), for close_steps
+	const std::vector<open_edge> *open = nullptr;
+	std::vector<std::pair<uint32_t, uint32_t>> top_colours;   // (face, colour) as drawn in this picture
+	if (m_replaying && m_alpha < 1 && !clipped_object && !effect.point && !(object_polygon & 0x800000) &&
+		m_video->still_model(object_polygon)) {
+		open = &open_edges(poly_data, poly_adr, polygon_words, size, object_polygon);
+		if (open->empty()) open = nullptr;
+	}
+
 	// (A part blended between two lists, the camera passing through it (SWA's asteroids beside the
 	// camera's path): a corner of a face behind the eye in one list, in front in the other, passed
 	// just by the eye in the pictures between, and the face, cut by the view's sides there, filled
@@ -1222,15 +1432,23 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	if (m_replaying && m_video->separate_parts && m_shade_from && m_shade_to && m_alpha < 1 && !m_video->still_model(object_polygon) &&
 		size_t(m_replay_slot) < m_blend.size() && std::equal(m_view->translation, m_view->translation + 12, m_blend[m_replay_slot].begin()))
 		eye_from = m_shade_from, eye_to = m_shade_to;   // (drawn by its slot's matrix: not a copy hung on it)
+	// (A corner far off to the side crosses the eye's plane as the view turns: a big backdrop face
+	// (the Death Star's far ground) swinging past the eye, its corner 80 times as far as it moves a
+	// list, is left as it is. The asteroid's corners passed within 2 to 8 times their move.)
 	const auto pose_depths = [&](point_t *p) {
 		if (!eye_from) return;
-		const auto depth = [&](const float *t) {
-			const float xx = t[0] * p->x + t[3] * p->y + t[6] * p->z + t[9] + m_view->vxx;
-			const float zz = t[2] * p->x + t[5] * p->y + t[8] * p->z + t[11] + m_view->vzz;
-			return m_view->ayys * xx + m_view->ayyc * zz;
+		const auto pose = [&](const float *t) {
+			const glm::vec3 v(t[0] * p->x + t[3] * p->y + t[6] * p->z + t[9] + m_view->vxx,
+				t[1] * p->x + t[4] * p->y + t[7] * p->z + t[10] + m_view->vyy,
+				t[2] * p->x + t[5] * p->y + t[8] * p->z + t[11] + m_view->vzz);
+			return std::pair(v, m_view->ayys * v.x + m_view->ayyc * v.z);
 		};
-		p->z_from = depth(eye_from);
-		p->z_to = depth(eye_to);
+		const auto [from, z_from] = pose(eye_from);
+		const auto [to, z_to] = pose(eye_to);
+		p->passes_eye = false;
+		if ((z_from > 0) == (z_to > 0)) return;
+		const glm::vec3 crossing = from + (to - from) * (z_from / (z_from - z_to));
+		p->passes_eye = glm::length(crossing) < 16 * glm::length(to - from);
 	};
 
 	require_geometry_space(2, 0);
@@ -1409,7 +1627,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 
 		if (eye_from) {
 			bool crossed = false;
-			for (const point_t *p : cquad.p) crossed |= (p->z_from > 0) != (p->z_to > 0);
+			for (const point_t *p : cquad.p) crossed |= p->passes_eye;
 			if (crossed) goto next;
 		}
 		if (bounds) {
@@ -1528,6 +1746,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			cquad.col = c;
 		}
 
+		if (open) top_colours.push_back({ uint32_t(i), uint32_t(cquad.col) });
 		if (flags & 0x00002000)
 			cquad.col |= MOIRE;
 
@@ -1547,6 +1766,24 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			case 3:
 				old_p0 = p1;
 				break;
+		}
+	}
+	if (open) {
+		const auto view_of = [&](glm::vec3 m) {
+			point_t p;
+			p.x = m.x, p.y = m.y, p.z = m.z;
+			m_view->transform_point(&p);
+			return glm::vec3(p.x, p.y, p.z);
+		};
+		const glm::vec3 origin = view_of(glm::vec3(0));
+		const float scale = glm::length(view_of(glm::vec3(1, 0, 0)) - origin);
+		const uint32_t object = m_seen_objects++;
+		if (glm::length(origin) <= step_reach * scale)
+		for (const open_edge &e : *open) {
+			int64_t col = -1;
+			for (const auto &t : top_colours) if (t.first == e.face) col = t.second;
+			const glm::vec3 up = view_of(-e.n) - origin;   // (the models' normals point into them: a top's, down)
+			m_seen_edges.push_back({ view_of(e.a), view_of(e.b), view_of(e.centre), glm::normalize(up), open_slack * scale, col, object, e.face, foreground });
 		}
 	}
 	if (pin_object) {
@@ -1812,6 +2049,10 @@ int model1::skip_direct(int list_offset) const
 
 void model1::draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
+	if (!m_seen_edges.empty()) {
+		if (m_replaying) close_steps();
+		else m_seen_edges.clear();
+	}
 	if (m_quadpt != &m_quaddb[0])
 	{
 		M1_LOG(LOG_TGP, "VIDEO: sort&draw\n");
@@ -2760,3 +3001,4 @@ bool model1::bench3d(int reps, double &cpu_ms, double &gpu_ms, long long *differ
 	cpu_ms = c[c.size() / 2]; gpu_ms = g[g.size() / 2];
 	return true;
 }
+

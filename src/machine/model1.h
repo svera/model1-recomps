@@ -260,7 +260,7 @@ public:
 		float xx = 0, yy = 0;
 		spoint_t s;
 		float fx = 0, fy = 0;   // s before truncation, for the crack-free filler above 1x
-		float z_from = 1, z_to = 1;   // (smooth motion, separate parts) its depth in the two lists blended
+		bool passes_eye = false;      // (smooth motion, separate parts) crosses the eye's plane near the eye between the lists blended
 	};
 
 	class quad_t
@@ -934,6 +934,16 @@ private:
 	std::vector<quad_t> m_rec_quads;
 	std::vector<point_t> m_rec_points;
 	std::map<std::array<uint32_t, 12>, std::vector<uint32_t>> m_extra_colours;
+	// A surface model's top edges that no other face of it shares and no wall of it stands on
+	// (push_object, close_steps): a step down or up with no face between, in model space.
+	struct open_edge { glm::vec3 a, b, centre, n; uint32_t face; };
+	std::unordered_map<uint32_t, std::vector<open_edge>> m_open_edges;
+	const std::vector<open_edge> &open_edges(const float *poly_data, uint32_t poly_adr, size_t polygon_words, uint32_t size, uint32_t object_polygon);
+	// a picture's open edges, as drawn (view space), till the batch's quads are sorted
+	struct seen_edge { glm::vec3 a, b, centre, up; float slack; int64_t col; uint32_t object, face; bool foreground; };
+	std::vector<seen_edge> m_seen_edges;
+	uint32_t m_seen_objects = 0;
+	void close_steps();
 	std::vector<gpu3d_poly> m_rec_polys;
 	std::vector<gpu3d_span> m_rec_spans;
 	int m_rec_y0 = 0, m_rec_y1 = -1, m_rec_m0 = 0, m_rec_m1 = -1;

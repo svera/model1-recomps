@@ -36,7 +36,8 @@
 // fifth band). Neither changes what the V60 runs or writes outside the display list.
 // The lists span only the 4:3 view; in a wide frame the cells the other headings' lists draw that
 // this heading's don't (side_cells) are added the same way, band by band, with bounds so the
-// renderer culls those outside the wide view.
+// renderer culls those outside the wide view. Full takes one heading more each side (at 4:3 too):
+// one list's far ring leaves the horizon's corners empty, the gaps jumping as the heading steps.
 //
 // The coarse layers are the surface's own distant detail: each coarse cell's model is a simpler
 // version of the 2 x 2 fine cells it covers (fine cells 2x, 2x + 1 by 2z, 2z + 1; its centre is half
@@ -450,8 +451,9 @@ void add_coarse_cell(model1 &machine, gameplay_state &state, std::vector<render_
 }
 
 // at a coarse layer's cell matrix: with LOD off its fine cells, and (Full) the cells past the far
-// layer's list, attached to its first type-0 cell; in a wide frame the cells the sides show
-// (side_cells), each band's attached to the first type-0 cell drawn in it or after
+// layer's list, attached to its first type-0 cell; in a wide frame (or Full) the cells the
+// neighbouring headings show (side_cells), each band's attached to the first type-0 cell drawn in
+// it or after
 std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 {
 	auto reg = [&](int r) { return machine.cpu().reg(r); };
@@ -473,13 +475,15 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 			for (int n = machine.read8(at++); n > 0; n--, at += 2) band.emplace_back(int8_t(machine.read8(at)), int8_t(machine.read8(at + 1)));
 		return bands;
 	};
-	const bool wide = machine.wide_ext() > 0;
+	// (Full) one heading more each side: the far ring past one list's spread leaves the horizon's
+	// corners empty, and the gaps jump as the heading steps
+	const int steps = side_headings(machine.wide_ext()) + (state.full_distance ? 1 : 0);
+	const bool neighbours = steps > 0;
 	const uint32_t table = machine.read32(reg(LAYER_REG) - 4);
 	const int heading = machine.read16(reg(OBJECT_REG) + HEADING) & (SURFACE_HEADINGS - 1);
-	if (wide && (state.side_layer < 0 || layer < state.side_layer || machine.frame_number() > state.side_frame + SIDE_PASS_FRAMES)) {
+	if (neighbours && (state.side_layer < 0 || layer < state.side_layer || machine.frame_number() > state.side_frame + SIDE_PASS_FRAMES)) {
 		// a new pass: its four layers' tables follow each other
 		const uint32_t first = table - SURFACE_TABLE_SIZE * uint32_t(layer);
-		const int steps = side_headings(machine.wide_ext());
 		const uint64_t key = uint64_t(first) << 16 | uint64_t(heading) << 8 | uint64_t(steps) << 1 | uint64_t(state.full_distance);
 		auto entry = state.sides.find(key);
 		if (entry == state.sides.end()) {
@@ -537,7 +541,7 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 		state.side_next = 0;
 		state.side_frame = machine.frame_number();
 	}
-	if (!wide) state.side_pass = nullptr;
+	if (!neighbours) state.side_pass = nullptr;
 	state.side_layer = layer;
 	if (const auto *sides = state.side_pass; sides && own && own->angle == 0) {
 		const auto band = sides->band[layer].find({ px - cx, pz - cz });
@@ -1363,3 +1367,4 @@ bool set_coin_setting(model1 &machine, int64_t value)
 }
 
 }
+

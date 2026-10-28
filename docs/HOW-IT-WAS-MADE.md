@@ -410,6 +410,31 @@ The AI wrote nearly all the code. A person decided what was right.
   else draws. From TIME 175 to 129, the 4:3 cells missing at 16:9 went from 8,099 to 0. Cells a 21:9 picture shows
   inside the 16:9 frame that 16:9 lacked went from 16,160 to 272, a few far cells at a time at the ring's edge. A
   regression test (`--swa-ships`) compares 4:3 and 16:9 over three stretches (191 cells missing before).
+- **Big black wedges flashing for one picture at the screen's edges (Death Star demo, smooth motion)** → not LOD or
+  culling. The surface blocks step from one top to another with no face between, both inside a block and from one
+  block to the next. The game's own camera only ever sees such a step side-on or off the screen. A blended picture's
+  eye, a little to one side, looked into the step and saw the black backdrop through it. A model's open edges (its
+  tops' edges that no other face shares and no wall stands on) are now worked out once from its polygon data. In
+  blended pictures, two such edges on one line at different heights are closed by a face in the lower top's colour,
+  drawn behind everything so it only covers backdrop. Over TIME 150 to 133, every changed pixel was black before, at
+  16:9 and 4:3. A regression test (`--swa-ships`) counts one-picture black pixels at the left edge (8,901 before, 1
+  now). The low flight from TIME 129 puts some 54,000 open edges in a picture, and pairing them all took 25 ms a
+  picture (under 30 fps). Only the cells within 16,000 units (eight cells) take part now: past that a step's gap is
+  a pixel or two (109 pixels over 200 pictures), and the pairing takes about 2 ms.
+- **The far ground going black at the left for four pictures (Death Star demo, TIME 123)** → the asteroid rule
+  above. The ground under the picture's left is one face 270,000 units across. It turns with the view, and a corner
+  far off to the side crossed the eye's plane between two lists, so the face was taken for one passing through the
+  eye and left out. Now a face is left out only when a corner crosses the eye's plane within 16 times its move
+  between the lists. The asteroid's corners crossed within 2 to 8 times their move, this one 80 times. A regression
+  test (`--swa-ships`) counts black pixels there (27,432 before, 0 now). The asteroid's count is unchanged.
+- **Surface blocks coming and going at the screen's sides from TIME 135 (Death Star demo, third-person view)** →
+  mostly the game's own behaviour: the arcade video shows the same. It happens at 4:3 and without smooth motion too.
+  Adding three more headings' cells or widening the game's view test changed no near surface cell. What was ours was
+  the far end. At 4:3, Full continued only the current heading's list, so the horizon's corners on the left and right
+  were empty, and the gaps jumped as the orbiting camera stepped the heading. Full now also takes the neighbouring
+  heading's cells each side (at any aspect), as 16:9 already did for its width. A regression test (`--swa-ships`)
+  checks that the cells 16:9 draws within 4:3's view are drawn at 4:3 (3,148 of 19,432 missing before, 16 now: one
+  cell hidden behind nearer blocks).
 - **A crash at exit on Linux** → a widescreen write ran past the end of each line in the tile chip → found with ASan
   and fixed. ASan now runs clean at several scales and shapes.
 

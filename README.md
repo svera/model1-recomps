@@ -4,7 +4,7 @@
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
 This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
-multiple games; this repository currently supports Virtua Racing.
+multiple games; this repository currently supports Virtua Racing and Star Wars Arcade.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
@@ -93,73 +93,128 @@ or frame rate.
 | --- | --- |
 | ![Big Forest gameplay](assets/games/vr/screenshots/big-forest.png) | ![Acropolis gameplay](assets/games/vr/screenshots/acropolis.png) |
 
-### Star Wars Arcade (experimental)
-
 <p align="center"><img src="assets/games/swa/icon/icon.png" alt="Star Wars Arcade Recomp" width="160"></p>
 
-Star Wars Arcade can be played from start to finish. It is packaged like VR
-(`StarWarsArcadeRecomp-*`), or build it from source (see above); start it and select your own
-US **`swa.zip`** when asked. Keep **`model1io.zip`** in the same folder.
+<h2 align="center">Star Wars Arcade Recomp</h2>
 
-```sh
-make swa
-build/bin/swa
-```
+<p align="center">
+  <img src="assets/games/swa/screenshots/death-star.png" alt="Approaching the Death Star from the X-wing's cockpit in widescreen" width="900">
+</p>
 
-Two players share one cabinet: the **Pilot** flies and fires, the **Gunner** aims a second
-laser.
+> [!IMPORTANT]
+> You need your own US **`swa.zip`** and **`model1io.zip`** ROM archives. Neither is included.
+> Both are needed for the flight stick and buttons to work. This is an unofficial fan project,
+> not affiliated with or supported by SEGA or Lucasfilm.
 
-Hold **Tab** to fast-forward, including during attract mode; release it to return to normal
-speed. This is useful for quickly reaching scenes to debug. **P** pauses and resumes.
+<p align="center">
+  <a href="https://github.com/svera/model1-recomp/releases">Download</a> ·
+  <a href="#getting-started-1">Getting started</a> ·
+  <a href="#controls-1">Controls</a> ·
+  <a href="https://github.com/svera/model1-recomp/issues">Report a bug</a>
+</p>
+
+### Features
+
+- The whole arcade game, in both the Rebel Attack and Training missions.
+- Two players on one machine: the **Pilot** flies and fires, the **Gunner** aims a second laser.
+  Gunner assist lets one player fly with both lasers firing.
+- Sharper graphics, widescreen and ultrawide views. The X-wing cockpit is continued out to the
+  screen edges and the HUD is not stretched.
+- Original arcade motion or smoother 60 / 120 FPS.
+- Full-detail models and a longer draw distance by default, with options for the arcade's own.
+- Keyboard and gamepad support, with customizable controls.
+- Saved settings and rankings, difficulty settings and the arcade's service menu.
+
+Online multiplayer is not supported.
+
+### Getting started
+
+1. [Download](https://github.com/svera/model1-recomp/releases) the package for your system and extract it.
+2. Keep **`swa.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
+3. Start the game and select **`swa.zip`** when asked. It remembers your files for next time.
+4. Press **1** on the keyboard or **Start** on your gamepad to play. For two players, pull back
+   on the stick while choosing the mode to select PILOT & GUNNER.
+
+**macOS:** open **Star Wars Arcade Recomp.app**. If macOS blocks it, allow it through
+**System Settings > Privacy & Security**.
+
+**Windows:** run the included executable. Windows may show a SmartScreen warning for preview builds.
+
+**Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
+**StarWarsArcade.sh** instead of using a file picker. On Steam Deck, add the launcher as a
+Non-Steam Game and set **Start In** to the extracted **StarWarsArcade** folder.
+
+### Controls
 
 | Action | Pilot keys | Gunner keys | Gamepad |
 | --- | --- | --- | --- |
-| Fly | Arrows | I / J / K / L | Left stick, d-pad |
+| Fly / aim | Arrows | I / J / K / L | Left stick, d-pad |
 | Throttle | W faster, S slower | - | Right stick up / down |
 | Laser | Z | U | Right trigger |
 | Torpedo | X | O | Left trigger |
 | Change view | C | - | Y / Triangle |
 | Start | 1 | 2 | Start |
 | Insert coin (Arcade mode) | 5 | 6 | Left bumper |
+| Open menu | Esc | - | View / Select |
 
-Useful settings (**Esc**):
+To see or change your actual controller bindings, open **Esc > Controls**. Coins are only
+needed in Arcade play style. Hold **Tab** to fast-forward, including through attract mode;
+**P** pauses and resumes.
 
-- **Cheats > Gunner assist:** one player can fly while the Gunner's laser aims at the nearest
-  enemy by itself, in PILOT & GUNNER mode.
-- **Game > Play style:** PC mode is free play (Start begins without coins); Arcade mode uses the
-  cabinet's coin settings, kept while PC mode is in use.
-- **Game > Invert flight Y:** push forward to climb instead of dive.
-- **Game > Service menu:** opens the arcade's own test menu (tests, game and coin settings,
-  bookkeeping). **9** moves and **F2** selects; choose EXIT to return.
-- **Game > Difficulty (player / enemy / timer), Advertise sound:** the test menu's GAME
-  ASSIGNMENT settings (1/5 to 5/5, default 3/5; attract sound Off or On), without the test menu.
-  Changing one restarts the game when the menu closes; they are kept with the game's own settings.
-- **Display > Frame rate:** 30 shows the game as the arcade drew it; 60 and 120 smooth the
-  motion between pictures, including Draw distance Full's extra asteroids, rock clusters and
-  Star Destroyers, though some of the game is not smoothed yet.
-- **Display > LOD:** Off (default) keeps the most detailed models at every distance; On uses
-  the arcade's simpler distant models. Off also retains the complete Death Star globe through
-  the attract-mode approach instead of switching to smaller surface patches.
+### Useful settings
+
+Open the menu with **Esc** or **View / Select**:
+
+- **Display:** change sharpness, screen shape, fullscreen, and frame rate. 30 FPS shows the
+  game as the arcade drew it; 60 and 120 smooth the motion between pictures.
+- **Display > LOD:** Off (default) keeps the most detailed models at every distance, including
+  the complete Death Star through the attract-mode approach. On uses the arcade's simpler
+  distant models.
 - **Display > Draw distance:** Full (default) shows the Death Star's surface further out and
-  pre-draws asteroid clusters, small-rock clusters and Star Destroyers at the asteroid-field attract scene's opening
-  to avoid their pop-in, without adding them to the Death Star demo. In play, it also draws the
-  asteroid field's clusters of small rocks where they repeat, so they no longer pop in at the
-  screen edges or ahead. Arcade disables these
-  additions and keeps the cabinet's original pop-in.
-- **Display > Widescreen cockpit:** On (default) continues the X-wing cockpit's canopy struts
-  and side consoles out to the screen edges in 16:9 and wider, following their lines instead of
-  stretching the panel. Off leaves the sides of the cockpit open. No other 2D art is stretched:
-  attract-mode screens such as the notices and the Rankings stay at their 4:3 proportions. The
-  opening starfield carries on across the full width from its own scrolling map.
+  draws the asteroid field's rocks and Star Destroyers before they come into view, so they no
+  longer pop in. Arcade keeps the cabinet's original pop-in.
+- **Display > Widescreen cockpit:** On (default) continues the cockpit's canopy struts and side
+  consoles to the edges of a 16:9 or wider screen, following their lines instead of stretching
+  the panel. Off leaves the sides open. Other 2D art, such as the notices and the Rankings,
+  keeps its 4:3 proportions.
+- **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
+- **Game:** invert flight Y, and the arcade's difficulty (player, enemy, timer) and attract
+  sound settings. Changing one of these restarts the game when the menu closes.
+- **Game > Service menu:** opens the arcade's own test menu. **9** moves and **F2** selects;
+  choose EXIT to return.
+- **Cheats > Gunner assist:** in PILOT & GUNNER mode, the Gunner's laser aims at the nearest
+  enemy by itself.
+- **Sound:** adjust the audio levels.
 
-In 16:9 and wider, the game's own view test is widened to the whole picture, so ships and
-scenery no longer pop in at the old 4:3 edges. The Death Star's surface draws only the cells the
-arcade lists for each heading, so in widescreen it also draws the neighbouring headings' cells.
-Enemies in the extra width therefore act as if on
-screen (turrets and fighters can fire from there), so play differs slightly from 4:3, and an
-input recording should be replayed at the aspect ratio it was recorded in.
+Higher graphics settings need a faster computer. If play feels slow, lower the render scale
+or frame rate.
 
-Developers can also record and replay play sessions; see
+#### Differences from the arcade
+
+- In 16:9 and wider, the game's view test covers the whole picture, so ships and scenery no
+  longer pop in at the old 4:3 edges. Enemies in the extra width act as if on screen (turrets
+  and fighters can fire from there), so play differs slightly from 4:3.
+- Some pop-in remains because the arcade does it too, such as surface blocks at the sides of
+  the screen over the Death Star.
+- The black box behind the cockpit's SEGA logo is part of the original artwork.
+
+### Screenshots
+
+| Asteroid field | Death Star surface |
+| --- | --- |
+| ![Star Destroyers in the asteroid field](assets/games/swa/screenshots/asteroid-field.png) | ![Flying over the Death Star's surface](assets/games/swa/screenshots/death-star-surface.png) |
+
+### For developers
+
+Build and run it from source (see [Build and test](#build-and-test)):
+
+```sh
+make swa
+build/bin/swa
+```
+
+Developers can also record and replay play sessions; an input recording should be replayed at
+the aspect ratio it was recorded in. See
 [how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
 
 Release packaging is enabled for Virtua Racing and Star Wars Arcade on macOS, Windows, and Linux.

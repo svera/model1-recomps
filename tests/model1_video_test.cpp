@@ -2514,6 +2514,47 @@ struct model1_video_test
 		assert(pictures > 20 && unblended == 0);
 	}
 
+	// each list's surface cells within `slope_x`, `slope_y` of the view (Full, LOD off), by the
+	// list's frame, over the frame ranges given
+	using swa_cell = std::tuple<uint32_t, int, int, int>;
+	static std::map<int, std::set<swa_cell>> swa_cells_in_view(const char *dir, float aspect,
+		std::initializer_list<std::pair<int, int>> ranges, float slope_x, float slope_y)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		std::map<int, std::set<swa_cell>> lists;
+		for (auto [from, to] : ranges) {
+			m.set_drawing(false);
+			while (m.frame_number() < uint64_t(from)) m.run_frame();
+			m.set_drawing(true);
+			while (m.frame_number() < uint64_t(to)) {
+				m.run_frame();
+				m.render_smooth(m.frame_number() - 0.5);
+				auto &out = lists[m.m_logic[1].frame];
+				const auto add = [&](uint32_t polygon, const float *at) {
+					if (!m.m_video->still_model(polygon) || at[2] < 100 || std::fabs(at[0]) > slope_x * at[2] || std::fabs(at[1]) > slope_y * at[2]) return;
+					out.emplace(polygon, int(std::lround(at[0] / 4)), int(std::lround(at[1] / 4)), int(std::lround(at[2] / 4)));
+				};
+				for (const auto &s : m.m_logic[1].slots) {
+					for (uint32_t p : s.polys) add(p, &s.mat[9]);
+					for (const auto &e : s.extra) {
+						if (!e.transform) continue;
+						const auto &t = *e.transform;
+						float at[3];
+						for (int r = 0; r < 3; r++) at[r] = s.mat[9 + r] + s.mat[r] * t[9] + s.mat[3 + r] * t[10] + s.mat[6 + r] * t[11];
+						add(e.polygon, at);
+					}
+				}
+			}
+		}
+		return lists;
+	}
 
 	// The Death Star demo's low flight (TIME 145-140), draw distance Full: 16:9 left out far cells
 	// 4:3 draws, in the middle of the picture. The far layer's side cells past the last band the game
@@ -2523,45 +2564,8 @@ struct model1_video_test
 	// drawn at 16:9 too.
 	static void swa_wide_far_cells(const char *dir)
 	{
-		using cell = std::tuple<uint32_t, int, int, int>;
-		// each list's surface cells in view, by the list's frame
-		const auto run = [&](float aspect) {
-			model1 m(load_regions(dir, game::id{ "swa" }));
-			m.reset();
-			m.set_drawing(false);
-			m.set_smooth(true);
-			m.set_aspect(aspect);
-			m.set_edge_aa(false);
-			game::swa::set_lod(m, false);
-			game::swa::set_full_draw_distance(m, true);
-			std::map<int, std::set<cell>> lists;
-			for (auto [from, to] : { std::pair{ 53798, 53806 }, std::pair{ 54290, 54298 }, std::pair{ 54322, 54328 } }) {
-				m.set_drawing(false);
-				while (m.frame_number() < uint64_t(from)) m.run_frame();
-				m.set_drawing(true);
-				while (m.frame_number() < uint64_t(to)) {
-					m.run_frame();
-					m.render_smooth(m.frame_number() - 0.5);
-					auto &out = lists[m.m_logic[1].frame];
-					const auto add = [&](uint32_t polygon, const float *at) {
-						if (!m.m_video->still_model(polygon) || at[2] < 100 || std::fabs(at[0]) > 1.2f * at[2] || std::fabs(at[1]) > at[2]) return;
-						out.emplace(polygon, int(std::lround(at[0] / 4)), int(std::lround(at[1] / 4)), int(std::lround(at[2] / 4)));
-					};
-					for (const auto &s : m.m_logic[1].slots) {
-						for (uint32_t p : s.polys) add(p, &s.mat[9]);
-						for (const auto &e : s.extra) {
-							if (!e.transform) continue;
-							const auto &t = *e.transform;
-							float at[3];
-							for (int r = 0; r < 3; r++) at[r] = s.mat[9 + r] + s.mat[r] * t[9] + s.mat[3 + r] * t[10] + s.mat[6 + r] * t[11];
-							add(e.polygon, at);
-						}
-					}
-				}
-			}
-			return lists;
-		};
-		const auto narrow = run(4.0f / 3), wide = run(16.0f / 9);
+		const std::initializer_list<std::pair<int, int>> ranges = { { 53798, 53806 }, { 54290, 54298 }, { 54322, 54328 } };
+		const auto narrow = swa_cells_in_view(dir, 4.0f / 3, ranges, 1.2f, 1), wide = swa_cells_in_view(dir, 16.0f / 9, ranges, 1.2f, 1);
 		int lists = 0, cells = 0, missing = 0;
 		std::string at;
 		for (const auto &[frame, in43] : narrow) {
@@ -2578,6 +2582,111 @@ struct model1_video_test
 			missing, cells, lists, at.c_str());
 		assert(lists > 5 && cells > 1000 && missing == 0);
 	}
+
+	// The Death Star demo's low flight (TIME 136-133), 4:3, draw distance Full: the far ring past one
+	// heading's list spans only that list's spread, so the horizon's corners at the picture's left and
+	// right were empty, the gaps jumping as the camera turned the heading a step (3,148 of 19,432 cells
+	// 16:9 draws within 4:3's view weren't drawn at 4:3). Full takes the neighbouring headings' cells,
+	// as 16:9 does: all but one hidden cell over two lists are drawn at 4:3 too.
+	static void swa_horizon_corners(const char *dir)
+	{
+		const std::initializer_list<std::pair<int, int>> ranges = { { 54862, 54872 }, { 54928, 54938 }, { 54966, 54976 } };
+		const auto narrow = swa_cells_in_view(dir, 4.0f / 3, ranges, 1.2f, 0.93f), wide = swa_cells_in_view(dir, 16.0f / 9, ranges, 1.2f, 0.93f);
+		int lists = 0, cells = 0, missing = 0;
+		std::string at;
+		for (const auto &[frame, in169] : wide) {
+			const auto n = narrow.find(frame);
+			if (n == narrow.end()) continue;
+			lists++;
+			cells += int(in169.size());
+			int here = 0;
+			for (const auto &c : in169) here += !n->second.count(c);
+			if (here) at += " " + std::to_string(frame) + ":" + std::to_string(here);
+			missing += here;
+		}
+		printf("SWA Death Star demo (TIME 136-133), Full distance: %d of 16:9's %d surface cells within 4:3's view missing at 4:3 over %d lists%s\n",
+			missing, cells, lists, at.c_str());
+		assert(lists > 5 && cells > 1000 && missing < 50);
+	}
+
+	// The Death Star demo (TIME 123), 16:9: the far ground under the left of the picture, one face
+	// 270,000 units across, turns with the view, and a corner far off to the side crossed the eye's
+	// plane between two lists: taken for a face passing through the eye (the asteroid's), it was left
+	// out, and the backdrop showed black through a quarter of the picture for four pictures. The
+	// lists draw it grey there.
+	static void swa_far_ground(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 55618) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, black = 0;
+		while (m.frame_number() < 55622) {
+			m.run_frame();
+			for (double k : { 0.25, 0.75 }) {
+				m.render_smooth(double(m.frame_number()) - 1 + k);
+				pictures++;
+				const int w = m.frame_w(), h = m.frame_h();
+				for (int y = h / 3; y < h * 2 / 3; y++)
+					for (int x = 0; x < w / 6; x++) black += (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+			}
+		}
+		printf("SWA Death Star demo (TIME 123), 16:9: %d black pixels under the left of the picture over %d pictures\n", black, pictures);
+		assert(pictures == 8 && black < 500);
+	}
+
+	// The Death Star demo (TIME 150), 16:9: the surface blocks have steps with no face between the
+	// two tops, in a block and between neighbouring ones, which the lists' eyes only see side-on.
+	// The blended eyes, a little to one side, looked into them at the screen's left edge: big black
+	// wedges for a single picture. Pixels black in one picture but in neither neighbour at the left
+	// edge, where the wedges were.
+	static void swa_open_steps(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 53558) m.run_frame();
+		m.set_drawing(true);
+		std::vector<std::vector<uint8_t>> black;
+		std::vector<double> times;
+		int pictures = 0, flashes = 0;
+		std::string at;
+		while (m.frame_number() < 53622) {
+			m.run_frame();
+			for (double k : { 0.25, 0.75 }) {
+				const double t = double(m.frame_number()) - 1 + k;
+				m.render_smooth(t);
+				const int w = m.frame_w(), h = m.frame_h(), strip = w / 8;
+				std::vector<uint8_t> b(size_t(strip) * h);
+				for (int y = 0; y < h; y++)
+					for (int x = 0; x < strip; x++) b[size_t(y) * strip + x] = (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+				black.push_back(std::move(b));
+				times.push_back(t);
+				if (black.size() < 3) continue;
+				pictures++;
+				int here = 0;
+				for (size_t i = 0; i < black[1].size(); i++) here += black[1][i] && !black[0][i] && !black[2][i];
+				if (here > 200) at += " " + std::to_string(times[1]).substr(0, 8) + ":" + std::to_string(here);
+				flashes += here;
+				black.erase(black.begin());
+				times.erase(times.begin());
+			}
+		}
+		printf("SWA Death Star demo (TIME 150), 16:9: %d one-picture black pixels at the left edge over %d pictures%s\n", flashes, pictures, at.c_str());
+		assert(pictures > 100 && flashes < 1000);
+	}
+
 
 };
 
@@ -2607,6 +2716,9 @@ int main(int argc, char **argv)
 		model1_video_test::swa_asteroid_top_edge(argv[1]);
 		model1_video_test::swa_side_ship(argv[1]);
 		model1_video_test::swa_wide_far_cells(argv[1]);
+		model1_video_test::swa_horizon_corners(argv[1]);
+		model1_video_test::swa_open_steps(argv[1]);
+		model1_video_test::swa_far_ground(argv[1]);
 		return 0;
 	}
 	model1_video_test::overlay_priority();
@@ -2727,3 +2839,4 @@ int main(int argc, char **argv)
 	}
 	puts("Model 1 video tests passed");
 }
+
