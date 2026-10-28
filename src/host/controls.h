@@ -37,6 +37,7 @@ enum { PAD_NONE = -1, PAD_LT = 100, PAD_RT = 101 };
 struct control_profile
 {
 	game::id title;                                   // (its I/O profile: the analog axes' defaults)
+	bool show_player_2 = true;                       // Player 2 and Swap pads in the Controls menu
 	std::array<const char *, C_COUNT> labels{};       // the menu's names; none: the game has no such control
 	std::array<const char *, C_COUNT> names{};        // settings.ini's key_<name> and pad_<name>; none: CONTROL_KEYS
 	std::array<const char *, C_COUNT> key_names{};    // key_<name> when it isn't name()

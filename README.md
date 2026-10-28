@@ -1,6 +1,6 @@
 # Model 1 Recomps
 
-<p align="center"><b>SEGA's classic arcade games on your computer, with sharper graphics,
+<p align="center"><b>SEGA classic arcade games on your computer, with sharper graphics,
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
 This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
@@ -257,6 +257,20 @@ Development requires a C++20 compiler, zlib, SDL 3, and FreeType. On macOS, inst
 `brew install sdl3 freetype`. Games have separate build instructions in their guides.
 Every game has the same make targets, made from its `src/games/<game>/game.mk`: `<game>`, `<game>-native`,
 `<game>-regions`, `<game>-coverage`, `<game>-static`, `<game>-lockstep`, and `<game>-native-lockstep`.
+
+Release packaging is enabled only for Virtua Racing on macOS, Windows, and Linux. Each platform's
+`package.sh` builds VR by default.
+
+Useful shared checks:
+
+```sh
+make test-model1io-adc
+make test-host-gamepads
+make test-host-graphics
+make test-vr-profile test-vr-gameplay test-vr-tgp-track
+```
+
+`test-host-graphics` needs a working SDL graphics driver (it uses a hidden window).
 
 ## Repository layout
 

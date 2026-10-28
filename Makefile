@@ -42,10 +42,11 @@ BIN ?= build/bin
 # date of the last commit. Builds without git (a container) are handed them in the environment.
 M1_VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 M1_DATE ?= $(shell git log -1 --format=%cd --date=format:'%b %-d %Y' 2>/dev/null)
+M1_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 # rewritten only when they change, so main is rebuilt for a new version and not otherwise
 $(OBJ)/version.h: FORCE
 	@mkdir -p $(OBJ)
-	@printf '#define M1_VERSION "%s"\n#define M1_DATE "%s"\n' "$(M1_VERSION)" "$(M1_DATE)" > $@.tmp
+	@printf '#define M1_VERSION "%s"\n#define M1_DATE "%s"\n#define M1_COMMIT "%s"\n' "$(M1_VERSION)" "$(M1_DATE)" "$(M1_COMMIT)" > $@.tmp
 	@cmp -s $@.tmp $@ && rm -f $@.tmp || mv $@.tmp $@
 FORCE:
 objs = $(patsubst %.cpp,$(OBJ)/%.o,$(1))
@@ -144,6 +145,7 @@ $(OBJ)/src/host/main.o $(OBJ)/src/host/menu.o: CXXFLAGS += $(SDL_CFLAGS) $(RML_C
 $(OBJ)/src/games/%/host.o: CXXFLAGS += $(SDL_CFLAGS) $(RML_CFLAGS)
 $(OBJ)/src/host/main.o: $(OBJ)/version.h
 $(OBJ)/src/host/main.o: CXXFLAGS += -I$(OBJ)
+$(OBJ)/tests/host_graphics_test.o: CXXFLAGS += $(SDL_CFLAGS) $(RML_CFLAGS)
 # The 3D on the GPU in the game (src/gpu, Display > 3D renderer): Metal for an Apple target; SDL_GPU
 # elsewhere (Direct3D 12 or Vulkan: gpu3d_sdlgpu.cpp, its shaders precompiled in gpu3d_shaders.h by
 # tools/gpu/shaders.sh); GPU3D=none: the CPU's only
@@ -199,6 +201,12 @@ test-mb86233: $(BIN)/mb86233_test
 
 # (the games come from the registry, so a game's tests (its game.mk) link the machine with every game in it)
 GAMES_LINK = $(call objs,$(CORE) $(MACHINE) $(SOUND)) $(MUSASHI_OBJ) $(Z80_OBJ)
+$(BIN)/host_graphics_test: $(OBJ)/tests/host_graphics_test.o $(OBJ)/src/host/menu.o $(call objs,$(RML_SRC)) $(GAMES_LINK)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(SDL_LIBS) $(FT_LIBS)
+test-host-graphics: $(BIN)/host_graphics_test
+	$(BIN)/host_graphics_test
+.PHONY: test-host-graphics
 $(BIN)/model1_sky_test: $(OBJ)/tests/model1_sky_test.o $(GAMES_LINK)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)

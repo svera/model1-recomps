@@ -94,6 +94,7 @@ int main(int argc, char **argv)
 	assert(vr_io.analog_kinds[2] == game::analog_kind::pedal);
 
 	const auto controls = player_controls::defaults(0, game::vr::CONTROLS);
+	assert(!game::vr::CONTROLS.show_player_2);
 	assert(controls.key[C_LEFT] == SDL_SCANCODE_LEFT);
 	assert(controls.key[C_RIGHT] == SDL_SCANCODE_RIGHT);
 	assert(controls.key[game::vr::C_ACCELERATOR] == SDL_SCANCODE_UP);

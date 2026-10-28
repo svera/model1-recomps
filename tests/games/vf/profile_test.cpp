@@ -19,6 +19,7 @@ int main()
 
 	// a fighting game's controls: no pedals, a start button per player
 	using namespace game::vf;
+	assert(CONTROLS.show_player_2);
 	assert(CONTROLS.visible(C_GUARD) && CONTROLS.visible(C_ALL_THREE));
 	assert(std::string(CONTROLS.key_name(C_PUNCH_KICK)) == "punch_kick");
 	assert(!CONTROLS.visible(C_BUTTON_8) && !CONTROLS.visible(C_BUTTON_9));

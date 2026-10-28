@@ -469,6 +469,35 @@ At 1x, 150 VF and 100 VR sampled frames matched the pre-integration runner byte 
 runs checked Metal rendering, GPU 2D composition and menu/restart behavior without changing the player's saves.
 The SDL-GPU edge shaders still need Windows/Linux runtime validation; this Mac exercises their CPU fallback.
 
+### Upstream v1.4.1 runtime fixes
+
+Production changes after `a48890d` through `df9d796` are integrated into the shared host, menu and renderer,
+not copied back into a VF-only runtime. The upstream site's changelog is not carried over. Background
+autosaves, menu bounds guards and VF's `fe7baf -> fe7bd4` map edge were already present. The reconciled
+gamepad handles and their hotplug tests remain in `src/host/gamepads.h`, rather than reverting to
+upstream's older pad assignment code.
+
+GPU composition accepts colour rounding up to 8 per channel and at most 64 pixels beyond that tolerance
+in its startup picture; larger errors still fall back to the CPU. The shared machine counts incorrect
+GPU pictures separately from device errors, and a successful alternate-driver check clears the previous
+driver's failure baseline. GPU fallback reasons appear as timed notices without hiding or enabling the
+FPS counter. Notices pause while the menu is open.
+
+Auto's saved findings and SDL-GPU crash markers include `M1_VERSION`, `M1_DATE` and `M1_COMMIT`.
+A new build retries the GPU; the same build preserves crash recovery until the player asks to retry.
+The marker is flushed in place and covers renderer creation, composition checks and the first 3D check.
+On Windows a crashed Vulkan startup tries Direct3D 12 before falling back to the CPU, and the host
+disables process power throttling where supported. The Linux container packaging passes the commit ID
+through alongside the version and date. Sleep recovery resets pacing and queued audio after gaps over
+two seconds, while shorter hitches retain the normal timing behavior.
+
+`make test-host-graphics` checks exact composition rounding boundaries, notice expiry, delayed display,
+menu pause and FPS coexistence. The existing shared video, sky, pad, VF and VR profile/gameplay tests
+pass. Isolated native desktop runs for both games checked GPU composition, build-specific settings
+load/save and simulated sleep. An SDL-GPU host built on macOS also checked current/old crash markers,
+the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
+management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
+
 ## VR's extended scenery distance
 
 VR does its distance culling in the V60 program, before submitting objects to the shared renderer. Its routine
