@@ -260,6 +260,7 @@ public:
 		float xx = 0, yy = 0;
 		spoint_t s;
 		float fx = 0, fy = 0;   // s before truncation, for the crack-free filler above 1x
+		float z_from = 1, z_to = 1;   // (smooth motion, separate parts) its depth in the two lists blended
 	};
 
 	class quad_t

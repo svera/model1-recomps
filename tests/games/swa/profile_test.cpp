@@ -203,6 +203,17 @@ int main()
 	}
 	assert(game::swa::far_cells({}, 18).empty());
 	{
+		// merged lists reaching unevenly: from the shortest one's reach (7) out, the cells none draws
+		// (here a gap down the middle past 7) join the ring too, the drawn ones don't
+		std::set<std::pair<int, int>> drawn(list.begin(), list.end());
+		for (auto c : list)
+			if (std::abs(c.first) <= 1 && std::hypot(float(c.first), float(c.second)) > 7) drawn.erase(c);
+		const auto filled = game::swa::far_cells(list, 18, &drawn, 7);
+		auto in = [&](int x, int z) { return std::find(filled.begin(), filled.end(), std::pair{ x, z }) != filled.end(); };
+		assert(in(0, 8) && in(1, 8) && in(-1, 9) && in(0, 9) && !in(2, 8) && !in(5, 7) && !in(0, 7) && in(0, 10));
+		assert(filled.size() == far.size() + 6);
+	}
+	{
 		// widescreen: TGP 0x31's full-width right and left extents widen by the extra pixels; its
 		// distances, top and bottom, a narrow view's (+-20) and 4:3 stay as sent
 		auto word = [](float v) { return std::bit_cast<uint32_t>(v); };

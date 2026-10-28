@@ -182,7 +182,10 @@ constexpr uint32_t SURFACE_TABLE_SIZE = 4 * SURFACE_HEADINGS;   // one layer's; 
 constexpr int LIST_REG = 11;
 }
 
-std::vector<std::pair<int, int>> far_cells(const std::vector<std::pair<int, int>> &list, int radius)
+// the far layer's cells past `list`'s reach, out to `radius` across its spread; given `drawn`, also
+// those from `inner` out that no list draws, where merged lists reach unevenly
+std::vector<std::pair<int, int>> far_cells(const std::vector<std::pair<int, int>> &list, int radius,
+	const std::set<std::pair<int, int>> *drawn, float inner)
 {
 	float reach = 0, sx = 0, sz = 0;
 	for (auto [x, z] : list) {
@@ -200,7 +203,8 @@ std::vector<std::pair<int, int>> far_cells(const std::vector<std::pair<int, int>
 	for (int z = -radius; z <= radius; z++)
 		for (int x = -radius; x <= radius; x++) {
 			const float r = std::hypot(float(x), float(z));
-			if (r > reach && r <= radius && off(x, z) <= spread + std::asin(std::min(1.0f, 0.7f / r))) cells.emplace_back(x, z);
+			const bool past = r > reach || (drawn && r > inner && !drawn->count({ x, z }));
+			if (past && r <= radius && off(x, z) <= spread + std::asin(std::min(1.0f, 0.7f / r))) cells.emplace_back(x, z);
 		}
 	std::stable_sort(cells.begin(), cells.end(), [](auto a, auto b) { return a.first * a.first + a.second * a.second < b.first * b.first + b.second * b.second; });
 	return cells;
@@ -500,16 +504,33 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 			};
 			for (int i = 0; i < 4; i++) extend(i, mine[i]);
 			std::vector<std::pair<int, int>> far;
+			const auto list_reach = [](const cell_bands &bands) {
+				float r = 0;
+				for (const auto &band : bands)
+					for (auto [x, z] : band) r = std::max(r, std::hypot(float(x), float(z)));
+				return r;
+			};
+			float inner = list_reach(mine[3]);
 			for (const auto &band : mine[3]) far.insert(far.end(), band.begin(), band.end());
 			for (int n = 0; n < 2 * steps && n < int(others.size()); n++) {
 				if (state.full_distance) extend(3, others[n][3]);
+				inner = std::min(inner, list_reach(others[n][3]));
 				for (const auto &band : others[n][3]) far.insert(far.end(), band.begin(), band.end());
 			}
 			sides.cells = side_cells(mine, others, reach);
+			// the coarse cells the lists and side cells draw: the far ring fills the rest
+			std::set<std::pair<int, int>> drawn;
+			for (int i = 2; i < 4; i++) {
+				for (const auto &band : mine[i]) drawn.insert(band.begin(), band.end());
+				for (const auto &lists : others)
+					for (const auto &band : lists[i])
+						for (auto c : band)
+							if (std::hypot(float(c.first), float(c.second)) <= reach[i]) drawn.insert(c);
+			}
 			for (int i = 0; i < 4; i++)
 				for (int b = 0; b < int(mine[i].size()); b++)
 					for (auto c : mine[i][b]) sides.band[i].emplace(c, b);
-			sides.far = far_cells(far, FULL_RADIUS);
+			sides.far = far_cells(far, FULL_RADIUS, &drawn, inner);
 			entry = state.sides.emplace(key, std::move(sides)).first;
 		}
 		state.side_pass = &entry->second;
@@ -525,7 +546,8 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 			const int coarse_x = layer < 2 ? cx >> 1 : cx, coarse_z = layer < 2 ? cz >> 1 : cz;
 			for (; state.side_next < sides->cells.size(); state.side_next++) {
 				const side_cell &c = sides->cells[state.side_next];
-				if (std::pair{ c.layer, c.band } > std::pair{ layer, band->second }) break;
+				// the far layer's all come at its first cell: the game may draw none in a later band
+				if (layer < 3 && std::pair{ c.layer, c.band } > std::pair{ layer, band->second }) break;
 				const int cell_shift = c.coarse ? COARSE_SHIFT : COARSE_SHIFT - 1;
 				const int x = (c.coarse ? coarse_x : 2 * coarse_x) + c.x, z = (c.coarse ? coarse_z : 2 * coarse_z) + c.z;
 				const float ox = float(x * (1 << cell_shift) - px * (1 << shift)), oz = float(z * (1 << cell_shift) - pz * (1 << shift));

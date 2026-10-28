@@ -1212,6 +1212,27 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	if (!size)
 		size = 0xffffffff;
 
+	// (A part blended between two lists, the camera passing through it (SWA's asteroids beside the
+	// camera's path): a corner of a face behind the eye in one list, in front in the other, passed
+	// just by the eye in the pictures between, and the face, cut by the view's sides there, filled
+	// half the screen for a picture; the game's lists never draw it so near. Such a face is left
+	// out between the lists. The surface's cells, carried by the camera's move, cross the eye's
+	// plane every list: left as they are.)
+	const float *eye_from = nullptr, *eye_to = nullptr;
+	if (m_replaying && m_video->separate_parts && m_shade_from && m_shade_to && m_alpha < 1 && !m_video->still_model(object_polygon) &&
+		size_t(m_replay_slot) < m_blend.size() && std::equal(m_view->translation, m_view->translation + 12, m_blend[m_replay_slot].begin()))
+		eye_from = m_shade_from, eye_to = m_shade_to;   // (drawn by its slot's matrix: not a copy hung on it)
+	const auto pose_depths = [&](point_t *p) {
+		if (!eye_from) return;
+		const auto depth = [&](const float *t) {
+			const float xx = t[0] * p->x + t[3] * p->y + t[6] * p->z + t[9] + m_view->vxx;
+			const float zz = t[2] * p->x + t[5] * p->y + t[8] * p->z + t[11] + m_view->vzz;
+			return m_view->ayys * xx + m_view->ayyc * zz;
+		};
+		p->z_from = depth(eye_from);
+		p->z_to = depth(eye_to);
+	};
+
 	require_geometry_space(2, 0);
 	point_t *old_p0 = m_pointpt++;
 	point_t *old_p1 = m_pointpt++;
@@ -1226,6 +1247,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		effect.point(old_p0->x, old_p0->y, old_p0->z);
 		effect.point(old_p1->x, old_p1->y, old_p1->z);
 	}
+	pose_depths(old_p0);
+	pose_depths(old_p1);
 	m_view->transform_point(old_p0);
 	m_view->transform_point(old_p1);
 
@@ -1313,6 +1336,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 
 		int link = (flags >> 8) & 3;
 
+		pose_depths(p0);
+		pose_depths(p1);
 		m_view->transform_point(p0);
 		m_view->transform_point(p1);
 		if (p0->z > 0)
@@ -1382,6 +1407,11 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 				break;
 		}
 
+		if (eye_from) {
+			bool crossed = false;
+			for (const point_t *p : cquad.p) crossed |= (p->z_from > 0) != (p->z_to > 0);
+			if (crossed) goto next;
+		}
 		if (bounds) {
 			// Preserve the sort-depth update above even when no pixels can survive clipping.
 			if (clipped_object) goto next;

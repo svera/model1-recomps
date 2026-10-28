@@ -93,33 +93,6 @@ or frame rate.
 | --- | --- |
 | ![Big Forest gameplay](assets/games/vr/screenshots/big-forest.png) | ![Acropolis gameplay](assets/games/vr/screenshots/acropolis.png) |
 
-## Shared Model 1 implementation
-
-The shared runtime models the Model 1 board around its main NEC V60 CPU: the Fujitsu MB86233 geometry
-coprocessor (TGP), polygon rasterizer, System 24 tile layers, sound board, and I/O board. The V60 interpreter,
-TGP core, and much of the machine implementation are based on MAME. The SDL 3 host supplies the window, input,
-audio, saves, and menus.
-
-Menu > **Display > Frame rate** selects **30**, **60**, or **120 FPS**. The 30 FPS arcade option
-disables interpolation; 60 and 120 use interpolated pictures. The choice applies immediately and
-is saved as `fps` in each game's `settings.ini` (default: 120). Game logic and audio retain their
-original timing. The screen's refresh rate and available performance limit the visible frame rate.
-
-The CPU renderer reproduces the arcade's 1x picture. Optional higher render scales, antialiasing, and GPU rendering
-are host-side features. On supported systems, the GPU renderer is checked against the CPU renderer and falls back
-to the CPU if it detects a difference or error.
-
-The recompiler translates the V60 program at startup using an address-only function map and SLJIT. It reads the
-game program from the user's ROM set; ROM bytes are not shipped. The developer-only ahead-of-time path emits C++
-from analyzed V60 functions and keeps ROM-derived output under `build/`.
-
-## Build and test
-
-Development requires a C++20 compiler, zlib, SDL 3, and FreeType. On macOS, install the latter dependencies with
-`brew install sdl3 freetype`. Games have separate build instructions in their guides.
-Every game has the same make targets, made from its `src/games/<game>/game.mk`: `<game>`, `<game>-native`,
-`<game>-regions`, `<game>-coverage`, `<game>-static`, `<game>-lockstep`, and `<game>-native-lockstep`.
-
 ### Star Wars Arcade (experimental)
 
 <p align="center"><img src="assets/games/swa/icon/icon.png" alt="Star Wars Arcade Recomp" width="160"></p>
@@ -200,6 +173,33 @@ make test-host-gamepads
 make test-vr-profile test-vr-gameplay test-vr-tgp-track
 ```
 
+## Shared Model 1 implementation
+
+The shared runtime models the Model 1 board around its main NEC V60 CPU: the Fujitsu MB86233 geometry
+coprocessor (TGP), polygon rasterizer, System 24 tile layers, sound board, and I/O board. The V60 interpreter,
+TGP core, and much of the machine implementation are based on MAME. The SDL 3 host supplies the window, input,
+audio, saves, and menus.
+
+Menu > **Display > Frame rate** selects **30**, **60**, or **120 FPS**. The 30 FPS arcade option
+disables interpolation; 60 and 120 use interpolated pictures. The choice applies immediately and
+is saved as `fps` in each game's `settings.ini` (default: 120). Game logic and audio retain their
+original timing. The screen's refresh rate and available performance limit the visible frame rate.
+
+The CPU renderer reproduces the arcade's 1x picture. Optional higher render scales, antialiasing, and GPU rendering
+are host-side features. On supported systems, the GPU renderer is checked against the CPU renderer and falls back
+to the CPU if it detects a difference or error.
+
+The recompiler translates the V60 program at startup using an address-only function map and SLJIT. It reads the
+game program from the user's ROM set; ROM bytes are not shipped. The developer-only ahead-of-time path emits C++
+from analyzed V60 functions and keeps ROM-derived output under `build/`.
+
+## Build and test
+
+Development requires a C++20 compiler, zlib, SDL 3, and FreeType. On macOS, install the latter dependencies with
+`brew install sdl3 freetype`. Games have separate build instructions in their guides.
+Every game has the same make targets, made from its `src/games/<game>/game.mk`: `<game>`, `<game>-native`,
+`<game>-regions`, `<game>-coverage`, `<game>-static`, `<game>-lockstep`, and `<game>-native-lockstep`.
+
 ## Repository layout
 
 | Path | Contents |
@@ -208,10 +208,8 @@ make test-vr-profile test-vr-gameplay test-vr-tgp-track
 | `src/machine` | Shared Model 1 memory map, interrupts, TGP, rasterizer, tile chip, sound and I/O boards |
 | `src/rt` | Recompiler runtime and startup native recompilation |
 | `src/host` | SDL 3 host, input, pacing, and RmlUi menu |
-| `src/games/vr` | VR profiles and game-specific behavior |
-| `src/games/swa` | Experimental Star Wars Arcade profile, ROM tables, scripted play and host |
-| `assets/games/vr` | VR address map, icon and other artwork |
-| `assets/games/swa` | SWA address map and icon |
+| `src/games/<game>` | Game profiles, OM tables, scripted play and host, and game-specific behavior |
+| `assets/games/<game>` | VR address map, icon and other artwork |
 | `src/gpu` | Metal and SDL_GPU renderers and shaders |
 | `tools/recomp` | Ahead-of-time V60-to-C++ recompiler |
 | `tools/mac`, `tools/win`, `tools/linux` | Each platform's `package.sh [game ...]`: the downloads, the same for every game |

@@ -2332,6 +2332,253 @@ struct model1_video_test
 		printf("SWA cockpit over the Death Star (TIME 124): at most %d surface cells unblended a picture (frame %d)\n", worst, worst_frame);
 		assert(worst == 0);
 	}
+	// In the trench (attract, TIME 159) the walls' places lie nearly in a plane, and the camera's
+	// fitted turn came out as their mirror image: blended by it, the walls were turned inside out,
+	// culled, and the trench went black for a picture, several times a run.
+	static void swa_trench_mirror(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 53470) m.run_frame();
+		m.set_drawing(true);
+		double worst = 0;
+		int worst_frame = 0;
+		while (m.frame_number() < 53540) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 53480) continue;
+			const uint32_t *px = m.frame().data();
+			const int w = m.frame_w(), h = m.frame_h();
+			size_t n = 0;
+			for (int y = h / 8; y < h; y++)
+				for (int x = 0; x < w; x++) {
+					const uint32_t c = px[size_t(y) * w + x];
+					n += (c >> 16 & 255) + (c >> 8 & 255) + (c & 255) < 20;
+				}
+			const double black = double(n) / (size_t(w) * (h - h / 8));
+			if (black > worst) worst = black, worst_frame = f;
+		}
+		printf("SWA trench at TIME 159: at most %.0f%% of the picture black (frame %d)\n", worst * 100, worst_frame);
+		assert(worst < 0.3);
+	}
+
+	// The third-person asteroid run (attract, free play, TIME 158): the Full fleet's and asteroids'
+	// copies hang on the stars' matrix, its own place passing the camera's plane. Taken for a fast
+	// move, or paired by the camera's move (no copies), the copies weren't blended: the star
+	// cruisers stepped every other picture. Each picture's copies on the stars' matrix are blended.
+	static void swa_fleet_carrier(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 34262) m.run_frame();
+		m.set_drawing(true);
+		int unblended = 0, pictures = 0;
+		std::string at;
+		while (m.frame_number() < 34300) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 34270 || m.m_replay_older) continue;
+			const auto &slots = m.m_logic[1].slots;
+			size_t c = 0;
+			for (size_t i = 0; i < slots.size(); i++) if (slots[i].extra.size() > slots[c].extra.size()) c = i;
+			assert(slots[c].extra.size() > 100);
+			pictures++;
+			if (c >= m.m_blend_ok.size() || !m.m_blend_ok[c] || !m.m_extra_from[c]) unblended++, at += " " + std::to_string(f);
+		}
+		printf("SWA asteroid run (TIME 158): fleet copies unblended in %d of %d pictures%s\n", unblended, pictures, at.c_str());
+		assert(pictures > 10 && unblended == 0);
+	}
+
+	// The same run's start (TIME 178 to 172), the top of the screen. The destroyer manager
+	// reordered its copies' sources between lists: a star cruiser's copy, paired by its key with
+	// another cruiser 44000 units off, swept across the top. And the camera flew through a big
+	// asteroid, its faces behind the eye in one list, in front in the next: blended, they came out
+	// just by the eye, a brown face over the top half for a picture. Each copy is paired with a
+	// cruiser near it; the picture between the asteroid's lists has no more of it than the lists.
+	static void swa_asteroid_top_edge(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 33460) m.run_frame();
+		m.set_drawing(true);
+		float farthest = 0;
+		int pictures = 0, mispaired = 0;
+		while (m.frame_number() < 33500) {
+			m.run_frame();
+			m.render_smooth(m.frame_number() - 0.5);
+			if (m.m_replay_older) continue;
+			const auto &slots = m.m_logic[1].slots;
+			size_t c = 0;
+			for (size_t i = 0; i < slots.size(); i++) if (slots[i].extra.size() > slots[c].extra.size()) c = i;
+			if (c >= m.m_blend_ok.size() || !m.m_blend_ok[c] || !m.m_extra_from[c]) continue;
+			pictures++;
+			const auto &to = slots[c].extra, &from = *m.m_extra_from[c];
+			const auto &pairs = m.m_extra_pair[c];
+			for (size_t k = 0; k < to.size() && k < pairs.size(); k++) {
+				if (pairs[k] < 0) continue;
+				const auto &tb = *to[k].transform, &ta = *from[pairs[k]].transform;
+				const float d = std::hypot(tb[9] - ta[9], tb[10] - ta[10], tb[11] - ta[11]);
+				float nearest = d;
+				for (const auto &e : from)
+					if (e.transform && e.polygon == to[k].polygon)
+						nearest = std::min(nearest, std::hypot(tb[9] - (*e.transform)[9], tb[10] - (*e.transform)[10], tb[11] - (*e.transform)[11]));
+				if (d > 4 * nearest + 100) mispaired++, farthest = std::max(farthest, d);
+			}
+		}
+		printf("SWA asteroid run (TIME 178): %d copies paired past a nearer copy of their model (up to %.0f units) over %d pictures\n", mispaired, farthest, pictures);
+		m.set_drawing(false);
+		while (m.frame_number() < 33836) m.run_frame();
+		m.set_drawing(true);
+		int brown = 0;
+		while (m.frame_number() < 33843) {
+			m.run_frame();
+			m.render_smooth(m.frame_number() - 0.75);
+			m.render_smooth(m.frame_number() - 0.25);
+		}
+		m.render_smooth(33842.25);
+		const int w = m.frame_w(), h = m.frame_h();
+		for (int y = 0; y < h / 3; y++)
+			for (int x = 0; x < w; x++) {
+				const uint32_t p = m.frame().data()[size_t(y) * w + x];
+				const int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+				brown += r > 70 && r < 200 && r * 10 > g * 13 && g > b;
+			}
+		printf("SWA asteroid run (TIME 172): asteroid over the top third %d pixels (lists up to ~38000)\n", brown);
+		assert(pictures > 10 && mispaired == 0 && brown < 45000);
+	}
+
+
+	// The Death Star demo (TIME 175), 16:9: an X-wing passing 300 units to the left of the camera,
+	// seen only at the wide screen's edge, its z 0 to 200. Its move each list, 5% of its distance,
+	// was over 60% of its z: taken for a jump, it stood still a list and leapt, over and over (and
+	// so did the ships and cells at both edges, 780 of the run's 1120 jumps). Each picture blends it.
+	static void swa_side_ship(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 52505) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, unblended = 0;
+		std::string at;
+		while (m.frame_number() < 52530) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double k : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + k);
+				if (f < 52512) continue;
+				const auto &slots = m.m_logic[1].slots;
+				for (size_t i = 0; i < slots.size(); i++) {
+					if (slots[i].polys.empty() || slots[i].polys[0] != 0x108764c || slots[i].mat[9] > -200) continue;
+					pictures++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) unblended++, at += " " + std::to_string(f);
+				}
+			}
+		}
+		printf("SWA Death Star demo (TIME 175), an X-wing at the screen's left edge: unblended in %d of %d pictures%s\n", unblended, pictures, at.c_str());
+		assert(pictures > 20 && unblended == 0);
+	}
+
+
+	// The Death Star demo's low flight (TIME 145-140), draw distance Full: 16:9 left out far cells
+	// 4:3 draws, in the middle of the picture. The far layer's side cells past the last band the game
+	// draws a cell in were never attached, and the far ring started past the farthest of the merged
+	// headings' lists, so cells nearer than it that no list has were drawn by none: holes in the
+	// distance that came and went as the heading turned. Every surface cell 4:3 draws in view is
+	// drawn at 16:9 too.
+	static void swa_wide_far_cells(const char *dir)
+	{
+		using cell = std::tuple<uint32_t, int, int, int>;
+		// each list's surface cells in view, by the list's frame
+		const auto run = [&](float aspect) {
+			model1 m(load_regions(dir, game::id{ "swa" }));
+			m.reset();
+			m.set_drawing(false);
+			m.set_smooth(true);
+			m.set_aspect(aspect);
+			m.set_edge_aa(false);
+			game::swa::set_lod(m, false);
+			game::swa::set_full_draw_distance(m, true);
+			std::map<int, std::set<cell>> lists;
+			for (auto [from, to] : { std::pair{ 53798, 53806 }, std::pair{ 54290, 54298 }, std::pair{ 54322, 54328 } }) {
+				m.set_drawing(false);
+				while (m.frame_number() < uint64_t(from)) m.run_frame();
+				m.set_drawing(true);
+				while (m.frame_number() < uint64_t(to)) {
+					m.run_frame();
+					m.render_smooth(m.frame_number() - 0.5);
+					auto &out = lists[m.m_logic[1].frame];
+					const auto add = [&](uint32_t polygon, const float *at) {
+						if (!m.m_video->still_model(polygon) || at[2] < 100 || std::fabs(at[0]) > 1.2f * at[2] || std::fabs(at[1]) > at[2]) return;
+						out.emplace(polygon, int(std::lround(at[0] / 4)), int(std::lround(at[1] / 4)), int(std::lround(at[2] / 4)));
+					};
+					for (const auto &s : m.m_logic[1].slots) {
+						for (uint32_t p : s.polys) add(p, &s.mat[9]);
+						for (const auto &e : s.extra) {
+							if (!e.transform) continue;
+							const auto &t = *e.transform;
+							float at[3];
+							for (int r = 0; r < 3; r++) at[r] = s.mat[9 + r] + s.mat[r] * t[9] + s.mat[3 + r] * t[10] + s.mat[6 + r] * t[11];
+							add(e.polygon, at);
+						}
+					}
+				}
+			}
+			return lists;
+		};
+		const auto narrow = run(4.0f / 3), wide = run(16.0f / 9);
+		int lists = 0, cells = 0, missing = 0;
+		std::string at;
+		for (const auto &[frame, in43] : narrow) {
+			const auto w = wide.find(frame);
+			if (w == wide.end()) continue;
+			lists++;
+			cells += int(in43.size());
+			int here = 0;
+			for (const auto &c : in43) here += !w->second.count(c);
+			if (here) at += " " + std::to_string(frame) + ":" + std::to_string(here);
+			missing += here;
+		}
+		printf("SWA Death Star demo (TIME 145-140), Full distance: %d of 4:3's %d surface cells in view missing at 16:9 over %d lists%s\n",
+			missing, cells, lists, at.c_str());
+		assert(lists > 5 && cells > 1000 && missing == 0);
+	}
+
 };
 
 int main(int argc, char **argv)
@@ -2355,6 +2602,11 @@ int main(int argc, char **argv)
 		model1_video_test::swa_surface_slab(argv[1]);
 		model1_video_test::swa_trench_jump(argv[1]);
 		model1_video_test::swa_cockpit_surface(argv[1]);
+		model1_video_test::swa_trench_mirror(argv[1]);
+		model1_video_test::swa_fleet_carrier(argv[1]);
+		model1_video_test::swa_asteroid_top_edge(argv[1]);
+		model1_video_test::swa_side_ship(argv[1]);
+		model1_video_test::swa_wide_far_cells(argv[1]);
 		return 0;
 	}
 	model1_video_test::overlay_priority();

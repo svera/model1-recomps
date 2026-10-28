@@ -356,6 +356,60 @@ The AI wrote nearly all the code. A person decided what was right.
 
   Now no surface cell leaves the camera's move in any of the three runs, apart from TIME 156's "Pull up!", where the
   game's own camera snaps. A regression test (`--swa-ships`) checks the cockpit run.
+- **The trench going black for a picture, and its walls changing shape** → two causes:
+  - The trench's walls are other models, at 0x20000–0x40000, seen only in the trench, and they weren't in
+    `still_models`. Unnamed, they were still paired as ships, and the fit was dropped in most of the trench's pairs
+    (25 of 66 slots on it). The traits now name both ranges.
+  - The walls' places lie nearly in a plane, which fits its mirror image as well as the real turn. The polar
+    iteration sometimes came out at the mirror (a "turn" of 90 degrees, determinant −1). Blended by it, every wall
+    was turned inside out and culled, leaving 60–90% of the screen black. That happened several times a trench run,
+    TIME 156's "Pull up!" included, which had been taken for the game's own snap. A mirror now falls back to Horn's
+    method, which is always a proper turn.
+
+  The trench now matches the arcade's pictures. A regression test (`--swa-ships`) checks TIME 159: the most black in
+  a picture is 18% (the arcade's own dark walls), against 68% before.
+- **Star cruisers stepping at the start of the asteroid run** → the Full fleet and asteroids are copies hung on the
+  stars' matrix, whose own place is no place on screen. Two things dropped their blending:
+  - The camera's move fitted a new pairing for the stars' slot (as if it were scenery), with no copies to pair them
+    with.
+  - Its place crossed the camera's plane (depth near 0), so its move between lists counted as a "fast" part and the
+    slot was jumped.
+
+  The cruisers stood still every other picture, in 20 of the 31 pictures around TIME 158. A slot carrying keyed copies
+  is now paired with the older list's carrier of its model, and only a turn can jump it; each copy still has its own
+  60%-of-its-distance limit. A regression test (`--swa-ships`) checks that every picture blends the copies. A
+  remaining hitch near TIME 176 is the game's own: one cruiser jumps back in the arcade's lists too.
+- **Glitches along the top edge in the same run** → two separate causes:
+  - A copy's key is its source and polygon, and the attract's destroyer manager sometimes reorders the sources
+    between lists. A star cruiser's copy was then paired with another cruiser 44,000 units away, still inside the 60%
+    limit, so it swept across the top of the screen (TIME 178). A copy is now paired with an older copy of the same
+    model when that copy is over four times nearer than the key's pair.
+  - Near TIME 172 the camera flies through a big asteroid: some faces sit behind the eye in one list and in front of
+    it in the next. Blended, those faces passed just by the eye, and with no near-plane clip, a brown face covered
+    the top half of the screen for a picture. Between lists, a face of a moving part (not the still scenery) whose
+    corners cross the eye's plane is now left out. The lists' own pictures are drawn as before.
+
+  A regression test (`--swa-ships`) checks both: no copy keeps a pair past a far nearer copy (375 did before), and
+  the top third of the picture between the asteroid's lists has 6,900 asteroid pixels (70,000 before, the lists
+  themselves up to 38,000).
+- **Ships and scenery at the wide screen's edges standing still, then leaping (Death Star demo)** → how far a part
+  may move between two lists before it counts as a jump was measured against its z, not its distance from the eye. A
+  part beside the camera, seen only at the edges of a 16:9 screen, has a small z: an X-wing passing 300 units to the
+  left at z 66–200, moving 5% of its distance each list, moved over 60% of its z. It was taken for a jump, held for a
+  list and then leapt. That accounted for 780 of the 1,120 jumps from TIME 180 to the trench. SWA's jump test and its
+  ship pairing now measure against the distance, so only 158 jumps remain (shots and fast passes). A regression test
+  (`--swa-ships`) checks that the X-wing at TIME 175 is blended in every picture (16 of 38 were not). Some geometry
+  still comes and goes at the edges without smoothing too: the game culls for its own 4:3 view.
+- **Far surface cells popping in and out in widescreen (Death Star demo, draw distance Full)** → not LOD. Comparing
+  the cells drawn at 4:3, 16:9 and 21:9 showed the same models at the same places, but 16:9 left out far cells that 4:3
+  draws, even mid-screen. There were two causes. First, the wide side cells are attached as the game draws each band
+  of its own list, and the game often draws no cell in the far layer's last bands, so those side cells were dropped.
+  Second, the Full-distance ring started past the farthest of the merged headings' lists, so cells nearer than that
+  which no list had were drawn by none. As the heading turned, these holes came and went. Now the far layer's side
+  cells all come with its first cell, and the ring also fills, from the shortest list's reach out, every cell nothing
+  else draws. From TIME 175 to 129, the 4:3 cells missing at 16:9 went from 8,099 to 0. Cells a 21:9 picture shows
+  inside the 16:9 frame that 16:9 lacked went from 16,160 to 272, a few far cells at a time at the ring's edge. A
+  regression test (`--swa-ships`) compares 4:3 and 16:9 over three stretches (191 cells missing before).
 - **A crash at exit on Linux** → a widescreen write ran past the end of each line in the tile chip → found with ASan
   and fixed. ASan now runs clean at several scales and shapes.
 

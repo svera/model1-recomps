@@ -107,7 +107,8 @@ void set_wide_cockpit(model1 &machine, bool wide);
 bool continue_sides(uint32_t *pixels, int width, int height, int ext);
 // The cells the far layer adds with Full, nearest first: past the reach of its heading's list
 // (dx, dz from the camera's cell) out to `radius` cells, within the list's own direction.
-std::vector<std::pair<int, int>> far_cells(const std::vector<std::pair<int, int>> &list, int radius);
+std::vector<std::pair<int, int>> far_cells(const std::vector<std::pair<int, int>> &list, int radius,
+	const std::set<std::pair<int, int>> *drawn = nullptr, float inner = 0);
 // A model's detail result as the V60 reads it at `pc`: with LOD off, the nearest level's for every
 // object the game draws; culled objects and other results unchanged.
 uint32_t lod_result(bool enabled, uint32_t pc, uint32_t value);
