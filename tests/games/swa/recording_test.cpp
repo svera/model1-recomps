@@ -242,10 +242,13 @@ std::vector<state> replay(const std::string &dir, const recorded_run &run, const
 		assert(lod_state->surface_cells > 0 && lod_state->bands_lit > 0);
 		printf("SWA recording (native, Draw distance Full): %llu surface cells added, %llu far bands lit\n",
 			(unsigned long long)lod_state->surface_cells, (unsigned long long)lod_state->bands_lit);
+		assert(lod_state->trench_cells > 0);
+		printf("SWA recording (native, Draw distance Full): %llu trench cells added past the arcade's grid\n",
+			(unsigned long long)lod_state->trench_cells);
 		assert(lod_state->wrapped_copies > 0 && lod_state->culled_copies > 0 && lod_state->cluster_copies > 0);
 		printf("SWA recording (native, Draw distance Full): %llu asteroid-field copies, %llu of culled objects, %llu of rock clusters\n",
 			(unsigned long long)lod_state->wrapped_copies, (unsigned long long)lod_state->culled_copies, (unsigned long long)lod_state->cluster_copies);
-	} else assert(lod_state->nearest == 0 && lod_state->destroyers_near == 0 && lod_state->surface_cells == 0 && lod_state->bands_lit == 0 &&
+	} else assert(lod_state->nearest == 0 && lod_state->destroyers_near == 0 && lod_state->surface_cells == 0 && lod_state->bands_lit == 0 && lod_state->trench_cells == 0 &&
 		lod_state->fine_cells == 0 && lod_state->coarse_hidden == 0 && lod_state->wrapped_copies == 0 && lod_state->culled_copies == 0 &&
 		lod_state->cluster_copies == 0);
 	return changes;

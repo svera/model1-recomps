@@ -2641,6 +2641,35 @@ struct model1_video_test
 		assert(pictures == 8 && black < 500);
 	}
 
+	// The attract's trench run in the cockpit (TIME 160): the game draws ten rows of the trench from
+	// a row behind, about 14,000 units ahead, black beyond. Draw distance Full draws its rows on to
+	// the table's end: the picture's middle, black there with the arcade's distance, is the trench.
+	static void swa_trench_distance(const char *dir)
+	{
+		auto black_middle = [&](bool full) {
+			model1 m(load_regions(dir, game::id{ "swa" }));
+			m.reset();
+			m.set_drawing(false);
+			m.set_aspect(16.0f / 9);
+			m.set_edge_aa(false);
+			game::swa::set_full_draw_distance(m, full);
+			while (m.frame_number() < 26099) m.run_frame();
+			m.set_drawing(true);
+			m.run_frame();
+			const int w = m.frame_w(), h = m.frame_h();
+			int black = 0;
+			for (int y = h * 42 / 100; y < h * 46 / 100; y++)
+				for (int x = w * 51 / 100; x < w * 535 / 1000; x++) black += (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+			const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
+			return std::pair{ black, state->trench_cells };
+		};
+		const auto [arcade, arcade_cells] = black_middle(false);
+		const auto [full, full_cells] = black_middle(true);
+		printf("SWA trench (TIME 160): %d black pixels at the vanishing point with the arcade's distance, %d with Full (%llu cells added)\n",
+			arcade, full, (unsigned long long)full_cells);
+		assert(arcade_cells == 0 && full_cells > 0 && arcade > 100 && full * 5 < arcade);
+	}
+
 	// The Death Star demo (TIME 150), 16:9: the surface blocks have steps with no face between the
 	// two tops, in a block and between neighbouring ones, which the lists' eyes only see side-on.
 	// The blended eyes, a little to one side, looked into them at the screen's left edge: big black
@@ -2719,6 +2748,7 @@ int main(int argc, char **argv)
 		model1_video_test::swa_horizon_corners(argv[1]);
 		model1_video_test::swa_open_steps(argv[1]);
 		model1_video_test::swa_far_ground(argv[1]);
+		model1_video_test::swa_trench_distance(argv[1]);
 		return 0;
 	}
 	model1_video_test::overlay_priority();

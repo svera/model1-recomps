@@ -124,6 +124,12 @@ constexpr int LAYER_REG = 18;        // the layer's list table, + 4
 constexpr int LIGHTS_REG = 28;       // the band's light scale in its layer's table
 constexpr uint32_t HEADING = 0x1a;   // in the surface's object (R20)
 constexpr uint16_t CELL_MODEL = 0, CELL_TURNED = 3;
+// the trench from inside (D547F)
+constexpr uint32_t TRENCH_MATRIX_WRITE = 0x0d5525;   // mov.w #B, [R2+]: a cell's matrix command
+constexpr uint32_t TRENCH_ROWS = 0x269516, TRENCH_ROWS_END = 0x269b16;
+constexpr uint32_t TRENCH_ENTRY_SIZE = 8, TRENCH_COLUMNS = 4;
+constexpr float TRENCH_CELL = 2048;
+constexpr int TRENCH_ENTRY_REG = 1, TRENCH_ROW_REG = 3, TRENCH_COLUMN_REG = 4;
 // the asteroid field's repeating objects
 constexpr uint32_t MATRIX_WRITES[] = { 0x0c18c1, 0x0c191b, 0x0c1995, 0x0c1a12, 0x0c1ae6 };   // mov.w #B, -44[R11]
 constexpr uint32_t BARE_MATRIX_WRITE = 0x0c1a63;                  // mov.w #B, -34[R11]: no object yet
@@ -590,6 +596,24 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 			state.surface_cells++;
 		}
 	}
+	return objects;
+}
+
+// (Full) at the trench grid's last cell: the trench's rows past the grid, to the table's end
+std::vector<render_object> trench_rows(model1 &machine, gameplay_state &state)
+{
+	auto reg = [&](int r) { return machine.cpu().reg(r); };
+	const uint32_t entry = reg(TRENCH_ENTRY_REG);
+	if (reg(TRENCH_ROW_REG) != 1 || reg(TRENCH_COLUMN_REG) != 1 || entry < TRENCH_ROWS || entry >= TRENCH_ROWS_END) return {};
+	std::vector<render_object> objects;
+	const uint32_t row_size = TRENCH_ENTRY_SIZE * TRENCH_COLUMNS;
+	for (uint32_t row = entry + TRENCH_ENTRY_SIZE, n = 1; row + row_size <= TRENCH_ROWS_END; row += row_size, n++)
+		for (uint32_t c = 0; c < TRENCH_COLUMNS; c++) {
+			const uint32_t at = row + TRENCH_ENTRY_SIZE * c;
+			const cell_model model{ machine.read32(at), machine.read32(at + 4), 0 };
+			objects.push_back(placed(model, 0, -TRENCH_CELL * float(n), TRENCH_CELL * float(TRENCH_COLUMNS - 1 - c)));
+		}
+	state.trench_cells += objects.size();
 	return objects;
 }
 
@@ -1206,6 +1230,7 @@ gameplay_callbacks create_gameplay(model1 &machine)
 			}
 		}
 		if (machine.cpu().pc() == SURFACE_MATRIX_WRITE) return surface_cells(machine, *state);
+		if (machine.cpu().pc() == TRENCH_MATRIX_WRITE) return state->full_distance ? trench_rows(machine, *state) : std::vector<render_object>{};
 		return state->full_distance ? wrapped_copies(machine, *state, word) : std::vector<render_object>{};
 	};
 	callbacks.object = [&machine, state](uint32_t, uint32_t, uint32_t polygon, uint32_t, const float *) {

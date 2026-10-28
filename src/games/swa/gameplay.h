@@ -29,6 +29,7 @@ struct gameplay_state : game::gameplay_state
 	uint64_t destroyers_near = 0;  // Star Destroyers drawn with their near model (LOD off)
 	bool fleet_stern = false;      // (LOD off) a fleet ship given the full hull: its stern to add
 	uint64_t surface_cells = 0;    // surface cells added beyond the arcade's (Draw distance Full)
+	uint64_t trench_cells = 0;     // the trench's cells added past the arcade's grid, seen from inside (Full)
 	uint64_t bands_lit = 0;        // far bands' light raised (Draw distance Full)
 	uint64_t fine_cells = 0;       // coarse surface cells drawn as their four fine cells (LOD off)
 	uint64_t coarse_hidden = 0;    // coarse surface models the renderer left out for them (LOD off)
