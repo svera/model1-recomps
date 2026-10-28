@@ -11,9 +11,14 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-blue"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Steam%20Deck%20%2F%20Linux-informational">
 </p>
-<p align="center"><img src="assets/games/vr/icon/icon.png" alt="Virtua Racing Recomp" width="160"></p>
 
-<h2 align="center">Virtua Racing Recomp</h2>
+<p align="center">
+  <a href="#virtua-racing">Virtua Racing</a> ·
+  <a href="#star-wars">Star Wars Arcade (1993)</a>
+ </p>
+
+
+<h2 align="center" id="virtua-racing">Virtua Racing Recomp</h2>
 
 <p align="center">
   <img src="assets/games/vr/screenshots/bay-bridge.png" alt="Racing on Bay Bridge in widescreen" width="900">
@@ -93,9 +98,7 @@ or frame rate.
 | --- | --- |
 | ![Big Forest gameplay](assets/games/vr/screenshots/big-forest.png) | ![Acropolis gameplay](assets/games/vr/screenshots/acropolis.png) |
 
-<p align="center"><img src="assets/games/swa/icon/icon.png" alt="Star Wars Arcade Recomp" width="160"></p>
-
-<h2 align="center">Star Wars Arcade Recomp</h2>
+<h2 align="center" id="star-wars">Star Wars Arcade Recomp</h2>
 
 <p align="center">
   <img src="assets/games/swa/screenshots/death-star.png" alt="Approaching the Death Star from the X-wing's cockpit in widescreen" width="900">
