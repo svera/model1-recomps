@@ -184,7 +184,7 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		if ((mask & 0xff) && machine.cpu().pc() == SCENERY_READY_PC)
 			prepare_scenery(machine, *state);
 	};
-	callbacks.matrix_objects = [&machine, state] { return scenery_objects(machine, *state); };
+	callbacks.matrix_objects = [&machine, state](uint32_t &) { return scenery_objects(machine, *state); };
 	callbacks.copro_result = [&machine, state](uint32_t pc, uint32_t value) {
 		// Full-distance props must retain the arcade's collision visibility.
 		if (state->extended_draw_distance &&

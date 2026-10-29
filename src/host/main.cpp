@@ -12,6 +12,7 @@
 #include "gpu_compose.h"
 #include "controls.h"
 #include "gamepads.h"
+#include "input_replay.h"
 #include "../machine/parallel.h"
 #include "../rt/rec_rt.h"
 #ifdef M1_NATIVE
@@ -31,6 +32,12 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+// A laptop with two graphics chips (NVIDIA Optimus, AMD switchable graphics): the game on the faster one, not the one
+// in the processor, whatever Windows would pick. The drivers look for these two in the program's exports.
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
 #endif
 #include <string>
 #include <sstream>
@@ -191,7 +198,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 		if (kmenu && !key_menu_was[p]) hk = hotkey::menu;
 		key_menu_was[p] = kmenu;
 		for (int a = 0; a < C_COUNT; a++)
-			if (key(ctl[p].key[a])) in[1 + p] |= BITS[a];
+			if (key(ctl[p].key[a])) prof.press(in, p, a);
 		const bool kstart = key(ctl[p].key[C_START]);
 		bool start_held = kstart;
 		if (kstart && !key_start_was[p]) press_start();
@@ -205,7 +212,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 		const uint8_t coin_bit = p ? IN0_COIN2 : IN0_COIN1;
 		const uint8_t start_bit = prof.start_bits[p];
 		if (SDL_Gamepad *g = pads[p]) {
-			uint8_t &b = in[1 + p];
+			auto press = [&](int a) { prof.press(in, p, a); };
 			auto btn = [&](SDL_GamepadButton x) { return SDL_GetGamepadButton(g, x); };
 			int lx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX), ly = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY);
 			const int dead = 12000;
@@ -230,10 +237,10 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 			if (touch && !st.touch_was) hk = hotkey::menu;
 			st.touch_was = touch;
 			// the d-pad and left stick: the game's Up, Down, Left and Right (those it has as buttons)
-			if (btn(SDL_GAMEPAD_BUTTON_DPAD_UP) || ly < -dead) b |= BITS[C_UP];
-			if (btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || ly > dead) b |= BITS[C_DOWN];
-			if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -dead) b |= BITS[C_LEFT];
-			if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > dead) b |= BITS[C_RIGHT];
+			if (btn(SDL_GAMEPAD_BUTTON_DPAD_UP) || ly < -dead) press(C_UP);
+			if (btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || ly > dead) press(C_DOWN);
+			if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -dead) press(C_LEFT);
+			if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > dead) press(C_RIGHT);
 			if (back) {
 				// View held: hotkeys on Start, LB and RB, not moves
 				const bool pstart = btn(SDL_GAMEPAD_BUTTON_START);
@@ -245,7 +252,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 				lb_was[p] = lb; rb_was[p] = rb;
 			} else {
 				for (int a : prof.pad_actions)
-					if (player_controls::pad_down(g, ctl[p].pad[a])) b |= BITS[a];
+					if (player_controls::pad_down(g, ctl[p].pad[a])) press(a);
 				if (start && !st.start_was) press_start();
 				start_held |= start;
 			}
@@ -289,22 +296,37 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 		m.m_inputs[i] = uint8_t(~in[i]);
 	if (m.real_ioboard()) {
 		const auto &profile = game::get_io_profile(m.title());
+		auto dpad_button = [](int action) {
+			switch (action) {
+			case C_UP: return SDL_GAMEPAD_BUTTON_DPAD_UP;
+			case C_DOWN: return SDL_GAMEPAD_BUTTON_DPAD_DOWN;
+			case C_LEFT: return SDL_GAMEPAD_BUTTON_DPAD_LEFT;
+			case C_RIGHT: return SDL_GAMEPAD_BUTTON_DPAD_RIGHT;
+			default: return SDL_GAMEPAD_BUTTON_INVALID;
+			}
+		};
 		for (size_t channel = 0; channel < profile.analog_controls.size(); channel++) {
 			if (profile.analog_controls[channel].empty()) continue;
-			const uint8_t neutral = profile.analog_neutral[channel];
-			const game::host_axis axis = ctl[0].analog_axis[channel];
-			uint8_t value = axis == game::host_axis::none || !pads[0]
+			const int p = profile.analog_player[channel] ? 1 : 0;
+			SDL_Gamepad *pad = pads[p];
+			// the host's 0-255 (io_profile::analog_port maps it onto the channel's range)
+			const uint8_t neutral = profile.analog_host(channel, profile.analog_neutral[channel]);
+			const game::host_axis axis = ctl[p].analog_axis[channel];
+			uint8_t value = axis == game::host_axis::none || !pad
 				? neutral
-				: player_controls::analog_value(player_controls::axis_value(pads[0], axis),
+				: player_controls::analog_value(player_controls::axis_value(pad, axis),
 												profile.analog_kinds[channel], neutral);
 			for (const auto &k : prof.analog_keys) {
 				if (k.channel != int(channel)) continue;
-				auto dpad = [&](SDL_GamepadButton b) { return k.dpad && pads[0] && SDL_GetGamepadButton(pads[0], b); };
-				const bool low = k.low >= 0 && (key(ctl[0].key[k.low]) || dpad(SDL_GAMEPAD_BUTTON_DPAD_LEFT));
-				const bool high = k.high >= 0 && (key(ctl[0].key[k.high]) || dpad(SDL_GAMEPAD_BUTTON_DPAD_RIGHT));
-				value = game_part.analog_key_input(m, int(channel), low, high, value);
+				auto held = [&](int action) {
+					if (action < 0) return false;
+					if (key(ctl[p].key[action])) return true;
+					const SDL_GamepadButton b = dpad_button(action);
+					return k.dpad && pad && b != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(pad, b);
+				};
+				value = game_part.analog_key_input(m, int(channel), held(k.low), held(k.high), value);
 			}
-			m.set_analog_input(int(channel), value);
+			m.set_analog_input(int(channel), profile.analog_port(channel, value));
 		}
 	}
 	return hk;
@@ -781,6 +803,10 @@ int main(int argc, char **argv)
 	bool interp = rec_table_size == 0;   // (a build without the game's recompiled C++ has only the interpreter)
 #endif
 	bool arg_arcade = false;
+	std::string replay_path, record_path;
+	long replay_until = -1;   // --replay-until N: hand over after the recording's first N frames
+	input_replay::recording replay, record;
+	bool recording = false;
 	std::string arg_roms;   // --roms <folder>: where the player's zip is (over M1_ROMS and settings.ini's roms_folder)
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
@@ -789,6 +815,13 @@ int main(int argc, char **argv)
 		else if (a.rfind("--roms=", 0) == 0) arg_roms = a.substr(7);
 		else if (a == "--interp") interp = true;      // MAME's V60 interpreter instead of the recompiled code
 		else if (a == "--arcade") arg_arcade = true;  // boot screen, credits and coins as on the cabinet
+		else if (a == "--replay-inputs" && i + 1 < argc) replay_path = argv[++i];
+		else if (a == "--record-inputs" && i + 1 < argc) record_path = argv[++i];
+		else if (a == "--replay-until" && i + 1 < argc) {
+			char *end = nullptr;
+			replay_until = strtol(argv[++i], &end, 10);
+			if (*end || replay_until < 1) { fprintf(stderr, "--replay-until needs a frame number from 1 on\n"); return 2; }
+		}
 		else if (a == "--aspect" && i + 1 < argc) {
 			std::string v = argv[++i];
 			for (int k = 0; k < N_ASPECTS; k++) if (v == ASPECT_NAMES[k]) arg_aspect = k;
@@ -802,6 +835,42 @@ int main(int argc, char **argv)
 			std::error_code ec;
 			if (!std::filesystem::is_directory(a, ec)) { fprintf(stderr, "%s: no such folder (options start with --)\n", a.c_str()); return 2; }
 			dir = a;
+		}
+	}
+	const bool replay_mode = !replay_path.empty();
+	if (!record_path.empty() && !replay_mode) {
+		fprintf(stderr, "--record-inputs needs --replay-inputs: it records the replayed prefix plus the manual play after it\n");
+		return 2;
+	}
+	// a session's saves (each pause, the reset or quit) update its own file; an earlier
+	// session's recording, or the one being replayed, is never written over
+	if (!record_path.empty()) {
+		std::error_code ec;
+		if (std::filesystem::exists(record_path, ec)) {
+			fprintf(stderr, "--record-inputs %s: the file is already there; give a new name (or delete it) to keep the earlier recording safe\n",
+				record_path.c_str());
+			return 2;
+		}
+	}
+	if (replay_until > 0 && !replay_mode) {
+		fprintf(stderr, "--replay-until needs --replay-inputs\n");
+		return 2;
+	}
+	if (replay_mode) {
+		if (host_game().name != "swa" || getenv("M1_SCRIPT")) {
+			fprintf(stderr, "--replay-inputs is experimental SWA-only and cannot be combined with M1_SCRIPT\n");
+			return 2;
+		}
+		if (const auto error = input_replay::load(replay_path, host_game(), replay); !error.empty()) {
+			fprintf(stderr, "input replay: %s\n", error.c_str()); return 2;
+		}
+		if (replay_until > 0) {
+			if (size_t(replay_until) >= replay.frames.size()) {
+				fprintf(stderr, "--replay-until %ld: the recording has %zu frames; give fewer (or leave it out to replay them all)\n",
+					replay_until, replay.frames.size());
+				return 2;
+			}
+			replay.frames.resize(size_t(replay_until));
 		}
 	}
 	// Where the game comes from: a regions folder (our own builds, tools/romset.py: build/vf by
@@ -871,6 +940,7 @@ int main(int argc, char **argv)
 	// count says little about how fast it is); the menu goes higher. Steam sets SteamDeck=1 on the
 	// Deck: fullscreen, 16:10.
 	cfg.scale = 2;
+	cfg.fps = game::get_video(host_game()).default_fps;
 	if (getenv("SteamDeck")) { cfg.fullscreen = true; cfg.aspect = 2; }
 	for (int p = 0; p < 2; p++)
 		cfg.ctl[p] = player_controls::defaults(p, controls);
@@ -879,6 +949,14 @@ int main(int argc, char **argv)
 	if (arg_aspect >= 0) cfg.aspect = arg_aspect;
 	if (arg_full >= 0) cfg.fullscreen = arg_full;
 	if (arg_arcade) cfg.arcade = true;
+	if (replay_mode) {
+		cfg.arcade = true;
+		cfg.aspect = 1;
+		cfg.scale = 1;
+		cfg.aa = 1;
+		cfg.fps = 30;
+		fprintf(stderr, "input replay: cold boot, arcade 4:3 at 1x; saves isolated; manual handoff after %zu frames\n", replay.frames.size());
+	}
 	g_pc_mode = !cfg.arcade;
 	// the 3D's renderer: M1_3D=cpu|gpu|auto (tests) over the setting
 	if (const char *r = getenv("M1_3D")) cfg.renderer3d = !strcmp(r, "cpu") ? 0 : !strcmp(r, "gpu") ? 1 : 2;
@@ -901,8 +979,10 @@ int main(int argc, char **argv)
 	// the real I/O board's 93C46 and the stand-in's image are laid out differently
 	const std::string nv_path = dir + "/nvram.sav",
 		ee_path = dir + (m.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav");
-	load_blob(nv_path, m.nvram().data(), m.nvram().size());
-	load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE);
+	if (!replay_mode) {
+		load_blob(nv_path, m.nvram().data(), m.nvram().size());
+		load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE);
+	}
 	// the backup as loaded: the autosave in the loop writes it once it differs (free play set at
 	// boot, the game's first settings, an arcade setting changed in the first seconds)
 	auto backup_hash = [&] {
@@ -916,6 +996,7 @@ int main(int argc, char **argv)
 	// the game's own part of the host (its settings, pages, cheats); the menu's side is filled in
 	// once the menu is made
 	host_context game_ctx{ m, dir, find_assets(), g_pc_mode, [&] { cfg_dirty = true; }, {}, {}, {} };
+	game_ctx.replay = replay_mode;
 	game_part.start(game_ctx);   // (before the code is recompiled: an instruction it changes goes in it)
 	const std::string rank_path = *game_part.save_sidecar_name() ? dir + "/" + game_part.save_sidecar_name() : std::string();
 	uint32_t rank_saved = game_part.save_sidecar_version();
@@ -973,7 +1054,7 @@ int main(int argc, char **argv)
 		m.forget_camera();   // (past_boot: this boot's)
 		if (!g_pc_mode) { sync.start(); return; }
 		m.set_drawing(false);
-		for (int i = 0; i < 900 && !m.past_boot(); i++) m.run_frame();
+		for (int i = 0; game::get(host_game()).camera_ram && i < 900 && !m.past_boot(); i++) m.run_frame();
 		m.set_drawing(true);
 		m.m_audio_out.clear();
 		sync.start();
@@ -1701,7 +1782,19 @@ int main(int argc, char **argv)
 	// Reset (the menu, F3): the menu closes, a paused game unpauses, and the screen goes black at
 	// once while the boot runs unseen (a few seconds on a slow machine), not the last picture held.
 	bool shape_restart = false;   // a new picture shape the game reads at boot, chosen in the menu
+	// --record-inputs: the replayed prefix plus every live frame, with the RAM hash after the last
+	// one, so --replay-inputs on the file reproduces (and verifies) this exact moment
+	auto save_recording = [&](const char *why) {
+		if (!recording) return;
+		record.expected_ram = input_replay::ram_hash(m);
+		if (const auto error = input_replay::save(record_path, host_game(), record); !error.empty())
+			fprintf(stderr, "input recording: %s\n", error.c_str());
+		else
+			fprintf(stderr, "input recording: %s: saved %zu frames (%zu live) to %s, RAM hash %016llx\n", why, record.frames.size(),
+				record.frames.size() - replay.frames.size(), record_path.c_str(), (unsigned long long)record.expected_ram);
+	};
 	auto reset_game = [&](bool keep_settings = true, bool force_code = false) {
+		if (recording) { save_recording("reset ends the recording"); recording = false; }
 		arcade_picture_pending = false;
 		arcade_next_picture = 0;
 		if (keep_settings) game_part.keep_arcade_settings();     // (Arcade: as the service menu may have left them)
@@ -1730,7 +1823,7 @@ int main(int argc, char **argv)
 		present_shape();
 		show_frame = false;
 	};
-	auto save_settings = [&] { return cfg.save(settings_path, game_part); };
+	auto save_settings = [&] { return replay_mode || cfg.save(settings_path, game_part); };
 	auto set_scale = [&](int v) {
 		// (a new picture size or antialiasing: the GPU's pictures checked against the CPU's again, as at the
 		// start. Low's edge pass on the GPU, chosen after the start's checks, was never checked: on some
@@ -1927,7 +2020,7 @@ int main(int argc, char **argv)
 	auto keys_page = [&](int p) {
 		menu_page pg{ p ? "Player 2 keyboard" : "Player 1 keyboard", "", {} };
 		for (int a = 0; a < C_COUNT; a++) {
-			if (!controls.visible(a)) continue;
+			if (!controls.visible(a, p)) continue;
 			pg.items.push_back({ controls.label(a), std::string(a == C_COIN ? "A coin for this player in Arcade mode (a cabinet's coin slot). "
 													: a == C_MENU ? "Opens this menu (as Esc always does): for a cabinet's button. " : "") +
 					"Select, then press the key to use. Delete clears it.",
@@ -1957,7 +2050,8 @@ int main(int argc, char **argv)
 	};
 	auto pad_buttons_page = [&](int p) {
 		menu_page pg{ p ? "Player 2 pad buttons" : "Player 1 pad buttons", "", {} };
-		for (int a : controls.pad_actions)
+		for (int a : controls.pad_actions) {
+			if (!controls.visible(a, p)) continue;
 			pg.items.push_back({ controls.label(a), std::string(a == C_COIN ? "A coin for this player in Arcade mode (a cabinet's coin slot). "
 												   : a == C_MENU ? "Opens this menu. L3 + R3 and the touchpad click (when it isn't set to something else) always do too, and Esc on a keyboard. " : "") +
 												   "Select, then press the button (or trigger) to use. Y (or Delete) clears it." +
@@ -1989,6 +2083,7 @@ int main(int argc, char **argv)
 							return true;
 						});
 				}, false, [&, p, a] { cfg.ctl[p].pad[a] = PAD_NONE; cfg_dirty = true; } });
+		}
 		pg.items.push_back(back_item());
 		return pg;
 	};
@@ -1996,7 +2091,7 @@ int main(int argc, char **argv)
 		const auto &profile = game::get_io_profile(m.title());
 		menu_page pg{ p ? "Player 2 analog axes" : "Player 1 analog axes", "", {} };
 		for (size_t channel = 0; channel < profile.analog_controls.size(); channel++) {
-			if (profile.analog_controls[channel].empty()) continue;
+			if (profile.analog_controls[channel].empty() || profile.analog_player[channel] != p) continue;
 			pg.items.push_back({ std::string(profile.analog_controls[channel]),
 				controls.analog_help,
 				[&, p, channel] { return player_controls::axis_label(cfg.ctl[p].analog_axis[channel]); }, {},
@@ -2015,10 +2110,11 @@ int main(int argc, char **argv)
 							if (axis == game::host_axis::none) return false;
 							const bool trigger = axis == game::host_axis::left_trigger || axis == game::host_axis::right_trigger;
 							if (trigger ? e.gaxis.value < 16000 : std::abs(int(e.gaxis.value)) < 16000) return false;
-							for (auto &controls : cfg.ctl)
-								for (size_t other = 0; other < controls.analog_axis.size(); other++)
-									if (&controls == &cfg.ctl[p] && other == channel) continue;
-									else if (controls.analog_axis[other] == axis) controls.analog_axis[other] = game::host_axis::none;
+							// an axis drives one of this player's channels (each player has their own pad)
+							auto &own = cfg.ctl[p];
+							for (size_t other = 0; other < own.analog_axis.size(); other++)
+								if (other != channel && profile.analog_player[other] == p && own.analog_axis[other] == axis)
+									own.analog_axis[other] = game::host_axis::none;
 							cfg.ctl[p].analog_axis[channel] = axis;
 							cfg_dirty = true;
 							return true;
@@ -2036,9 +2132,11 @@ int main(int argc, char **argv)
 		pg.items.push_back({ "Pad buttons", controls.pad_buttons_help,
 							 {}, {}, [&, p] { menu.push(pad_buttons_page(p)); } });
 		const auto &io_profile = game::get_io_profile(m.title());
-		if (std::any_of(io_profile.analog_controls.begin(), io_profile.analog_controls.end(),
-						[](std::string_view name) { return !name.empty(); }) && p == 0)
-			pg.items.push_back({ "Analog axes", "Steering and pedal axes for this game's analog controls.", {}, {},
+		bool has_analog = false;
+		for (size_t channel = 0; channel < io_profile.analog_controls.size(); channel++)
+			has_analog |= !io_profile.analog_controls[channel].empty() && io_profile.analog_player[channel] == p;
+		if (has_analog)
+			pg.items.push_back({ "Analog axes", "Pad axes for this player's analog controls.", {}, {},
 								 [&, p] { menu.push(analog_axes_page(p)); } });
 		pg.items.push_back({ "Reset to defaults", "Put this player's keys and buttons back as they were.", {}, {},
 							 [&, p] {
@@ -2108,11 +2206,13 @@ int main(int argc, char **argv)
 	// passes keep to the screen's refreshes, a whole number of them apart on average: not with vsync
 	// off or not honoured, nor a minimised or covered window; never back. M1_NO_EVEN_PACE=1: as before.
 	double even_real = 0, even_shown = 0, pass_avg = 0, dt_avg = 1.0 / 120;
+	double sound_lead = 0;                   // frames the sound's running dry has run ahead of the clock
 	auto restart_clock = [&] {
 		clock_t = SDL_GetTicksNS();
 		frame_clock = double(game_run);
 		even_real = even_shown = pass_avg = 0;
 		dt_avg = 1.0 / 120;
+		sound_lead = 0;
 	};
 	auto resume_clock = [&] {
 		restart_clock();
@@ -2141,7 +2241,7 @@ int main(int argc, char **argv)
 	static FILE *trace = getenv("M1_TRACE") ? fopen(getenv("M1_TRACE"), "w") : nullptr;
 	struct trace_pass { char kind = 'S'; int due = 0; double now = -1; uint64_t emu = 0, draw = 0, compose = 0, upload = 0, present = 0; } tp;
 	const uint64_t trace_t0 = SDL_GetTicksNS();
-	if (trace) fprintf(trace, "# pass t_ms due frame emu draw compose upload present kind now hold tiles_full tiles_ms layers layers_ms sky_build sky_build_ms sky_scale sky_scale_ms padded tex_made up_kpx stopped hp1 hp2 replay live r1 r2 quads mode alpha list0 list1 px py pz edge_ms\n");
+	if (trace) fprintf(trace, "# pass t_ms due frame emu draw compose upload present kind now hold tiles_full tiles_ms layers layers_ms sky_build sky_build_ms sky_scale sky_scale_ms padded tex_made up_kpx stopped hp1 hp2 replay live r1 r2 quads mode alpha list0 list1 px py pz edge_ms queued_ms\n");
 	// The game on a thread of its own while the screen waits (from VF3, 7647ac6): a frame that will be
 	// due by the next refresh is run during the present's wait for vsync, its inputs read as it starts;
 	// what follows it (the hold, its sound) as the present returns. Only with smooth motion, whose
@@ -2180,6 +2280,7 @@ int main(int argc, char **argv)
 	bool vsync_now = true;             // (vsync forced off, or not taken: present returns at once, so not every pass)
 	// A game frame's inputs (false: a hotkey opened the menu, no frame runs) and what follows one: the
 	// scene changes' hold, its sound
+	bool replay_manual_first = replay_mode;
 	auto frame_inputs = [&]() -> bool {
 		switch (read_inputs(m, pads, pstate, cfg.ctl, controls, game_part)) {
 		case hotkey::menu: open_menu(); break;
@@ -2188,7 +2289,17 @@ int main(int argc, char **argv)
 		case hotkey::none: break;
 		}
 		if (menu.is_open()) return false;
+		if (replay_manual_first) {
+			fprintf(stderr, "input replay: live controls active at machine frame %llu; buttons=%02x,%02x,%02x pilot=%u,%u throttle=%u gunner=%u,%u\n",
+				(unsigned long long)m.frame_number(), uint8_t(~m.m_inputs[0]), uint8_t(~m.m_inputs[1]), uint8_t(~m.m_inputs[2]),
+				m.m_analog_inputs[0], m.m_analog_inputs[1], m.m_analog_inputs[2], m.m_analog_inputs[4], m.m_analog_inputs[5]);
+			replay_manual_first = false;
+		}
 		game_part.before_frame();
+		if (recording) {
+			if (record.frames.size() < input_replay::MAX_FRAMES) record.frames.push_back(input_replay::capture(m));
+			else { save_recording("frame limit reached"); recording = false; }
+		}
 		return true;
 	};
 	bool curtain_on_gpu = false;       // a curtain shown during a hold, put together by the GPU
@@ -2247,6 +2358,61 @@ int main(int argc, char **argv)
 			for (SDL_Scancode s : c.key) if (s == SDL_SCANCODE_F) return false;
 		return true;
 	};
+	if (replay_mode) {
+		auto replay_to_handoff = [&] {
+			SDL_SetWindowTitle(win, "SWA: replaying inputs to manual handoff...");
+			const uint64_t replay_start = SDL_GetTicksNS();
+			m.set_drawing(false);
+			for (size_t i = 0; i < replay.frames.size(); i++) {
+				if (i % 120 == 0) {
+					const std::string title = "SWA: replaying inputs " + std::to_string(i) + "/" +
+						std::to_string(replay.frames.size()) + " (Esc cancels)";
+					SDL_SetWindowTitle(win, title.c_str());
+					SDL_Event event;
+					while (SDL_PollEvent(&event))
+						if (event.type == SDL_EVENT_QUIT ||
+							(event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_ESCAPE)) {
+							fprintf(stderr, "input replay: cancelled\n"); return false;
+						}
+				}
+				if (const auto error = input_replay::apply(m, replay.frames[i]); !error.empty()) {
+					fprintf(stderr, "input replay frame %zu: %s\n", i + 1, error.c_str()); return false;
+				}
+				m.run_frame();
+				m.m_audio_out.clear();
+			}
+			const uint64_t actual = input_replay::ram_hash(m);
+			// (the file's hash is for its last frame: a prefix has none to check. What's recorded from
+			// it is still a cold-boot run whatever this machine did, its own hash taken as it's saved.)
+			if (replay_until < 0 && actual != replay.expected_ram) {
+				const std::string error = "Input replay diverged before handoff; refusing manual play. Expected RAM hash " +
+					[&] { std::ostringstream s; s << std::hex << replay.expected_ram << ", got " << actual; return s.str(); }();
+				fprintf(stderr, "%s\n", error.c_str());
+				message_box(SDL_MESSAGEBOX_ERROR, host_title(), error);
+				return false;
+			}
+			m.set_drawing(true);
+			m.redraw();
+			m.smooth_cut();
+			sync.reset();
+			paused = !getenv("M1_REPLAY_PLAY");   // testing: live frames at once, no P needed
+			show_frame = still_dirty = true;
+			for (auto &port : m.m_inputs) port = 0xff;
+			pstate[0] = pstate[1] = pad_state{};
+			resume_clock();
+			SDL_SetWindowTitle(win, "SWA: manual handoff paused - P to play");
+			fprintf(stderr, "input replay: %s %zu frames, RAM hash %016llx in %.1f s; paused for manual control (P to play)\n",
+				replay_until < 0 ? "verified" : "replayed the first", replay.frames.size(), (unsigned long long)actual,
+				double(SDL_GetTicksNS() - replay_start) / 1e9);
+			if (!record_path.empty()) {
+				record.frames = replay.frames;
+				recording = true;
+				fprintf(stderr, "input recording: on; saved to %s when you pause (P), reset or quit\n", record_path.c_str());
+			}
+			return true;
+		};
+		if (!replay_to_handoff()) return 1;
+	}
 	while (running) {
 		if (!started_at) { started_at = SDL_GetTicksNS(); log_state("the start"); }
 		bool in_texture = false;           // this pass's picture is on the GPU already (or the last one stays)
@@ -2281,8 +2447,11 @@ int main(int argc, char **argv)
 		}
 		// testing: M1_EVENTS_AT="2000:p,2050:reset,2060:targets" at those passes presses a key, or
 		// sends the renderer's device reset or render targets reset (as Direct3D does); "stall" and
-		// "unstall" stop and restart the sound device
+		// "unstall" stop and restart the sound device; "gulp": for 2 s the device takes the sound as
+		// fast as it comes (as macOS's does after waking)
 		static const char *events_at = getenv("M1_EVENTS_AT");
+		static uint64_t gulp_until = 0;
+		if (audio && SDL_GetTicksNS() < gulp_until) SDL_ClearAudioStream(audio);
 		for (const char *c = events_at; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : "") {
 			char what[32] = "";
 			long at = -1;
@@ -2290,6 +2459,10 @@ int main(int argc, char **argv)
 			fprintf(stderr, "test: pass %ld: %s\n", at, what);
 			if (!strcmp(what, "sleep")) {
 				clock_t -= 60000000000ull;
+				continue;
+			}
+			if (!strcmp(what, "gulp")) {
+				gulp_until = SDL_GetTicksNS() + 2000000000ull;
 				continue;
 			}
 			if (!strcmp(what, "stall") || !strcmp(what, "unstall")) {   // the sound device stops taking data
@@ -2311,7 +2484,7 @@ int main(int argc, char **argv)
 		bool pads_changed = false;
 		while (SDL_PollEvent(&e)) {
 			if (e.type == SDL_EVENT_QUIT) running = false;
-			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) resume_clock();
+			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) { fprintf(stderr, "clock: back in the foreground, restarted\n"); resume_clock(); }
 			else if (e.type == SDL_EVENT_RENDER_TARGETS_RESET || e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
 				// Direct3D lost what render targets held (a device reset: every texture). The GPU's
 				// parts are made again whatever is on show (their old textures can't be used), and
@@ -2348,7 +2521,11 @@ int main(int argc, char **argv)
 			}
 			else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
 				if (e.key.scancode == SDL_SCANCODE_ESCAPE) open_menu();
-				else if (e.key.scancode == SDL_SCANCODE_P) paused = !paused;
+				else if (e.key.scancode == SDL_SCANCODE_P) {
+					paused = !paused;
+					if (replay_mode) SDL_SetWindowTitle(win, paused ? "SWA: manual play paused - P to play" : host_title());
+					if (paused) save_recording("paused");
+				}
 				else if (e.key.scancode == SDL_SCANCODE_F9) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }
 				else if (e.key.scancode == SDL_SCANCODE_F3) reset_game();
 				else if (e.key.scancode == SDL_SCANCODE_F5) player_scale_to(cfg.scale % 6 + 1);
@@ -2406,10 +2583,11 @@ int main(int argc, char **argv)
 			// M1_HIDDEN, M1_HZ high and M1_CAPTURE: every in-between picture, on a machine too slow to keep up)
 			static const double fixed_dt = getenv("M1_STEP_HZ") ? 1.0 / atof(getenv("M1_STEP_HZ")) : 0;
 			double dt = fixed_dt > 0 ? fixed_dt : double(now_ns - clock_t) / 1e9;
-			// Long suspensions are not game time; short hitches still use the sound's slack.
-			if (fixed_dt == 0 && dt > 2.0) {
+			// Sleep and long suspensions are not game time. Reset the pacing filters too: feeding
+			// the gap into their averages can keep the game accelerated long after waking.
+			if (fixed_dt == 0 && dt > 0.5) {
 				static int told = 0;
-				if (told++ < 5) fprintf(stderr, "a %.1f s gap (asleep?): the pacing starts again\n", dt);
+				if (told++ < 5) fprintf(stderr, "clock: a %.1f s gap (sleep or a stall) not run as game time\n", dt);
 				resume_clock();
 				pass_avg = screen_hz_now > 0 ? 1.0 / screen_hz_now : 0;
 				dt = 1.0 / FRAME_HZ;
@@ -2468,7 +2646,16 @@ int main(int argc, char **argv)
 				frame_clock = double(game_run + pace) + (frame_clock - std::floor(frame_clock));
 				due = pace;
 			}
-			due = std::max(due, std::min(low, pace + 1));   // (the sound about to run dry: a frame more at most)
+			// The sound about to run dry: a frame more at most, and no more than its slack (QUEUED
+			// frames) ahead of the clock, won back at the trim's 1%. A device that takes data faster than
+			// it plays (macOS's for a second or two after waking from sleep, after its stall) otherwise
+			// ran the game at three times its speed while it did: each frame for it moved the clock on.
+			sound_lead = std::max(0.0, sound_lead - dt * rate * 0.01);
+			if (const int want = std::min(low, pace + 1); want > due) {
+				const int extra = std::min(want - std::max(due, 0), std::max(0, int(QUEUED - sound_lead)));
+				due = std::max(due, 0) + extra;
+				sound_lead += extra;
+			}
 			if (due > 0) frame_clock = std::max(frame_clock, double(game_run + due));
 			due = std::max(due, 0);
 			if (ff) { due = 8; frame_clock = double(game_run + due); }
@@ -2733,12 +2920,13 @@ int main(int argc, char **argv)
 			game_part.trace_fields(gf);
 			float sa, place[3]; int s0, s1;
 			m.smooth_state(sa, s0, s1, place);
-			fprintf(trace, "%lld %.3f %d %llu %.3f %.3f %.3f %.3f %.3f %c %.4f %d %d %.3f %d %.3f %d %.3f %d %.3f %d %d %llu %d %u %u %u %u %u %u %d %u %.4f %d %d %.3f %.3f %.3f %.3f\n",
+			fprintf(trace, "%lld %.3f %d %llu %.3f %.3f %.3f %.3f %.3f %c %.4f %d %d %.3f %d %.3f %d %.3f %d %.3f %d %d %llu %d %u %u %u %u %u %u %d %u %.4f %d %d %.3f %.3f %.3f %.3f %.1f\n",
 					(long long)pass, (pass_t - trace_t0) / 1e6, tp.due, (unsigned long long)m.frame_number(), tp.emu / 1e6, tp.draw / 1e6,
 					tp.compose / 1e6, tp.upload / 1e6, tp.present / 1e6, tp.kind, tp.now, int(sync.holding()), w.tiles_full, w.tiles_ns / 1e6,
 					w.layers, w.layers_ns / 1e6, w.sky_build, w.sky_build_ns / 1e6, w.sky_scale, w.sky_scale_ns / 1e6, w.padded, gc.made,
 					(unsigned long long)(gc.uploaded / 1000), int(stopped), gf[0], gf[1], gf[2], gf[3],
-					gf[4], gf[5], int(m.frame_quads()), unsigned(m.game_mode()), sa, s0, s1, place[0], place[1], place[2], w.edge_ns / 1e6);
+					gf[4], gf[5], int(m.frame_quads()), unsigned(m.game_mode()), sa, s0, s1, place[0], place[1], place[2], w.edge_ns / 1e6,
+					audio ? SDL_GetAudioStreamQueued(audio) * 1000.0 / (frame_bytes * FRAME_HZ) : 0.0);
 			w = model1::work_trace{};
 			gc.made = 0; gc.uploaded = 0;
 		}
@@ -2766,7 +2954,7 @@ int main(int argc, char **argv)
 		// The game's backup (rankings, operator settings) saved within a minute of changing, so a
 		// crash, a force quit or the Deck's power button loses at most that (every 3 s before: the
 		// arcade's bookkeeping changes it in play, so it was written that often; and at quit as ever)
-		if (quit_after < 0) {
+		if (quit_after < 0 && !replay_mode) {
 			static uint64_t next_check = SDL_GetTicksNS() + 60000000000ull;
 			if (SDL_GetTicksNS() >= next_check) {
 				next_check = SDL_GetTicksNS() + 60000000000ull;
@@ -2807,7 +2995,8 @@ int main(int argc, char **argv)
 	g3.reset();                          // (its device goes before SDL does)
 	if (gpu_check) fprintf(stderr, "gpu check: %d pictures put together on the GPU checked, %d differ\n", gpu_checked, gpu_differ);
 	gc.release();                          // (its textures go before the renderer)
-	if (quit_after >= 0 && !getenv("M1_SAVE")) { SDL_Quit(); return 0; }   // test runs leave the saves and settings alone (M1_SAVE: they save, as a player's)
+	save_recording("quit");
+	if (replay_mode || (quit_after >= 0 && !getenv("M1_SAVE"))) { SDL_Quit(); return 0; }   // replay and test runs leave saves and settings alone
 	game_part.keep_arcade_settings();
 	saver.finish();   // (an autosave still being written, done before the last save: the same files)
 	save_blob(nv_path, m.nvram().data(), m.nvram().size());

@@ -172,7 +172,9 @@ public:
 		s = m_start.frame(f - 3000);
 		if (pulse(6060)) s.pressed[0] = 0;   // One credit; return to attract after entering initials.
 		if (f >= 6130) {
-			s.analog = { 0x80, 0xff, 0x30 };
+			s.analog[0] = 0x80;
+			s.analog[1] = 0xff;
+			s.analog[2] = 0x30;
 			s.pressed[1] = 0;
 		}
 		return s;
@@ -191,7 +193,8 @@ public:
 			require(confirmed <= 3, "invalid name-entry cursor");
 			// FC488A maps the calibrated wheel to the alphabet; FC4546 confirms with the pedal edge.
 			constexpr std::array<int, 3> wheel{ 148, 68, 100 };   // SDK
-			s.analog = { wheel[std::min(confirmed, 2u)], 0x30, 0x30 };
+			s.analog[0] = wheel[std::min(confirmed, 2u)];
+			s.analog[1] = s.analog[2] = 0x30;
 			if (confirmed < 3 && m_name_age % 60 >= 30 && m_name_age % 60 < 36)
 				s.analog[1] = 0xff;
 			m_name_age++;

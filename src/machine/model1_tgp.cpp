@@ -1231,6 +1231,8 @@ void model1::v60_copro_fifo_w(offs_t offset, u16 data, u16 mem_mask)
 	if(offset) {
 		m_v60_copro_fifo_w = (m_v60_copro_fifo_w & 0x0000ffff) | (data << 16);
 		m_pushpc = m_maincpu.pc();
+		if (m_gameplay.copro_write)
+			m_v60_copro_fifo_w = m_gameplay.copro_write(m_maincpu.pc(), m_v60_copro_fifo_w);
 		m_copro_fifo_in->push(u32(m_v60_copro_fifo_w));
 
 	} else

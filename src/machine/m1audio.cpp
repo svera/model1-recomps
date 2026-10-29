@@ -59,6 +59,11 @@ m1audio::m1audio(std::vector<uint8_t> &sndcpu, std::vector<uint8_t> &pcm1, std::
 	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 }
 
+void m1audio::attach_dsb(const std::vector<uint8_t> &cpu_rom, const std::vector<uint8_t> &mpeg_rom)
+{
+	m_dsb = std::make_unique<dsbz80>(cpu_rom, mpeg_rom);
+}
+
 m1audio::~m1audio() { if (g_board == this) g_board = nullptr; }
 
 void m1audio::reset()
@@ -75,6 +80,10 @@ void m1audio::reset()
 	m_ym->chip.reset();
 	m68k_pulse_reset();
 	m68k_set_irq(0);
+	if (m_dsb) m_dsb->reset();
+	// Two samples of lead (62.5 us): the Z80 delivers samples at instruction boundaries, and
+	// without it the slice's last interpolation would often need a sample not produced yet.
+	m_dsb_buf.l.assign(DSB_LEAD, 0); m_dsb_buf.r.assign(DSB_LEAD, 0); m_dsb_buf.pos = 0;
 }
 
 // ---- 68000 memory map (MAME: segam1audio_map) ----
@@ -126,7 +135,11 @@ void m1audio::write8(uint32_t a, uint8_t v)
 	if ((a & ~1u) == 0xc70000) { if (a & 1) m_bank2 = v & 3; return; }
 	if (!(a & 1)) return;
 	if (a >= 0xc20000 && a < 0xc20004) {
-		if ((a & 2) == 0) { m_tx.push_back(v); return; }
+		if ((a & 2) == 0) {
+			m_tx.push_back(v);
+			if (m_dsb) m_dsb->rx_byte(v);
+			return;
+		}
 		if (m_uart_mode_next) { m_uart_mode_next = false; return; }   // mode byte
 		m_uart_cmd = v;
 		if (v & 0x40) m_uart_mode_next = true;                       // internal reset
@@ -190,7 +203,13 @@ void m1audio::run(double usec, std::vector<int16_t> &out)
 		m_ym_buf.r.push_back(0.30f * m_music * o.data[1]);
 	}
 
-	// resample both to OUT_RATE (linear) and mix
+	if (m_dsb) {
+		size_t n0 = m_dsb_buf.l.size();
+		m_dsb->run(usec, m_dsb_buf.l, m_dsb_buf.r);
+		for (size_t i = n0; i < m_dsb_buf.l.size(); i++) { m_dsb_buf.l[i] *= m_music; m_dsb_buf.r[i] *= m_music; }
+	}
+
+	// resample to OUT_RATE (linear) and mix
 	m_out_phase += usec * OUT_RATE / 1e6;
 	int nout = int(m_out_phase);
 	m_out_phase -= nout;
@@ -205,12 +224,14 @@ void m1audio::run(double usec, std::vector<int16_t> &out)
 		r = b.r[i] + (b.r[i1] - b.r[i]) * f;
 	};
 	const double pstep = pcm_rate / OUT_RATE, ystep = ym_rate / OUT_RATE;
+	const double dstep = double(dsbz80::RATE) / OUT_RATE;
 	for (int k = 0; k < nout; k++) {
-		float pl, pr, yl, yr;
+		float pl, pr, yl, yr, dl = 0, dr = 0;
 		take(m_pcm_buf, pstep, k, pl, pr);
 		take(m_ym_buf, ystep, k, yl, yr);
-		out.push_back(int16_t(std::clamp(pl + yl, -32768.0f, 32767.0f)));
-		out.push_back(int16_t(std::clamp(pr + yr, -32768.0f, 32767.0f)));
+		if (m_dsb) take(m_dsb_buf, dstep, k, dl, dr);
+		out.push_back(int16_t(std::clamp(pl + yl + dl, -32768.0f, 32767.0f)));
+		out.push_back(int16_t(std::clamp(pr + yr + dr, -32768.0f, 32767.0f)));
 	}
 	// drop consumed input, keep one sample of history for the interpolation
 	auto consume = [](src_buf &b, double step, int k) {
@@ -223,4 +244,5 @@ void m1audio::run(double usec, std::vector<int16_t> &out)
 	};
 	consume(m_pcm_buf, pstep, nout);
 	consume(m_ym_buf, ystep, nout);
+	if (m_dsb) consume(m_dsb_buf, dstep, nout);
 }

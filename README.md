@@ -4,16 +4,21 @@
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
 This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
-multiple games; this repository currently supports Virtua Racing.
+multiple games; this repository currently supports Virtua Racing and Star Wars Arcade.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-blue"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Steam%20Deck%20%2F%20Linux-informational">
 </p>
-<p align="center"><img src="assets/games/vr/icon/icon.png" alt="Virtua Racing Recomp" width="160"></p>
 
-<h2 align="center">Virtua Racing Recomp</h2>
+<p align="center">
+  <a href="#virtua-racing">Virtua Racing</a> ·
+  <a href="#star-wars">Star Wars Arcade (1993)</a>
+ </p>
+
+
+<h2 align="center" id="virtua-racing">Virtua Racing Recomp</h2>
 
 <p align="center">
   <img src="assets/games/vr/screenshots/bay-bridge.png" alt="Racing on Bay Bridge in widescreen" width="900">
@@ -93,6 +98,139 @@ or frame rate.
 | --- | --- |
 | ![Big Forest gameplay](assets/games/vr/screenshots/big-forest.png) | ![Acropolis gameplay](assets/games/vr/screenshots/acropolis.png) |
 
+<h2 align="center" id="star-wars">Star Wars Arcade Recomp</h2>
+
+<p align="center">
+  <img src="assets/games/swa/screenshots/death-star.png" alt="Approaching the Death Star from the X-wing's cockpit in widescreen" width="900">
+</p>
+
+> [!IMPORTANT]
+> You need your own US **`swa.zip`** and **`model1io.zip`** ROM archives. Neither is included.
+> Both are needed for the flight stick and buttons to work. This is an unofficial fan project,
+> not affiliated with or supported by SEGA or Lucasfilm.
+
+<p align="center">
+  <a href="https://github.com/svera/model1-recomp/releases">Download</a> ·
+  <a href="#getting-started-1">Getting started</a> ·
+  <a href="#controls-1">Controls</a> ·
+  <a href="https://github.com/svera/model1-recomp/issues">Report a bug</a>
+</p>
+
+### Features
+
+- The whole arcade game, in both the Rebel Attack and Training missions.
+- Two players on one machine: the **Pilot** flies and fires, the **Gunner** aims a second laser.
+  Gunner assist lets one player fly with both lasers firing.
+- Sharper graphics, widescreen and ultrawide views. The X-wing cockpit is continued out to the
+  screen edges and the HUD is not stretched.
+- Original arcade motion or smoother 60 / 120 FPS.
+- Full-detail models and a longer draw distance by default, with options for the arcade's own.
+- Keyboard and gamepad support, with customizable controls.
+- Saved settings and rankings, difficulty settings and the arcade's service menu.
+
+Online multiplayer is not supported.
+
+### Getting started
+
+1. [Download](https://github.com/svera/model1-recomp/releases) the package for your system and extract it.
+2. Keep **`swa.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
+3. Start the game and select **`swa.zip`** when asked. It remembers your files for next time.
+4. Press **1** on the keyboard or **Start** on your gamepad to play. For two players, pull back
+   on the stick while choosing the mode to select PILOT & GUNNER.
+
+**macOS:** open **Star Wars Arcade Recomp.app**. If macOS blocks it, allow it through
+**System Settings > Privacy & Security**.
+
+**Windows:** run the included executable. Windows may show a SmartScreen warning for preview builds.
+
+**Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
+**StarWarsArcade.sh** instead of using a file picker. On Steam Deck, add the launcher as a
+Non-Steam Game and set **Start In** to the extracted **StarWarsArcade** folder.
+
+### Controls
+
+| Action | Pilot keys | Gunner keys | Gamepad |
+| --- | --- | --- | --- |
+| Fly / aim | Arrows | I / J / K / L | Left stick, d-pad |
+| Throttle | W faster, S slower | - | Right stick up / down |
+| Laser | Z | U | Right trigger |
+| Torpedo | X | O | Left trigger |
+| Change view | C | - | Y / Triangle |
+| Start | 1 | 2 | Start |
+| Insert coin (Arcade mode) | 5 | 6 | Left bumper |
+| Open menu | Esc | - | View / Select |
+
+To see or change your actual controller bindings, open **Esc > Controls**. Coins are only
+needed in Arcade play style. Hold **Tab** to fast-forward, including through attract mode;
+**P** pauses and resumes.
+
+### Useful settings
+
+Open the menu with **Esc** or **View / Select**:
+
+- **Display:** change sharpness, screen shape, fullscreen, and frame rate. 30 FPS shows the
+  game as the arcade drew it; 60 and 120 smooth the motion between pictures.
+- **Display > LOD:** Off (default) keeps the most detailed models at every distance, including
+  the complete Death Star through the attract-mode approach. On uses the arcade's simpler
+  distant models.
+- **Display > Draw distance:** Full (default) shows the Death Star's surface further out and
+  draws the asteroid field's rocks and Star Destroyers before they come into view, so they no
+  longer pop in. Arcade keeps the cabinet's original pop-in.
+- **Display > Widescreen cockpit:** On (default) continues the cockpit's canopy struts and side
+  consoles to the edges of a 16:9 or wider screen, following their lines instead of stretching
+  the panel. Off leaves the sides open. Other 2D art, such as the notices and the Rankings,
+  keeps its 4:3 proportions.
+- **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
+- **Game:** invert flight Y, and the arcade's difficulty (player, enemy, timer) and attract
+  sound settings. Changing one of these restarts the game when the menu closes.
+- **Game > Service menu:** opens the arcade's own test menu. **9** moves and **F2** selects;
+  choose EXIT to return.
+- **Cheats > Gunner assist:** in PILOT & GUNNER mode, the Gunner's laser aims at the nearest
+  enemy by itself.
+- **Sound:** adjust the audio levels.
+
+Higher graphics settings need a faster computer. If play feels slow, lower the render scale
+or frame rate.
+
+#### Differences from the arcade
+
+- In 16:9 and wider, the game's view test covers the whole picture, so ships and scenery no
+  longer pop in at the old 4:3 edges. Enemies in the extra width act as if on screen (turrets
+  and fighters can fire from there), so play differs slightly from 4:3.
+- Some pop-in remains because the arcade does it too, such as surface blocks at the sides of
+  the screen over the Death Star.
+- The black box behind the cockpit's SEGA logo is part of the original artwork.
+
+### Screenshots
+
+| Asteroid field | Death Star surface |
+| --- | --- |
+| ![Star Destroyers in the asteroid field](assets/games/swa/screenshots/asteroid-field.png) | ![Flying over the Death Star's surface](assets/games/swa/screenshots/death-star-surface.png) |
+
+### For developers
+
+Build and run it from source (see [Build and test](#build-and-test)):
+
+```sh
+make swa
+build/bin/swa
+```
+
+Developers can also record and replay play sessions; an input recording should be replayed at
+the aspect ratio it was recorded in. See
+[how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
+
+Release packaging is enabled for Virtua Racing and Star Wars Arcade on macOS, Windows, and Linux.
+Each platform's `package.sh` builds both by default, or the games named (`package.sh swa`).
+
+Useful shared checks:
+
+```sh
+make test-model1io-adc
+make test-host-gamepads
+make test-vr-profile test-vr-gameplay test-vr-tgp-track
+```
+
 ## Shared Model 1 implementation
 
 The shared runtime models the Model 1 board around its main NEC V60 CPU: the Fujitsu MB86233 geometry
@@ -142,8 +280,8 @@ make test-vr-profile test-vr-gameplay test-vr-tgp-track
 | `src/machine` | Shared Model 1 memory map, interrupts, TGP, rasterizer, tile chip, sound and I/O boards |
 | `src/rt` | Recompiler runtime and startup native recompilation |
 | `src/host` | SDL 3 host, input, pacing, and RmlUi menu |
-| `src/games/vr` | VR profiles and game-specific behavior |
-| `assets/games/vr` | VR address map, icon and other artwork |
+| `src/games/<game>` | Game profiles, OM tables, scripted play and host, and game-specific behavior |
+| `assets/games/<game>` | VR address map, icon and other artwork |
 | `src/gpu` | Metal and SDL_GPU renderers and shaders |
 | `tools/recomp` | Ahead-of-time V60-to-C++ recompiler |
 | `tools/mac`, `tools/win`, `tools/linux` | Each platform's `package.sh [game ...]`: the downloads, the same for every game |

@@ -1,6 +1,9 @@
 // Sega Model 1 glue: memory map, IRQ controller, timers, ROM banking and the per-frame loop.
 // Follows MAME's src/mame/sega/model1.cpp (BSD-3-Clause, copyright-holders: Olivier Galibert).
+#include <algorithm>
 #include <chrono>
+#include <optional>
+#include <unordered_map>
 #include "model1.h"
 
 namespace {
@@ -238,6 +241,8 @@ void model1::uart_tick(int cycles)
 void model1::enable_sound()
 {
 	m_audio = std::make_unique<m1audio>(m_regions.sndcpu, m_regions.pcm1, m_regions.pcm2);
+	if (!m_regions.mpegcpu.empty() && !m_regions.mpeg.empty())
+		m_audio->attach_dsb(m_regions.mpegcpu, m_regions.mpeg);
 	m_audio->reset();
 }
 
@@ -246,12 +251,16 @@ void model1::set_volumes(float music, float effects)
 	if (m_audio) m_audio->set_volumes(music, effects);
 }
 
-bool model1::set_analog_input(int channel, uint8_t value)
+bool model1::has_analog_input(int channel) const
 {
 	const auto &profile = game::get_io_profile(m_regions.title);
-	if (channel < 0 || channel >= int(profile.analog_controls.size()) ||
-		profile.analog_controls[channel].empty() || !m_ioboard)
-		return false;
+	return channel >= 0 && channel < int(profile.analog_controls.size()) &&
+		   !profile.analog_controls[channel].empty() && m_ioboard;
+}
+
+bool model1::set_analog_input(int channel, uint8_t value)
+{
+	if (!has_analog_input(channel)) return false;
 	m_analog_inputs[channel] = value;
 	m_ioboard->analog_inputs[channel] = value;
 	return true;
@@ -425,13 +434,26 @@ void model1::bus_write16(uint32_t a, uint16_t v, uint16_t mask)
 	if (a >= 0xe00008 && a < 0xe0000c) { timer_period_w((a >> 1) & 1, v); return; }
 }
 
-uint8_t model1::read8(uint32_t a) { return uint8_t(bus_read16(a) >> ((a & 1) * 8)); }
+uint8_t model1::read8(uint32_t a)
+{
+	const uint8_t value = uint8_t(bus_read16(a) >> ((a & 1) * 8));
+	if (m_gameplay.read_value) {
+		const uint32_t pc = m_maincpu.pc();
+		if (pc >= m_gameplay.read_pc_first && pc <= m_gameplay.read_pc_last) return uint8_t(m_gameplay.read_value(pc, a, value));
+	}
+	return value;
+}
 void model1::write8(uint32_t a, uint8_t v) { bus_write16(a, uint16_t(v) << ((a & 1) * 8), (a & 1) ? 0xff00 : 0x00ff); }
 
 uint16_t model1::read16(uint32_t a)
 {
 	if (a & 1) return read8(a) | (read8(a + 1) << 8);
-	return bus_read16(a);
+	const uint16_t value = bus_read16(a);
+	if (m_gameplay.read_value) {
+		const uint32_t pc = m_maincpu.pc();
+		if (pc >= m_gameplay.read_pc_first && pc <= m_gameplay.read_pc_last) return m_gameplay.read_value(pc, a, value);
+	}
+	return value;
 }
 
 void model1::write16(uint32_t a, uint16_t v)
@@ -524,8 +546,9 @@ void model1::redraw()
 
 bool model1::past_boot() const
 {
-	const uint8_t *p = &m_ram_b[m_profile->camera_ram];
-	return (p[0] | p[1] << 8 | p[2] << 16 | uint32_t(p[3]) << 24) != 0;
+	// a game with no camera RAM (SWA) holds a Test press made in its boot until the boot's over
+	if (!m_profile->camera_ram) return true;
+	return camera() != 0;
 }
 
 // A layer at the arcade's resolution (and the widescreen sides), drawn once a game frame, with each
@@ -535,13 +558,16 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	constexpr uint32_t KEY = 0xff000000;
 	layer_cache &c = m_layer_cache[layer & 7];
 	const int tw = SCREEN_W + 2 * m_ext;
-	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.px.width() != tw) {
+	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) {
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
 		m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
+		if (flags & segas24_tile::DRAW_OPAQUE) fill_backdrop_sides(c.px, layer, flags);
+		c.sides = m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
+			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext);
 		c.x0.assign(SCREEN_H, 0);
 		c.x1.assign(SCREEN_H, 0);
 		for (int y = 0; y < SCREEN_H; y++) {
@@ -552,7 +578,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			while (b > a && r[b - 1] == KEY) b--;
 			c.x0[y] = int16_t(a); c.x1[y] = int16_t(b);
 		}
-		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.gen++;
+		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.wide = m_wide_frame; c.gen++;
 	}
 	return c;
 }
@@ -657,7 +683,7 @@ void model1::prepare_layers()
 	for (int l : LAYERS) {
 		const int flags = l == 6 ? segas24_tile::DRAW_OPAQUE : 0;
 		const layer_cache &c = m_layer_cache[l];
-		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.px.width() != tw) todo[n++] = l;
+		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) todo[n++] = l;
 	}
 	if (n < 2) return;
 	m_work.layers += n;
@@ -666,6 +692,53 @@ void model1::prepare_layers()
 	parallel_jobs(n, [&](int i) { cached_layer(todo[i], todo[i] == 6 ? segas24_tile::DRAW_OPAQUE : 0); });
 	m_layers_together = false;
 	m_tiles.m_ox = 0;
+}
+
+// Widescreen, for a game whose backdrops aren't stretched: an opaque layer's sides (where it has drawn
+// nothing) take its edge's colour when that edge is all one colour (a plain backdrop), else black
+// (art reaching the edge, kept 4:3). A sparse layer (SWA's starfield: at least 99% one colour) whose
+// map, wrapping round its 512 columns, is as sparse beside the picture continues across the sides
+// from the map instead, as it scrolls (`layer` given).
+void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
+{
+	constexpr uint32_t KEY = 0xff000000;
+	if (!m_ext || !m_wide_frame || stretch_backdrops()) return;
+	auto background = [&](const bitmap_rgb32 &b, int x0, int x1, uint32_t colour) {
+		std::unordered_map<uint32_t, int> counts;
+		for (int y = 0; y < SCREEN_H; y++)
+			for (int x = x0; x < x1; x++) counts[b.pix(y, x)]++;
+		auto top = std::max_element(counts.begin(), counts.end(), [](auto a, auto b) { return a.second < b.second; });
+		const int share = colour == KEY ? top->second : counts[colour];
+		return share * 100 >= (x1 - x0) * SCREEN_H * 99 ? std::optional<uint32_t>(colour == KEY ? top->first : colour) : std::nullopt;
+	};
+	if (layer >= 0)
+		if (const auto sky = background(pixels, m_ext, m_ext + SCREEN_W, KEY); sky && *sky != KEY) {
+			if (m_wrap_tmp.width() != pixels.width()) m_wrap_tmp.allocate(pixels.width(), SCREEN_H);
+			m_wrap_tmp.fill(KEY);
+			const int ox = m_tiles.m_ox;
+			m_tiles.m_ox = m_ext;
+			m_tiles.draw_wide(m_wrap_tmp, layer, flags, m_ext);
+			m_tiles.m_ox = ox;
+			if (background(m_wrap_tmp, 0, m_ext, *sky) && background(m_wrap_tmp, m_ext + SCREEN_W, pixels.width(), *sky)) {
+				for (int y = 0; y < SCREEN_H; y++) {
+					std::copy_n(&m_wrap_tmp.pix(y, 0), m_ext, &pixels.pix(y, 0));
+					std::copy_n(&m_wrap_tmp.pix(y, m_ext + SCREEN_W), pixels.width() - m_ext - SCREEN_W, &pixels.pix(y, m_ext + SCREEN_W));
+				}
+				return;
+			}
+		}
+	for (int x_edge : { m_ext, m_ext + SCREEN_W - 1 }) {
+		const uint32_t first = pixels.pix(0, x_edge);
+		bool plain = first != KEY;
+		for (int y = 1; y < SCREEN_H && plain; y++) plain = pixels.pix(y, x_edge) == first;
+		bool any = false;
+		for (int y = 0; y < SCREEN_H && !any; y++) any = pixels.pix(y, x_edge) != KEY;
+		if (!any) continue;                                   // nothing at this edge: nothing to continue
+		const uint32_t c = plain ? first : 0;
+		const int x0 = x_edge == m_ext ? 0 : m_ext + SCREEN_W, x1 = x_edge == m_ext ? m_ext : pixels.width();
+		for (int y = 0; y < SCREEN_H; y++)
+			for (int x = x0; x < x1; x++) pixels.pix(y, x) = c;
+	}
 }
 
 // The 2D layers are drawn at the arcade's resolution and scaled up to the render's.
@@ -681,13 +754,14 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	constexpr uint32_t KEY = 0xff000000;     // pixels are 0x00rrggbb: never the key
 	bitmap_rgb32 *tmp = &m_tile_tmp;
 	const int16_t *rx0 = nullptr, *rx1 = nullptr;    // each row's drawn span (cached layers)
-	bool sky = false;
+	bool sky = false, sides = false;
 	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) {
 		// the sky layer: note where each pixel came from, for a hi-res replacement (drawn once a game
 		// frame; which panorama and where, every time)
 		if (m_skies.empty()) init_skies();
 		sky = !m_skies.empty() && m_wide_frame;
-		if (m_l4_frame != m_frame || m_l4_ext != m_ext || m_l4_coords != sky || m_tile_tmp.width() != SCREEN_W + 2 * m_ext) {
+		if (m_l4_frame != m_frame || m_l4_ext != m_ext || m_l4_coords != sky || m_l4_wide != m_wide_frame ||
+			m_tile_tmp.width() != SCREEN_W + 2 * m_ext) {
 			m_tile_tmp.fill(KEY);
 			m_tiles.m_ox = m_ext;
 			if (sky) {
@@ -697,17 +771,19 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;
-			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_gen++;
+			fill_backdrop_sides(m_tile_tmp, layer, flags);
+			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_wide = m_wide_frame; m_l4_gen++;
 		}
 		if (sky) find_sky();
 	} else {
 		layer_cache &c = cached_layer(layer, flags);
-		tmp = &c.px; rx0 = c.x0.data(); rx1 = c.x1.data();
+		tmp = &c.px; rx0 = c.x0.data(); rx1 = c.x1.data(); sides = c.sides;
 	}
 	// Widescreen: the opaque layers are the game's backdrop (VF's sky), which only holds the
 	// visible part of its panorama; stretch it across the width. Other layers retain their scale;
 	// the game's edge-anchored HUD has already been positioned in cached_layer.
-	const bool stretch = m_ext && m_wide_frame && (flags & segas24_tile::DRAW_OPAQUE);
+	const bool stretch = m_ext && m_wide_frame && (flags & segas24_tile::DRAW_OPAQUE) && stretch_backdrops();
+	if (flags & segas24_tile::DRAW_OPAQUE) sides = true;   // (its sides are its own: stretched or filled)
 	const int s = m_scale;
 	const int out_w = bitmap.width();
 	// smooth motion: the sky between two game frames, moved by the blended scroll at full resolution
@@ -766,9 +842,9 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			}
 		}
 		// Widescreen: a row this layer covers from edge to edge is a curtain (the black that hides
-		// a stage change): carry each end out across its side.
+		// a stage change): carry each end out across its side (unless the game filled the sides).
 		const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
-		if (m_ext && m_wide_frame && el != KEY && er != KEY) {
+		if (m_ext && m_wide_frame && !sides && el != KEY && er != KEY) {
 			int covered = 0;
 			for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
 			if (covered * 10 >= SCREEN_W * 9)

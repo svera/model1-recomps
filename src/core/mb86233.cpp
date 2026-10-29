@@ -54,6 +54,7 @@ void mb86233_device::reset()
 	std::fill(std::begin(m_pcs), std::end(m_pcs), 0);
 
 	m_stall = false;
+	m_stalled = false;
 }
 
 u32 mb86233_device::set_exp(u32 val, u32 exp)
@@ -1071,6 +1072,8 @@ void mb86233_device::execute_run()
 		do_stall:
 			m_pc = m_ppc;
 			m_stall = false;
+			m_icount--;
+			return;
 		}
 		m_icount--;
 	}

@@ -66,9 +66,9 @@ public:
 
 
 	void reset();
-	// Runs until `cycles` instructions have executed or the core stalls on a FIFO.
+	// Runs for the cycle budget or until a FIFO stalls; returns cycles actually consumed.
 	int run(int cycles);
-	void stall() { m_stall = true; m_stalled = true; m_icount = 0; }
+	void stall() { m_stall = true; m_stalled = true; }
 	bool stalled() const { return m_stalled; }
 	u16 pc() const { return m_pc; }
 

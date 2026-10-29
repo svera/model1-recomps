@@ -14,11 +14,21 @@
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
 // An object in a list: its polygons' address, and which time that address comes in the list.
 uint64_t object_key(uint32_t poly_adr, uint32_t nth) { return uint64_t(poly_adr) << 20 | nth; }
+
+// How far a part is from the eye, for how far it may move between two lists: its distance, not its
+// z. (SWA's ships and cells beside the camera, seen at the sides of a wide screen, have a small z
+// and are as far as their x: an X-wing passing 300 units to the side at z 66, moving 5% of its
+// distance, was 120% of its z, taken for a jump and held a list, then leapt, each list.)
+float eye_distance(const float *pa, const float *pb)
+{
+	return std::max({ std::hypot(pa[9], pa[10], pa[11]), std::hypot(pb[9], pb[10], pb[11]), 1.0f });
+}
 
 // (records) A camera as the game keeps it: 12 floats, the rotation's columns, then the move.
 glm::mat4 camera_matrix(const float *m)
@@ -75,8 +85,11 @@ void model1::list_written(int buffer, uint32_t word)
 {
 	if (m_gameplay.matrix_objects) {
 		m_list_extra[buffer].erase(word);
-		auto extra = m_gameplay.matrix_objects();
-		if (!extra.empty()) m_list_extra[buffer].emplace(word, std::move(extra));
+		uint32_t at = word;
+		auto extra = m_gameplay.matrix_objects(at);
+		at &= 0x7fff;
+		if (!extra.empty()) m_list_extra[buffer][at] = std::move(extra);
+		else if (at != word) m_list_extra[buffer].erase(at);
 	}
 	if ((!m_smooth && !m_gameplay.object) || !m_video->records) return;
 	const game::draw_records &r = *m_video->records;
@@ -106,6 +119,7 @@ void model1::index_objects(logic_frame &lf)
 {
 	const std::vector<uint32_t> &owners = m_list_owner[m_picture_buffer];
 	lf.slots.clear();
+	lf.above_hud = false;
 	lf.visibility = m_list_visibility[m_picture_buffer];
 	lf.slots.push_back({});                        // objects before the first matrix
 	const uint16_t *l = lf.list.data();
@@ -118,6 +132,7 @@ void model1::index_objects(logic_frame &lf)
 		switch (rdi(off)) {
 		case 0: off += 2; break;
 		case 1: case 0x41:
+			if (rdi(off) == 0x41) lf.above_hud = true;
 			lf.slots.back().polys.push_back(rdi(off + 4));
 			if (rdi(off) == 1 && lf.slots.back().visibility)
 				lf.slots.back().objects.push_back({ rdi(off + 2), rdi(off + 4), rdi(off + 6) });
@@ -335,6 +350,13 @@ bool model1::render_smooth(double now, bool shown)
 	m_alpha = float(alpha);
 	if (!m_redrawing) m_last_alpha = m_alpha;
 	m_replaying = true;
+	// (SWA: the pair's pairing follows the camera's move from the pair before it. Its first
+	// picture, a scene's or a redraw's after a gap, came before that move was fitted: paired in
+	// order, a cut, then the next picture of the same pair, the move fitted by then, wasn't one.
+	// That move is fitted first.)
+	if (m_video->separate_parts && !m_logic_prev.list.empty() && m_logic_prev.frame < a.frame && !a.list.empty()
+		&& std::none_of(std::begin(m_cam_move), std::end(m_cam_move), [&](const cam_move &c) { return c.to == a.frame; }))
+		blend_slots(m_logic_prev, a, 0.5);
 	m_smooth_stats[0] = m_smooth_stats[1] = m_smooth_stats[2] = 0;
 	blend_slots(a, b, alpha);
 	// A cut can't be blended: the older view stays until the newer one's moment (as the blend
@@ -399,6 +421,12 @@ bool model1::render_smooth(double now, bool shown)
 	}
 	const auto render_done = m_render_done;     // emulation state: drawing again mustn't touch it
 	const int quads = m_last_quads;
+	gpu_parts *const parts = m_parts;
+	if (parts && m_logic[m_replay_older ? 0 : 1].above_hud) {
+		// Parts cannot composite above-HUD objects. Choose the whole picture before drawing its 3D.
+		m_parts = nullptr;
+		m_parts_whole = true;
+	}
 	screen_update(m_bitmap, m_bitmap.cliprect());
 	m_render_done = render_done;
 	m_last_quads = quads;
@@ -406,6 +434,7 @@ bool model1::render_smooth(double now, bool shown)
 	m_replay_older = false;
 	m_replay_extra = false;
 	drawn();
+	m_parts = parts;
 	static const bool log = getenv("M1_LOG_SMOOTH") != nullptr;
 	if (log && alpha < 1)
 		fprintf(stderr, "R %.2f a=%.2f unmatched %d jumped %d blended %d\n", now, alpha, m_smooth_stats[0], m_smooth_stats[1], m_smooth_stats[2]);
@@ -437,7 +466,7 @@ void model1::keep_still()
 	std::copy(std::begin(m_view->lightparams), std::end(m_view->lightparams), s.lightparams.begin());
 	s.light = m_view->light;
 	s.spec_enable = m_view->spec_enable;
-	memcpy(s.camera, &m_ram_b[m_profile->camera_ram], 4);
+	if (m_profile->camera_ram) memcpy(s.camera, &m_ram_b[*m_profile->camera_ram], 4);
 	s.camera_wide = m_camera_wide;
 	s.sky_now = m_sky_now; s.sky_last = m_sky_last;
 	s.sky_base = m_sky_base; s.sky_last_tx0 = m_sky_last_tx0;
@@ -463,7 +492,8 @@ void model1::swap_still()
 	std::swap_ranges(std::begin(m_view->lightparams), std::end(m_view->lightparams), s.lightparams.begin());
 	std::swap(m_view->light, s.light);
 	std::swap(m_view->spec_enable, s.spec_enable);
-	std::swap_ranges(&m_ram_b[m_profile->camera_ram], &m_ram_b[m_profile->camera_ram + 4], s.camera);   // (the camera pointer: work RAM, put back after)
+	if (m_profile->camera_ram)
+		std::swap_ranges(&m_ram_b[*m_profile->camera_ram], &m_ram_b[*m_profile->camera_ram + 4], s.camera);
 	std::swap(m_camera_wide, s.camera_wide);
 	std::swap(m_sky_now, s.sky_now); std::swap(m_sky_last, s.sky_last);
 	std::swap(m_sky_base, s.sky_base); std::swap(m_sky_last_tx0, s.sky_last_tx0);
@@ -483,6 +513,44 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 {
 	struct pt { double x, y, z; };
 	auto first = [](const slot &sl) { return sl.polys.empty() ? 0u : sl.polys[0]; };
+	// (SWA) Paired again first by the camera's last move, carried on: the Death Star's surface list
+	// changes order as the camera crosses into the next cell, and pairing in order paired most of
+	// it with other cells, a fit to those a move matching none (a cut that wasn't, or the cells
+	// each blended off by its own error). Each slot pairs with the slot of its model that move
+	// takes nearest to it, when one comes within 3% of its depth.
+	const cam_move *pv = nullptr;
+	double pv_scale = 1;
+	if (m_video->separate_parts) {
+		for (const cam_move &c : m_cam_move)
+			if (c.fit && c.to <= a.frame && c.to >= a.frame - 4 && c.from < c.to && (!pv || c.to > pv->to)) pv = &c;
+		if (pv) {
+			const double scale = pv_scale = double(b.frame - a.frame) / (pv->to - pv->from);
+			auto predicted = [&](const float *pa, const float *pb) {
+				double d = 0;
+				for (int r = 0; r < 3; r++) {
+					const double o = pv->R[r][0] * pa[9] + pv->R[r][1] * pa[10] + pv->R[r][2] * pa[11] + pv->T[r] * scale - pb[9 + r];
+					d += o * o;
+				}
+				return std::sqrt(d) / std::max({ std::fabs(double(pa[11])), std::fabs(double(pb[11])), 1.0 });
+			};
+			std::unordered_multimap<uint32_t, int> models;
+			for (size_t o = 0; o < a.slots.size(); o++)
+				if (!a.slots[o].polys.empty()) models.emplace(first(a.slots[o]), int(o));
+			for (size_t k = 0; k < pair.size(); k++) {
+				if (b.slots[k].polys.empty()) continue;
+				const float *pb = b.slots[k].mat;
+				double best_r = pair[k] >= 0 ? predicted(a.slots[pair[k]].mat, pb) : INFINITY;
+				if (best_r <= 0.03) continue;
+				int best = -1;
+				const auto [from, to] = models.equal_range(first(b.slots[k]));
+				for (auto it = from; it != to; ++it) {
+					const double r = predicted(a.slots[it->second].mat, pb);
+					if (r < best_r && r <= 0.03) best_r = r, best = it->second;
+				}
+				if (best >= 0) pair[k] = best;
+			}
+		}
+	}
 	std::vector<pt> P, Q;
 	std::vector<int> K;
 	for (size_t k = 0; k < pair.size(); k++) {
@@ -493,8 +561,16 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		Q.push_back({ pb[9], pb[10], pb[11] });
 		K.push_back(int(k));
 	}
-	if (P.size() < 8) return 0;
+	if (P.empty()) return 0;
+	// (SWA's Death Star surface: models that never move by themselves)
+	std::vector<char> still(P.size());
+	int n_still = 0;
+	for (size_t i = 0; i < P.size(); i++) {
+		const uint32_t f = first(b.slots[K[i]]);
+		n_still += still[i] = m_video->still_model(f);
+	}
 	double R[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }, T[3] = {};
+	std::vector<char> fits(P.size(), 1);
 	std::vector<char> use(P.size(), 1);
 	auto residual = [&](const pt &p, const pt &q) {
 		double o[3];
@@ -503,38 +579,176 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		return std::sqrt(dx * dx + dy * dy + dz * dz) / std::max({ std::fabs(p.z), std::fabs(q.z), 1.0 });
 	};
 	std::vector<double> res(P.size());
-	for (int pass = 0; pass < 3; pass++) {
-		// the best turn for the slots in use: the orthonormal part of their covariance (Newton's
-		// iteration for the polar decomposition), then the shift between the centres
-		double cp[3] = {}, cq[3] = {}, H[3][3] = {};
-		int n = 0;
+	bool planar = false;
+	// the best turn for the slots weighted: the orthonormal part of their covariance (Newton's
+	// iteration for the polar decomposition), then the shift between the centres
+	auto fit = [&](const std::vector<double> &w) {
+		double cp[3] = {}, cq[3] = {}, H[3][3] = {}, n = 0;
+		int used = 0;
 		for (size_t i = 0; i < P.size(); i++)
-			if (use[i]) { cp[0] += P[i].x; cp[1] += P[i].y; cp[2] += P[i].z; cq[0] += Q[i].x; cq[1] += Q[i].y; cq[2] += Q[i].z; n++; }
-		if (n < 4) return 0;
+			if (w[i] > 0) { cp[0] += w[i] * P[i].x; cp[1] += w[i] * P[i].y; cp[2] += w[i] * P[i].z; cq[0] += w[i] * Q[i].x; cq[1] += w[i] * Q[i].y; cq[2] += w[i] * Q[i].z; n += w[i]; used++; }
+		if (used < 4) return false;
 		for (int r = 0; r < 3; r++) cp[r] /= n, cq[r] /= n;
 		for (size_t i = 0; i < P.size(); i++)
-			if (use[i]) {
+			if (w[i] > 0) {
 				const double p[3] = { P[i].x - cp[0], P[i].y - cp[1], P[i].z - cp[2] }, q[3] = { Q[i].x - cq[0], Q[i].y - cq[1], Q[i].z - cq[2] };
-				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) H[r][c] += q[r] * p[c];
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) H[r][c] += w[i] * q[r] * p[c];
 			}
-		double M[3][3];
-		memcpy(M, H, sizeof M);
-		for (int it = 0; it < 30; it++) {
-			const double det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
-			if (std::fabs(det) < 1e-30) return 0;
-			double C[3][3];   // the inverse's transpose: cofactors / det
-			C[0][0] = (M[1][1] * M[2][2] - M[1][2] * M[2][1]) / det; C[0][1] = (M[1][2] * M[2][0] - M[1][0] * M[2][2]) / det; C[0][2] = (M[1][0] * M[2][1] - M[1][1] * M[2][0]) / det;
-			C[1][0] = (M[0][2] * M[2][1] - M[0][1] * M[2][2]) / det; C[1][1] = (M[0][0] * M[2][2] - M[0][2] * M[2][0]) / det; C[1][2] = (M[0][1] * M[2][0] - M[0][0] * M[2][1]) / det;
-			C[2][0] = (M[0][1] * M[1][2] - M[0][2] * M[1][1]) / det; C[2][1] = (M[0][2] * M[1][0] - M[0][0] * M[1][2]) / det; C[2][2] = (M[0][0] * M[1][1] - M[0][1] * M[1][0]) / det;
-			for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) M[r][c] = 0.5 * (M[r][c] + C[r][c]);
+		// (scaled to about 1 first: each step only halves a large singular value, and SWA's places,
+		// tens of thousands of units, left it 13 after 30 steps, a "turn" that matched nothing: every
+		// part off it by many times its depth, each list a cut, its attract unblended)
+		double M[3][3], norm = 0;
+		for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) norm += H[r][c] * H[r][c];
+		if (!(norm > 0)) return false;
+		norm = std::sqrt(norm / 3);
+		for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) M[r][c] = H[r][c] / norm;
+		if (!planar) {
+			double Mn[3][3];
+			memcpy(Mn, M, sizeof Mn);
+			for (int it = 0; it < 60; it++) {
+				const double det = Mn[0][0] * (Mn[1][1] * Mn[2][2] - Mn[1][2] * Mn[2][1]) - Mn[0][1] * (Mn[1][0] * Mn[2][2] - Mn[1][2] * Mn[2][0]) + Mn[0][2] * (Mn[1][0] * Mn[2][1] - Mn[1][1] * Mn[2][0]);
+				if (std::fabs(det) < 1e-30) return false;
+				double C[3][3];   // the inverse's transpose: cofactors / det
+				C[0][0] = (Mn[1][1] * Mn[2][2] - Mn[1][2] * Mn[2][1]) / det; C[0][1] = (Mn[1][2] * Mn[2][0] - Mn[1][0] * Mn[2][2]) / det; C[0][2] = (Mn[1][0] * Mn[2][1] - Mn[1][1] * Mn[2][0]) / det;
+				C[1][0] = (Mn[0][2] * Mn[2][1] - Mn[0][1] * Mn[2][2]) / det; C[1][1] = (Mn[0][0] * Mn[2][2] - Mn[0][2] * Mn[2][0]) / det; C[1][2] = (Mn[0][1] * Mn[2][0] - Mn[0][0] * Mn[2][1]) / det;
+				C[2][0] = (Mn[0][1] * Mn[1][2] - Mn[0][2] * Mn[1][1]) / det; C[2][1] = (Mn[0][2] * Mn[1][0] - Mn[0][0] * Mn[1][2]) / det; C[2][2] = (Mn[0][0] * Mn[1][1] - Mn[0][1] * Mn[1][0]) / det;
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) Mn[r][c] = 0.5 * (Mn[r][c] + C[r][c]);
+			}
+			// (a proper turn: places in a plane, the Death Star's trench, fit its mirror image as
+			// well, and the iteration came out at that: the cells' axes turned inside out by it,
+			// their faces culled, the trench gone, black, for a picture)
+			const double det = Mn[0][0] * (Mn[1][1] * Mn[2][2] - Mn[1][2] * Mn[2][1]) - Mn[0][1] * (Mn[1][0] * Mn[2][2] - Mn[1][2] * Mn[2][0]) + Mn[0][2] * (Mn[1][0] * Mn[2][1] - Mn[1][1] * Mn[2][0]);
+			if (det > 0) {
+				memcpy(R, Mn, sizeof R);
+				for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
+				return true;
+			}
 		}
-		memcpy(R, M, sizeof R);
-		for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
-		std::vector<double> sorted;
-		for (size_t i = 0; i < P.size(); i++) sorted.push_back(res[i] = residual(P[i], Q[i]));
-		std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-		const double med = sorted[sorted.size() / 2];
-		for (size_t i = 0; i < P.size(); i++) use[i] = res[i] <= std::max(3 * med, 0.002);
+		{
+			// (places nearly in a plane, the Death Star's surface: their covariance nearly singular,
+			// the iteration above went off, or came out a mirror. Horn's quaternion, the largest
+			// eigenvector of a 4x4, is the best proper turn however they lie.)
+			const double (&S)[3][3] = M;   // S[b][a]: q's b by p's a
+			double N[4][4] = {
+				{ S[0][0] + S[1][1] + S[2][2], S[2][1] - S[1][2], S[0][2] - S[2][0], S[1][0] - S[0][1] },
+				{ S[2][1] - S[1][2], S[0][0] - S[1][1] - S[2][2], S[1][0] + S[0][1], S[0][2] + S[2][0] },
+				{ S[0][2] - S[2][0], S[1][0] + S[0][1], -S[0][0] + S[1][1] - S[2][2], S[2][1] + S[1][2] },
+				{ S[1][0] - S[0][1], S[0][2] + S[2][0], S[2][1] + S[1][2], -S[0][0] - S[1][1] + S[2][2] } };
+			double V[4][4] = { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 }, { 0, 0, 0, 1 } };
+			for (int sweep = 0; sweep < 30; sweep++)   // (Jacobi's rotations)
+				for (int i = 0; i < 3; i++)
+					for (int j = i + 1; j < 4; j++) {
+						if (std::fabs(N[i][j]) < 1e-15) continue;
+						const double th = (N[j][j] - N[i][i]) / (2 * N[i][j]);
+						const double t = (th >= 0 ? 1 : -1) / (std::fabs(th) + std::sqrt(th * th + 1));
+						const double c = 1 / std::sqrt(t * t + 1), sn = t * c;
+						for (int k = 0; k < 4; k++) {
+							const double a = N[k][i], b = N[k][j];
+							N[k][i] = c * a - sn * b, N[k][j] = sn * a + c * b;
+						}
+						for (int k = 0; k < 4; k++) {
+							const double a = N[i][k], b = N[j][k];
+							N[i][k] = c * a - sn * b, N[j][k] = sn * a + c * b;
+						}
+						for (int k = 0; k < 4; k++) {
+							const double a = V[k][i], b = V[k][j];
+							V[k][i] = c * a - sn * b, V[k][j] = sn * a + c * b;
+						}
+					}
+			int e = 0;
+			for (int i = 1; i < 4; i++) if (N[i][i] > N[e][e]) e = i;
+			const double w = V[0][e], x = V[1][e], y = V[2][e], z = V[3][e];
+			const double R_[3][3] = {
+				{ 1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y) },
+				{ 2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x) },
+				{ 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) } };
+			memcpy(R, R_, sizeof R);
+			for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
+			return true;
+		}
+	};
+	// (SWA: started from the slots the camera's last move carries on. The surface's cells lie
+	// nearly in a plane, and a few still paired with another copy of their model, a cell or two
+	// along, steered the first fit off the rest: none came within 2% of it, the pair's cells each
+	// unblended, drawn where the newer list has them beside cells blended a quarter of the way,
+	// dark slabs across the surface for a picture.)
+	auto robust = [&] {
+		use = fits;
+		if (pv) {
+			memcpy(R, pv->R, sizeof R);
+			for (int r = 0; r < 3; r++) T[r] = pv->T[r] * pv_scale;
+			std::vector<char> carried(P.size());
+			size_t n = 0;
+			for (size_t i = 0; i < P.size(); i++) n += carried[i] = fits[i] && residual(P[i], Q[i]) <= 0.03;
+			if (n >= 8) use = carried;
+		}
+		for (int pass = 0; pass < 3; pass++) {
+			if (!fit(std::vector<double>(use.begin(), use.end()))) return false;
+			std::vector<double> sorted;
+			for (size_t i = 0; i < P.size(); i++) {
+				res[i] = residual(P[i], Q[i]);
+				if (fits[i]) sorted.push_back(res[i]);
+			}
+			std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+			const double med = sorted[sorted.size() / 2];
+			for (size_t i = 0; i < P.size(); i++) use[i] = fits[i] && res[i] <= std::max(3 * med, 0.002);
+		}
+		return true;
+	};
+	auto still_on = [&] { int n = 0; for (size_t i = 0; i < P.size(); i++) n += still[i] && res[i] <= 0.02; return n; };
+	// A few stationary parts at one origin (SWA's globe) cannot fit a camera from their places.
+	// Their axes do determine it; fitting the moving ships instead invented cuts on the approach.
+	auto stationary_axes = [&] {
+		if (m_video->camera_anchors.empty()) return false;
+		std::vector<char> anchors(P.size());
+		for (size_t i = 0; i < P.size(); i++) {
+			const uint32_t f = first(b.slots[K[i]]);
+			anchors[i] = std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), first(a.slots[pair[K[i]]])) != m_video->camera_anchors.end() &&
+				std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), f) != m_video->camera_anchors.end();
+		}
+		const auto found = std::find(anchors.begin(), anchors.end(), 1);
+		if (found == anchors.end()) return false;
+		const size_t at = size_t(found - anchors.begin());
+		const float *ma = a.slots[pair[K[at]]].mat, *mb = b.slots[K[at]].mat;
+		const glm::dmat3 ra(glm::make_mat3(ma)), rb(glm::make_mat3(mb));
+		if (std::fabs(glm::determinant(ra)) < 1e-12) return false;
+		const glm::dmat3 turn = rb * glm::inverse(ra);
+		const glm::dmat3 check = glm::transpose(turn) * turn;
+		if (std::fabs(glm::determinant(turn) - 1) > 0.001) return false;
+		for (int c = 0; c < 3; c++)
+			for (int r = 0; r < 3; r++)
+				if (std::fabs(check[c][r] - (c == r ? 1.0 : 0.0)) > 0.001) return false;
+		for (size_t i = 0; i < P.size(); i++)
+			if (anchors[i] && (glm::length(glm::dvec3(P[i].x - P[at].x, P[i].y - P[at].y, P[i].z - P[at].z)) > 1 ||
+				glm::length(glm::dvec3(Q[i].x - Q[at].x, Q[i].y - Q[at].y, Q[i].z - Q[at].z)) > 1)) return false;
+		const glm::dvec3 shift = glm::dvec3(Q[at].x, Q[at].y, Q[at].z) - turn * glm::dvec3(P[at].x, P[at].y, P[at].z);
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++) R[r][c] = turn[c][r];
+			T[r] = shift[r];
+		}
+		for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
+		use = anchors;
+		return true;
+	};
+	const bool anchored = stationary_axes();
+	if (!anchored && (P.size() < 8 || !robust())) return 0;
+	if (n_still < 8 && !anchored) n_still = 0;
+	// (SWA: fitted again to the Death Star's surface alone when most of it came off the fit. The
+	// cockpit's frame, the ships and the far scenery, half the list, are off the camera's move; as
+	// the camera crossed into the next cell, the surface's list in another order and a few cells
+	// paired with the wrong copy, the fit came off the surface, or under half the slots on it: the
+	// move was dropped, dozens of cells drawn unblended, the surface shaking through the cockpit's
+	// run. Alone it isn't always better: in the trench, its cells' z crossing 0 beside the camera,
+	// the few there steer it. The fit that carries more of the surface is kept.)
+	if (!anchored && n_still >= 8 && still_on() * 2 <= n_still) {
+		double R0[3][3], T0[3];
+		memcpy(R0, R, sizeof R), memcpy(T0, T, sizeof T);
+		const std::vector<double> res0 = res;
+		const std::vector<char> use0 = use;
+		const int on0 = still_on();
+		fits = still, planar = true;
+		if (!robust() || still_on() <= on0) memcpy(R, R0, sizeof R), memcpy(T, T0, sizeof T), res = res0, use = use0;
+		fits.assign(P.size(), 1), planar = false;
 	}
 	// A cut the parts' moves miss: the camera's own move in a frame, a turn of over 15 degrees or a
 	// shift of over 8.5% of the scenery's depth (a game's fastest swing, a knockdown's, turns it 11
@@ -555,7 +769,8 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		for (size_t i = 0; i < P.size(); i++)
 			if (use[i]) {
 				mv += std::sqrt((Q[i].x - P[i].x) * (Q[i].x - P[i].x) + (Q[i].y - P[i].y) * (Q[i].y - P[i].y) + (Q[i].z - P[i].z) * (Q[i].z - P[i].z));
-				dp += std::max(std::fabs(P[i].z), 1.0);
+				dp += anchored ? std::max(std::sqrt(P[i].x * P[i].x + P[i].y * P[i].y + P[i].z * P[i].z), 1.0)
+					: std::max(std::fabs(P[i].z), 1.0);
 				d[0] += Q[i].x - P[i].x; d[1] += Q[i].y - P[i].y; d[2] += Q[i].z - P[i].z; n++;
 			}
 		const double turn = std::acos(tr) * 180 / M_PI;
@@ -606,8 +821,208 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		m_camera_cut = (turn > 15 && turned_all) || ratio > 0.25 || (ratio > 0.085 && !swing && !moving && turned_all);
 		m_camera_sure = known && !m_camera_cut;
 		for (size_t i = 0; i < P.size(); i++) m_cam_res[K[i]] = float(res[i]);
+		// (a fit most of the paired slots follow carries on to the next pair's)
+		int inliers = 0;
+		for (size_t i = 0; i < P.size(); i++) inliers += res[i] <= 0.02;
+		slot->fit = !m_camera_cut && (inliers * 2 > int(P.size()) || (n_still && still_on() * 2 > n_still));
+		memcpy(slot->R, R, sizeof R);
+		memcpy(slot->T, T, sizeof T);
 	}
 	int repaired = 0;
+	// (SWA: the Death Star's surface is a list of cells round the camera, in an order that changes
+	// as the camera crosses into the next cell: the pairing in order left dozens of them unpaired or
+	// paired with another cell, each drawn where the newer list has it while the cells beside it
+	// were blended, seams and slabs across the trench in the pictures between. Each such slot is
+	// paired with the slot of its model the camera's move carries onto it; one none does (a cell
+	// come into the list) is moved with the camera, as scenery: pair -3, m_cam_older.)
+	if (m_video->separate_parts && m_camera_sure) {
+		// (fitted again by the scenery on it, each by its error over its depth: the far scenery,
+		// tens of thousands of units out, steered the fit, and the cells beside the camera came
+		// off it by 1-2%, drawn from places a crack apart from their neighbours')
+		// (Only a fit that keeps them: in the trench the places' z isn't their depth, crossing 0
+		// beside the camera, and the few slots there steered it off every other, none left on it.
+		// A fit most slots are off isn't the camera's move: the trench's walls, cells of a few
+		// models repeating, fit a move one cell along, and moved by it the walls were blended across
+		// a cell and more, a wall missing or a grey slab across the screen.)
+		auto on_it = [&] { int n = 0; for (double r : res) n += r <= 0.02; return n; };
+		const int kept = on_it();
+		std::vector<double> w(P.size());
+		for (size_t i = 0; i < P.size(); i++) {
+			const double depth = std::max({ std::fabs(P[i].z), std::fabs(Q[i].z), 200.0 });
+			w[i] = res[i] <= 0.02 ? 1 / (depth * depth) : 0;
+		}
+		const std::vector<double> first_res = res;
+		double first_R[3][3], first_T[3];
+		memcpy(first_R, R, sizeof R), memcpy(first_T, T, sizeof T);
+		if (!anchored && fit(w)) {
+			for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
+			if (on_it() < kept) res = first_res, memcpy(R, first_R, sizeof R), memcpy(T, first_T, sizeof T);
+		}
+		for (size_t i = 0; i < P.size(); i++) m_cam_res[K[i]] = float(res[i]);
+		if (on_it() * 2 <= int(P.size()) && !(n_still && still_on() * 2 > n_still)) {
+			for (cam_move &c : m_cam_move)
+				if (c.from == a.frame && c.to == b.frame) c.res = m_cam_res;
+			return 0;
+		}
+		std::unordered_set<uint32_t> scenery;   // (models with a copy the camera's move carries)
+		for (size_t k = 0; k < b.slots.size(); k++)
+			if (!b.slots[k].polys.empty() && pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.01f) scenery.insert(first(b.slots[k]));
+		// the older matrix the camera's move takes onto the newer one: turn^T (newer - shift)
+		if (m_cam_older.size() < b.slots.size()) m_cam_older.resize(b.slots.size());
+		auto by_camera = [&](size_t k) {
+			const float *pb = b.slots[k].mat;
+			auto &pa = m_cam_older[k];
+			for (int c = 0; c < 4; c++) {
+				double v[3];
+				for (int r = 0; r < 3; r++) v[r] = pb[3 * c + r] - (c == 3 ? T[r] : 0);
+				for (int r = 0; r < 3; r++) pa[3 * c + r] = float(R[0][r] * v[0] + R[1][r] * v[1] + R[2][r] * v[2]);
+			}
+		};
+		// (each older slot's error off the camera's move the pair before, as it ended)
+		const std::vector<float> *before = nullptr;
+		for (const cam_move &c : m_cam_move)
+			if (c.to == a.frame && c.res.size() == a.slots.size()) before = &c.res;
+		// (an older slot off the camera's move the pair before, or not known to be on it)
+		auto moving = [&](size_t o) { return !before || o >= before->size() || (*before)[o] < 0 || (*before)[o] > 0.05f; };
+		std::vector<char> claimed;      // (older slots paired, made when a ship's copy is looked for)
+		std::vector<size_t> ship;       // (ships moved with the camera all the same: none of their model near)
+		for (size_t k = 0; k < b.slots.size(); k++) {
+			if (b.slots[k].polys.empty()) continue;
+			const uint32_t f = first(b.slots[k]);
+			// With an exact stationary reference, a paired ship keeps its own motion, however
+			// close it is to the camera's. The launch X-wing otherwise slid back each list.
+			if (anchored && pair[k] >= 0 && !m_video->still_model(f) && first(a.slots[pair[k]]) == f) {
+				m_cam_res[k] = -1;
+				m_ship[k] = 1;
+				continue;
+			}
+			if (pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.02f) { by_camera(k); continue; }
+			const float *pb = b.slots[k].mat;
+			const pt q{ pb[9], pb[10], pb[11] };
+			int best = -1;
+			double bres = pair[k] >= 0 ? std::min(m_cam_res[k] * 0.25, 0.01) : 0.01;
+			for (size_t o = 0; o < a.slots.size(); o++)
+				if (first(a.slots[o]) == f && int(o) != pair[k]) {
+					const float *pa = a.slots[o].mat;
+					const double r = residual({ pa[9], pa[10], pa[11] }, q);
+					if (r < bres) bres = r, best = int(o);
+				}
+			if (best >= 0) {
+				pair[k] = best, m_cam_res[k] = float(bres), repaired++;
+				if (!claimed.empty()) claimed[best] = 1;
+				by_camera(k);
+				continue;
+			}
+			// (a model that never moves by itself, the Death Star's surface, with no copy the camera's
+			// move carries onto it: a cell come into the list, or the next one along at a finer model.
+			// Paired as a ship with a copy of its model gone from the list, a cell or more away (cells
+			// of a model repeat, 2048 and 4096 apart), it was blended across from there, the trench's
+			// rim and the surface changing shape for a picture, all through the run. Moved with the
+			// camera, every cell is moved by the one move and none parts from its neighbours.)
+			if (m_video->still_model(f)) {
+				by_camera(k);
+				pair[k] = -3, m_cam_res[k] = 0, repaired++;
+				continue;
+			}
+			// (its own model, blending: a ship, moving by itself. One that jumps, moving over 60% of
+			// its depth, is another copy of the model, a cell that left the list, or a shot drawn at
+			// the newer place anyway: moved with the camera, it lands on that place all the same. So
+			// is one off the camera's move whose model has copies on it: the cells' models repeat. And
+			// one whose older copy the camera's move carried the pair before: scenery doesn't set
+			// off. That was another cell of its model a cell along, the newer one a finer model in
+			// the older one's place, the cells nearing the camera (5 polygons to 77-1269) as it
+			// crossed into the next: blended over from there, a slab swept across the surface.)
+			const float was = before && pair[k] >= 0 ? (*before)[pair[k]] : -1;
+			const bool set_off = was >= 0 && was <= 0.02f && m_cam_res[k] > 0.05f;
+			if (pair[k] >= 0 && first(a.slots[pair[k]]) == f && !(m_cam_res[k] > 0.05f && scenery.count(f)) && !set_off) {
+				const float *pa = a.slots[pair[k]].mat;
+				const double dx = pb[9] - pa[9], dy = pb[10] - pa[10], dz = pb[11] - pa[11];
+				const double depth = eye_distance(pa, pb);
+				if (dx * dx + dy * dy + dz * dz <= 0.36 * depth * depth) continue;
+			}
+			// (a model with no copy on the camera's move is a ship, moving by itself: a TIE fighter
+			// whose parts came in another order, the X-wing ahead. Moved with the camera, as scenery,
+			// it was drawn from where the camera's move put it, a TIE closing on the camera from
+			// nearer still, each list's pictures sliding back and then jumping on, copies left
+			// behind. Paired with the nearest copy of its model, it blends from its own older place:
+			// up to its depth away, a TIE passing the camera moving 70% of its depth in a list. A
+			// model with copies on the camera's move pairs only with a copy that was off it the pair
+			// before, moving by itself too: the TIEs flying alongside the camera are on its move.)
+			const bool on_move = scenery.count(f) > 0;
+			if (!on_move || before) {
+				if (claimed.empty()) {
+					claimed.assign(a.slots.size(), 0);
+					for (size_t j = 0; j < b.slots.size(); j++)
+						if (pair[j] >= 0 && size_t(pair[j]) < claimed.size() && j != k) claimed[pair[j]] = 1;
+				}
+				int near = -1;
+				double nd = 0;
+				for (size_t o = 0; o < a.slots.size(); o++) {
+					if ((claimed[o] && int(o) != pair[k]) || first(a.slots[o]) != f) continue;
+					if (on_move && !(o < before->size() && (*before)[o] > 0.05f)) continue;
+					const float *pa = a.slots[o].mat;
+					// (nor one the camera's move carried the pair before that's far off it now: scenery
+					// doesn't set off. A surface cell a cell along, 30% of its depth off, was paired as a
+					// ship and swept across the dark polygon under the surface, a slab for a picture.)
+					if (!moving(o) && residual({ pa[9], pa[10], pa[11] }, q) > 0.2) continue;
+					const double dx = pb[9] - pa[9], dy = pb[10] - pa[10], dz = pb[11] - pa[11];
+					const double depth = eye_distance(pa, pb);
+					const double d = dx * dx + dy * dy + dz * dz;
+					if (d > (moving(o) ? 0.64 : 0.36) * depth * depth || (near >= 0 && d >= nd)) continue;
+					near = int(o), nd = d;
+				}
+				// (or its own older slot, another model of a ship: the X-wing's models take turns)
+				if (near < 0 && !on_move && pair[k] >= 0 && moving(pair[k]) && !scenery.count(first(a.slots[pair[k]]))) {
+					const float *pa = a.slots[pair[k]].mat;
+					const double dx = pb[9] - pa[9], dy = pb[10] - pa[10], dz = pb[11] - pa[11];
+					const double depth = eye_distance(pa, pb);
+					if (dx * dx + dy * dy + dz * dz <= 0.64 * depth * depth) near = pair[k];
+				}
+				if (near >= 0) {
+					if (near != pair[k]) repaired++;
+					pair[k] = near, claimed[near] = 1, m_ship[k] = 1;
+					m_cam_res[k] = std::max(m_cam_res[k], 0.05f);   // (not one the camera's move carries)
+					continue;
+				}
+				if (!on_move) ship.push_back(k);
+			}
+			by_camera(k);
+			pair[k] = -3, m_cam_res[k] = 0, repaired++;
+		}
+		// (a ship's part with no older copy, a TIE's wings as it nears and its model gets finer, moves
+		// with the nearest of the ship's parts paired, one model each, that moved by itself the pair
+		// before too, at about its depth and within a fighter's span (400). Moved with the camera,
+		// the wings closed on it from nearer still, filling the screen. Surface cells have many
+		// models, or none moving near them: a far shot's neighbours, dragged along, tore the surface.)
+		for (size_t k : ship) {
+			const float *pk = b.slots[k].mat;
+			if (b.slots[k].polys.size() != 1 || !before) continue;
+			int near = -1;
+			double nd = 0;
+			for (size_t j = 0; j < b.slots.size(); j++) {
+				if (pair[j] < 0 || b.slots[j].polys.size() != 1 || !(m_cam_res[j] > 0.05f) || scenery.count(first(b.slots[j]))) continue;
+				if (size_t(pair[j]) >= before->size() || !((*before)[pair[j]] > 0.05f)) continue;
+				const float *pj = b.slots[j].mat;
+				const double z = std::min(std::fabs(pk[11]), std::fabs(pj[11]));
+				const double dx = pk[9] - pj[9], dy = pk[10] - pj[10], dz = pk[11] - pj[11];
+				const double d = dx * dx + dy * dy + dz * dz;
+				if (std::fabs(dz) <= 0.5 * z && d <= std::min(2.25 * z * z, 400.0 * 400.0) && (near < 0 || d < nd)) near = int(j), nd = d;
+			}
+			if (near < 0) continue;
+			// (its shift only: the part leading may be another model, turned and sized its own way)
+			const float *A = a.slots[pair[near]].mat, *B = b.slots[near].mat;
+			auto &pa = m_cam_older[k];
+			for (int r = 0; r < 12; r++) pa[r] = pk[r] + (r >= 9 ? A[r] - B[r] : 0);
+			m_ship[k] = 1;
+		}
+		std::vector<float> ended = m_cam_res;
+		// (a ship moved with the camera wasn't on its move: the next pair's slot isn't set off from it)
+		for (size_t k : ship) ended[k] = -1;
+		for (cam_move &c : m_cam_move)
+			if (c.from == a.frame && c.to == b.frame) c.res = ended;
+		m_cam_carried = true;
+		return repaired;
+	}
 	for (size_t i = 0; i < P.size(); i++) {
 		const int k = K[i];
 		// (only in a run of copies that changed length: VF1's fighters have parts in threes and
@@ -685,6 +1100,106 @@ static void turn_blend(const float *pa, const float *pb, double alpha, float *ou
 	for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++) out[3 * c + r] = m[c][r];
 }
 
+// A rigid part's move from one list to the next taken as one motion, a turn about a line and a
+// slide along it, and that motion's fraction (or, past 1, more of it) applied to the older place.
+// Lerped, a big model turning by the camera (the Tantive IV's hull, its origin thousands of units
+// from the part on screen) swung its near side across the view; carried on with the newer turn
+// kept, by hundreds of units off it. False when the part isn't rigid (its stretch changed).
+static bool rigid_blend(const float *pa, const float *pb, double alpha, float *out)
+{
+	const glm::mat3 ma(pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], pa[6], pa[7], pa[8]);
+	const glm::mat3 mb(pb[0], pb[1], pb[2], pb[3], pb[4], pb[5], pb[6], pb[7], pb[8]);
+	const glm::mat3 ra = polar_turn(ma), rb = polar_turn(mb);
+	const float da = glm::determinant(ra), db = glm::determinant(rb);
+	if (std::fabs(std::fabs(da) - 1) > 0.01f || std::fabs(std::fabs(db) - 1) > 0.01f || da * db <= 0) return false;
+	const glm::mat3 sa = glm::transpose(ra) * ma, sb = glm::transpose(rb) * mb;
+	for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++)
+		if (std::fabs(sa[c][r] - sb[c][r]) > 0.01f * (1 + std::fabs(sa[c][r]))) return false;
+	const glm::dmat3 rd = glm::dmat3(rb) * glm::transpose(glm::dmat3(ra));
+	const glm::dvec3 ta(pa[9], pa[10], pa[11]), tb(pb[9], pb[10], pb[11]);
+	const glm::dvec3 td = tb - rd * ta;
+	glm::dquat q = glm::normalize(glm::quat_cast(rd));
+	if (q.w < 0) q = -q;
+	const double half = std::acos(std::clamp(q.w, -1.0, 1.0));
+	glm::dmat3 rs(1.0);
+	glm::dvec3 t;
+	if (half < 1e-5) t = ta + alpha * td;
+	else {
+		const glm::dvec3 u = glm::normalize(glm::dvec3(q.x, q.y, q.z));
+		const glm::dvec3 par = glm::dot(u, td) * u, perp = td - par;
+		const glm::dvec3 c = 0.5 * (perp + glm::cross(u, perp) / std::tan(half));   // a point on the turn's line
+		rs = glm::mat3_cast(glm::angleAxis(2 * half * alpha, u));
+		t = rs * (ta - c) + c + alpha * par;
+	}
+	const glm::dmat3 m = rs * glm::dmat3(ma);
+	for (int c = 0; c < 3; c++) for (int r = 0; r < 3; r++) out[3 * c + r] = float(m[c][r]);
+	for (int r = 0; r < 3; r++) out[9 + r] = float(t[r]);
+	return true;
+}
+
+// Keyed extras (renderer-only copies, their transforms relative to their slot's matrix) of each
+// blended slot, paired with the nearest of the same key in the older list's slot. SWA's Full
+// copies hang on the stars' matrix, the camera's turn alone: blending only that, the copies moved
+// with the camera's turn but not its flight, a step each game frame. A copy that moved over 60% of
+// its distance (the game moving its object a period on, a different copy) isn't paired.
+void model1::pair_extras(const logic_frame &a, const logic_frame &b, const std::vector<int> &pair)
+{
+	std::unordered_multimap<uint64_t, int> older;
+	std::unordered_multimap<uint32_t, int> same_model;
+	for (size_t i = 0; i < b.slots.size(); i++) {
+		if (!m_blend_ok[i] || pair[i] < 0) continue;
+		const auto &to = b.slots[i].extra, &from = a.slots[pair[i]].extra;
+		if (to.empty() || from.empty()) continue;
+		older.clear();
+		same_model.clear();
+		for (size_t k = 0; k < from.size(); k++)
+			if (from[k].key && from[k].transform) older.emplace(from[k].key, int(k)), same_model.emplace(from[k].polygon, int(k));
+		if (older.empty()) continue;
+		auto &pairs = m_extra_pair[i];
+		pairs.assign(to.size(), -1);
+		for (size_t k = 0; k < to.size(); k++) {
+			if (!to[k].key || !to[k].transform) continue;
+			const auto &tb = *to[k].transform;
+			const glm::vec3 vb(tb[9], tb[10], tb[11]);
+			float best = INFINITY;
+			const auto [first, last] = older.equal_range(to[k].key);
+			for (auto it = first; it != last; ++it) {
+				const auto &ta = *from[it->second].transform;
+				const glm::vec3 va(ta[9], ta[10], ta[11]);
+				const float d = glm::length(vb - va);
+				if (d < best && d <= 0.6f * std::max({ glm::length(va), glm::length(vb), 1.0f })) best = d, pairs[k] = it->second;
+			}
+			// (A copy of the same model far nearer than its key's: the game gave the copies other
+			// sources (the attract's destroyer manager reordered), and the key's pair, a period away,
+			// swept a star cruiser across the screen. The near one is the same copy, or so close
+			// that blending to it moves nothing.)
+			if (pairs[k] >= 0) {
+				const auto [mf, ml] = same_model.equal_range(to[k].polygon);
+				for (auto it = mf; it != ml; ++it) {
+					const auto &ta = *from[it->second].transform;
+					const float d = glm::length(vb - glm::vec3(ta[9], ta[10], ta[11]));
+					if (d * 4 < best) best = d * 4, pairs[k] = it->second;
+				}
+			}
+		}
+		m_extra_from[i] = &from;
+	}
+}
+
+// The extra `n` of the slot being drawn: its transform `local` (the newer list's), blended with
+// its pair's in the older list as its slot's matrix is.
+void model1::smooth_extra(size_t n, const std::array<float, 12> &local, float *out) const
+{
+	std::copy(local.begin(), local.end(), out);
+	if (!m_replaying || (m_replay_older && !m_replay_extra) || m_replay_slot < 0 || m_replay_slot >= int(m_blend_ok.size()) ||
+		!m_blend_ok[m_replay_slot] || size_t(m_replay_slot) >= m_extra_pair.size() || !m_extra_from[m_replay_slot]) return;
+	const auto &pairs = m_extra_pair[m_replay_slot];
+	if (n >= pairs.size() || pairs[n] < 0) return;
+	const auto &from = *(*m_extra_from[m_replay_slot])[pairs[n]].transform;
+	for (int k = 0; k < 12; k++) out[k] = float(from[k] + (local[k] - from[k]) * m_extra_alpha);
+	if (swung(from.data(), local.data())) turn_blend(from.data(), local.data(), m_extra_alpha, out);
+}
+
 void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alpha)
 {
 	m_blend.assign(b.slots.size(), {});
@@ -692,6 +1207,9 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	m_blend_from.assign(b.slots.size(), {});
 	m_blend_to.assign(b.slots.size(), {});
 	m_blend_light.assign(b.slots.size(), {});
+	m_extra_pair.assign(b.slots.size(), {});
+	m_extra_from.assign(b.slots.size(), nullptr);
+	m_extra_alpha = alpha;
 	m_blend_cut = false;
 	if (alpha >= 1 && !m_replay_older) return;
 	if (a.slots.empty()) return;
@@ -721,6 +1239,39 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 				while (i + ra < na && first(a.slots[i + ra]) == f) ra++;
 				while (j + rb < nb && first(b.slots[j + rb]) == f) rb++;
 			}
+			// (SWA's copies are ships, listed in no steady order: a fighter flying past the camera
+			// was paired with one behind it, and every copy's swap taken for a cut. They pair the way
+			// that moves them least in all (nearest first swapped two fighters crossing at speed);
+			// the rest are new or gone.)
+			if (m_video->separate_parts && f && (ra > 1 || rb > 1)) {
+				const size_t n = std::min(ra, rb), m = std::max(ra, rb);
+				auto cost = [&](size_t ks, size_t kl) { return std::sqrt(ra <= rb ? dist(i + ks, j + kl) : dist(i + kl, j + ks)); };
+				std::vector<int> best(n, -1), cur(n, -1);
+				std::vector<char> used(m, 0);
+				if (m <= 8) {
+					double best_c = -1;
+					std::function<void(size_t, double)> search = [&](size_t k, double c) {
+						if (best_c >= 0 && c >= best_c) return;
+						if (k == n) { best_c = c; best = cur; return; }
+						for (size_t l = 0; l < m; l++)
+							if (!used[l]) { used[l] = 1; cur[k] = int(l); search(k + 1, c + cost(k, l)); used[l] = 0; }
+					};
+					search(0, 0);
+				} else {
+					struct cand { double d; size_t ks, kl; };
+					std::vector<cand> c;
+					for (size_t ks = 0; ks < n; ks++) for (size_t kl = 0; kl < m; kl++) c.push_back({ cost(ks, kl), ks, kl });
+					std::sort(c.begin(), c.end(), [](const cand &x, const cand &y) { return x.d < y.d; });
+					for (const cand &x : c)
+						if (best[x.ks] < 0 && !used[x.kl]) { used[x.kl] = 1; best[x.ks] = int(x.kl); }
+				}
+				for (size_t k = 0; k < n; k++) {
+					if (ra <= rb) pair[j + best[k]] = int(i + k);
+					else pair[j + k] = int(i + best[k]);
+				}
+				i += ra; j += rb;
+				continue;
+			}
 			if (ra == rb) { for (size_t k = 0; k < ra; k++) pair[j + k] = int(i + k); i += ra; j += rb; continue; }
 			for (size_t k = 0; k < rb; k++) changed_run[j + k] = 1;
 			const size_t n = std::min(ra, rb), slack = std::max(ra, rb) - n;
@@ -749,37 +1300,79 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	}
 	m_camera_cut = false;
 	m_camera_sure = false;
+	m_cam_carried = false;
 	m_cam_res.assign(nb, -1);
+	m_ship.assign(nb, 0);
 	repaired += repair_by_camera(a, b, pair, changed_run);
+	// A slot carrying keyed copies (SWA's Full fleet and asteroids on the stars' matrix): paired
+	// with the older list's carrier of its model. Repaired by the camera's move (its matrix no
+	// scenery), its copies went unpaired, drawn where the newer list had them: a step each list.
+	const auto carries = [](const slot &s) {
+		for (const auto &e : s.extra) if (e.key && e.transform) return true;
+		return false;
+	};
+	for (size_t i = 0; i < b.slots.size(); i++) {
+		if ((pair[i] >= 0 && !a.slots[pair[i]].extra.empty()) || b.slots[i].polys.empty() || !carries(b.slots[i])) continue;
+		int best = -1;
+		for (size_t k = 0; k < a.slots.size(); k++)
+			if (!a.slots[k].polys.empty() && first(a.slots[k]) == first(b.slots[i]) && carries(a.slots[k]) &&
+				(best < 0 || a.slots[k].extra.size() > a.slots[best].extra.size())) best = int(k);
+		if (best >= 0) pair[i] = best, m_cam_res[i] = -1;
+	}
 	static const bool logp = getenv("M1_LOG_SMOOTH") != nullptr;
 	if (logp && repaired && !m_redrawing) fprintf(stderr, "P frame %d repaired %d\n", b.frame, repaired);
 	int jumps = 0, paired = 0, missing = 0;
 	std::vector<char> jumped(b.slots.size(), 0);
 	for (size_t i = 0; i < b.slots.size(); i++) {
 		if (pair[i] == -2) continue;                       // (scenery that came into the list: at the newer place)
-		if (pair[i] < 0 && !b.slots[i].polys.empty()) missing++;
-		if (pair[i] < 0 || b.slots[i].polys.empty()) continue;
-		const float *pa = a.slots[pair[i]].mat, *pb = b.slots[i].mat;
+		if (pair[i] == -1 && !b.slots[i].polys.empty()) missing++;
+		if (pair[i] == -1 || b.slots[i].polys.empty()) continue;
+		// (scenery the camera's move carries: SWA's surface cells beside the camera, flying low,
+		// move several times their depth in a list and blend right as the camera's move does. Each
+		// from the older place the fitted move gives: from their own, a hair off it, each cell
+		// turned on its own line, cracks opening between them in the pictures between.)
+		const bool follows = m_cam_carried && m_cam_res[i] >= 0 && m_cam_res[i] <= 0.02f;
+		const float *pa = follows || pair[i] == -3 ? m_cam_older[i].data() : a.slots[pair[i]].mat, *pb = b.slots[i].mat;
 		const float dx = pb[9] - pa[9], dy = pb[10] - pa[10], dz = pb[11] - pa[11];
-		const float depth = std::max({ std::fabs(pa[11]), std::fabs(pb[11]), 1.0f });
+		const float depth = m_video->separate_parts ? eye_distance(pa, pb) : std::max({ std::fabs(pa[11]), std::fabs(pb[11]), 1.0f });
 		paired++;
 		// a part that moved far, or turned sharply (a cut can keep the parts' places and swing the
 		// camera round them: blending two far-apart turns squashes and stretches the shapes)
 		bool turned = false;
+		float axes_a = 0, axes_b = 0;
+		if (m_video->separate_parts)
+			for (int r = 0; r < 9; r++) axes_a += pa[r] * pa[r], axes_b += pb[r] * pb[r];
 		for (int r = 0; r < 9 && !turned; r += 3) {
 			const float la = pa[r] * pa[r] + pa[r + 1] * pa[r + 1] + pa[r + 2] * pa[r + 2];
 			const float lb = pb[r] * pb[r] + pb[r + 1] * pb[r + 1] + pb[r + 2] * pb[r + 2];
 			const float dot = pa[r] * pb[r] + pa[r + 1] * pb[r + 1] + pa[r + 2] * pb[r + 2];
+			// A folding part's axis scaling through zero has no direction to compare.
+			if (m_video->separate_parts && (la < 1e-6f * axes_a || lb < 1e-6f * axes_b)) continue;
 			if (la > 0 && lb > 0 && dot < 0.77f * std::sqrt(la * lb)) turned = true;     // over ~40 degrees
 		}
-		if (dx * dx + dy * dy + dz * dz > 0.09f * depth * depth || turned) jumps++, jumped[i] = 1;    // fast, or a cut
+		// (SWA's shots and passing fighters move 30-50% of their depth in a list as they near the
+		// camera, a TIE overtaking it close 70%: a jump there is 80%, or a turn. Blended, a shot
+		// passing the camera came through the lens, a fighter's wrong pair swept across the screen:
+		// drawn where the newer list has it. At 60% the overtaking TIE stood still a list, then leapt.)
+		// (A carrier's own place isn't where its copies are: the stars' matrix passing the camera's
+		// plane, its depth near 0, moved over 36% of it each list and the whole fleet stood still,
+		// then leapt. Each copy is paired within 60% of its own distance.)
+		const float far = m_video->separate_parts ? (i < m_ship.size() && m_ship[i] ? 0.64f : 0.36f) : 0.09f;
+		const bool moved = !carries(b.slots[i]) && dx * dx + dy * dy + dz * dz > far * depth * depth;
+		if ((moved || turned) && !follows) {    // fast, or a cut
+			jumps++, jumped[i] = 1;
+			if (m_video->separate_parts) continue;
+		}
 		for (int k = 0; k < 12; k++) m_blend[i][k] = float(pa[k] + (pb[k] - pa[k]) * alpha);
 		static const bool no_turn = getenv("M1_NO_TURN_BLEND") != nullptr;   // TESTONLY
-		if (!no_turn && swung(pa, pb)) turn_blend(pa, pb, alpha, m_blend[i].data());
+		if (!(m_video->separate_parts && rigid_blend(pa, pb, alpha, m_blend[i].data())) && !no_turn && swung(pa, pb))
+			turn_blend(pa, pb, alpha, m_blend[i].data());
 		memcpy(m_blend_from[i].data(), pa, 12 * sizeof(float));
 		memcpy(m_blend_to[i].data(), pb, 12 * sizeof(float));
-		const slot &sa = a.slots[pair[i]];
-		m_blend_light[i] = { sa.light[0], sa.light[1], sa.light[2], sa.has_light ? 1.0f : 0.0f };
+		if (pair[i] >= 0) {
+			const slot &sa = a.slots[pair[i]];
+			m_blend_light[i] = { sa.light[0], sa.light[1], sa.light[2], sa.has_light ? 1.0f : 0.0f };
+		}
 		m_blend_ok[i] = 1;
 	}
 	// A camera cut moves nearly every part at once (fast moves only a few): then, or when many
@@ -795,8 +1388,20 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	if (m_camera_sure) {
 		cut_jumps = 0;
 		for (size_t i = 0; i < b.slots.size(); i++) cut_jumps += m_blend_ok[i] && m_cam_res[i] > 0.3f;
+		// Moving ships can outnumber the globe and disagree with its camera. Stationary geometry
+		// following the known move cannot vote for a cut just because the ships do.
+		int stationary = 0, following = 0;
+		for (size_t i = 0; i < b.slots.size(); i++)
+			if (std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), first(b.slots[i])) != m_video->camera_anchors.end()) {
+				stationary++;
+				following += m_cam_res[i] >= 0 && m_cam_res[i] <= 0.02f;
+			}
+		if (stationary && following == stationary) cut_jumps = 0;
 	}
-	m_blend_cut = cut_jumps * 2 > paired || missing * 8 > paired || m_camera_cut;
+	// (SWA's scenes have 3-9 parts: one shot fired was a cut, and two fighters and a shot passing
+	// the camera, 3 of 5 parts. Its new and fast parts are drawn where they are; a cut moves nearly all.)
+	m_blend_cut = (m_video->separate_parts ? cut_jumps * 4 > paired * 3 : cut_jumps * 2 > paired)
+		|| (!m_video->separate_parts && missing * 8 > paired) || m_camera_cut;
 	// Carried on past the newer list (blend_slots(older, newer, 1 to 1.5) at a cut, half a game frame
 	// on at most): each part's own blend carried on grew the fast-turning ones (a kicking leg up to
 	// twice its length) and moved each by itself, apart from the next (made rigid, a hand came off
@@ -806,7 +1411,10 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	// leg) are left out of the average, carried with the rest: their own move carried on went into
 	// views and poses the game never showed. (The newer list was held as it was until the cut when
 	// any part moved fast: one kicking leg, and the picture stood a list before most cuts.)
-	if (alpha > 1 && !m_blend_cut) {
+	// (SWA's parts are ships and shots, each moving by itself: the average of a scene's few parts,
+	// two shots flying past at ten times a ship's speed, carried the Tantive IV's hull at their pace
+	// into the camera. Each carries on by its own motion, blended so above.)
+	if (alpha > 1 && !m_blend_cut && !m_video->separate_parts) {
 		double mv[3] = {};
 		int n = 0;
 		for (size_t i = 0; i < b.slots.size(); i++)
@@ -818,6 +1426,7 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 			}
 	}
 	if (m_blend_cut) std::fill(m_blend_ok.begin(), m_blend_ok.end(), 0);
+	else pair_extras(a, b, pair);
 	m_smooth_stats[1] = jumps;
 	static const bool logm = getenv("M1_LOG_SMOOTH") != nullptr;
 	if (logm && (jumps || missing)) fprintf(stderr, "M jumps %d missing %d paired %d slots %zu/%zu\n", jumps, missing, paired, na, nb);

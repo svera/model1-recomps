@@ -27,7 +27,7 @@ static void keyboard_medium(const char *dir)
 			released++;
 		}
 		assert(m.set_analog_input(0, value));
-		for (int c = 1; c < 3; c++)
+		for (size_t c = 1; c < input.analog.size(); c++)
 			if (input.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(input.analog[c])));
 		for (int c = 0; c < 3; c++) m.m_inputs[c] = uint8_t(~input.pressed[c]);
 		m.run_frame();
@@ -72,7 +72,7 @@ int main(int argc, char **argv)
 	assert(vr.display_name == "Virtua Racing");
 	assert(vr.romset == "vr");
 	assert(vr.recompiler_map == "games/vr/vr_map.txt");
-	assert(vr.mode_ram == 0x3002 && vr.test_menu_mode == 18);   // 13 in attract, 18 in the test menu
+	assert(vr.mode_ram == 0x503002 && vr.test_menu_mode == 18);   // 13 in attract, 18 in the test menu
 
 	const auto &vr_io = game::get_io_profile(game::vr::ID);
 	assert(vr_io.digital_controls[12] == "Shift Down");

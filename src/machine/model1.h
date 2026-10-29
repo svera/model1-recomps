@@ -41,6 +41,7 @@ public:
 		std::vector<uint8_t> maincpu, copro_tables, copro_data, polygons, sndcpu, pcm1, pcm2;
 		std::vector<uint8_t> tgp_program;   // 315-5724.bin, when the set has it
 		std::vector<uint8_t> ioboard;       // epr-14869b.25 (model1io), when there
+		std::vector<uint8_t> mpegcpu, mpeg; // DSB ROMs (SWA): enable_sound adds the board when present
 		game::id title;                 // the game (src/games: its own code and data)
 	};
 
@@ -62,17 +63,28 @@ public:
 	bool tgp_is_lle() const { return bool(m_lle); }
 	bool tgp_has_hle() const { return bool(m_tgp_hle_reset); }
 	uint64_t tgp_cycles_executed() const;
+	struct tgp_diagnostics {
+		uint64_t input_written = 0, input_read = 0, output_written = 0, output_read = 0;
+		uint64_t input_waits = 0, output_waits = 0, sync_limits = 0;
+		size_t input_pending = 0, output_pending = 0, input_peak = 0, output_peak = 0;
+		uint16_t pc = 0;
+		bool waiting = false;
+	};
+	tgp_diagnostics tgp_status() const;
 	// Renders the 3D at `scale` times the arcade's 496x384 (1 = the arcade picture, exact).
 	void set_render_scale(int scale);
 	// Widescreen: `aspect` is the picture's width/height (4/3 = the arcade's). The 3D view and the
 	// sky widen; 2D text stays in the middle 4:3 unless the game anchors its HUD to the edges.
 	void set_aspect(float aspect);
 	float aspect() const { return m_aspect; }
+	// extra arcade pixels each side of the current picture (0: drawn 4:3)
+	int wide_ext() const { return m_wide_frame ? m_ext : 0; }
 	int render_scale() const { return m_scale; }
 	int frame_w() const { return m_bitmap.width(); }
 	int frame_h() const { return m_bitmap.height(); }
 	v60_device &cpu() { return m_maincpu; }
 	bool set_analog_input(int channel, uint8_t value);
+	bool has_analog_input(int channel) const;
 	// Battery-backed RAM (0x400000-0x40ffff) and the I/O board's EEPROM (the real board's 93C46,
 	// or the stand-in's image in the dual-port RAM at 0x100-0x17f).
 	std::vector<uint8_t> &nvram() { return m_ram_a; }
@@ -116,10 +128,11 @@ public:
 	uint32_t backdrop_hash() const;
 	int sky_identity();                 // the stage sky in the map (-1: none known), see model1_sky.cpp
 
-	// The boot is over (the game has sent its first camera: the attract has started).
+	// The boot is over (the game has sent its first camera: the attract has started). Always, for a
+	// game with no camera RAM.
 	bool past_boot() const;
 	// Work RAM survives a reset: the last camera forgotten, so past_boot waits for the new boot's.
-	void forget_camera() { std::fill_n(&m_ram_b[m_profile->camera_ram], 4, 0); }
+	void forget_camera() { if (m_profile->camera_ram) std::fill_n(&m_ram_b[*m_profile->camera_ram], 4, 0); }
 	// Frames run without drawing them (the display lists' uploads still happen, as MAME's skip).
 	void set_drawing(bool on) { m_draw = on; }
 	// Draws the picture last shown again, at the current settings (a change of scale, shape or
@@ -194,10 +207,20 @@ public:
 
 	// Polygons drawn in the last frame, and the camera the game last sent (0 between scenes).
 	int frame_quads() const { return m_last_quads; }
-	uint32_t camera() const { const uint8_t *p = &m_ram_b[m_profile->camera_ram]; return p[0] | p[1] << 8 | p[2] << 16 | uint32_t(p[3]) << 24; }
+	uint32_t camera() const
+	{
+		if (!m_profile->camera_ram) return 0;
+		const uint8_t *p = &m_ram_b[*m_profile->camera_ram];
+		return p[0] | p[1] << 8 | p[2] << 16 | uint32_t(p[3]) << 24;
+	}
 	// the profile's test_menu_mode in its TEST MENU (VF: 3), but also for a moment in attract
-	uint8_t game_mode() const { return m_ram_b[m_profile->mode_ram]; }
-	bool in_test_menu_mode() const { return game_mode() == m_profile->test_menu_mode; }
+	uint8_t game_mode() const
+	{
+		if (!m_profile->mode_ram) return 0;
+		const uint32_t a = *m_profile->mode_ram;
+		return a >= 0x500000 ? m_ram_b[a - 0x500000] : m_ram_a[a - 0x400000];
+	}
+	bool in_test_menu_mode() const { return m_profile->mode_ram && game_mode() == m_profile->test_menu_mode; }
 	// Raw board EEPROM image for persistence; words are available only on the real I/O board.
 	uint8_t *eeprom() { return m_ioboard ? reinterpret_cast<uint8_t *>(m_ioboard->eeprom) : &m_dpram[0x100]; }
 	uint16_t *eeprom_words() { return m_ioboard ? m_ioboard->eeprom : nullptr; }
@@ -223,6 +246,7 @@ public:
 	// collects here until the host takes it.
 	void enable_sound();
 	void set_volumes(float music, float effects);   // music / effects and voices, 1 = as the cabinet
+	m1audio *audio() { return m_audio.get(); }
 	std::vector<int16_t> m_audio_out;
 
 	struct spoint_t
@@ -236,6 +260,7 @@ public:
 		float xx = 0, yy = 0;
 		spoint_t s;
 		float fx = 0, fy = 0;   // s before truncation, for the crack-free filler above 1x
+		bool passes_eye = false;      // (smooth motion, separate parts) crosses the eye's plane near the eye between the lists blended
 	};
 
 	class quad_t
@@ -304,6 +329,7 @@ private:
 		std::vector<struct slot> slots;              // matrix commands and the objects drawn with each
 		std::vector<game::record_visibility> visibility;
 		int objects = 0;
+		bool above_hud = false;
 		double move = -1, carried = 0;
 		bool still = false;
 		std::array<float, 12> camera{};              // (video_traits::records) the camera as the list was written
@@ -329,6 +355,7 @@ private:
 	bool m_replay_extra = false;                    // the older list drawn carried on past its frame (m_blend from the one before)
 	bool m_smooth = false, m_replaying = false;
 	float m_alpha = 1;
+	float m_object_fade = 1;                        // the extra object being drawn's render_object::fade
 	int m_smooth_stats[3] = {};                     // per picture: unmatched, jumped, blended objects
 	std::vector<std::array<float, 12>> m_blend;     // per slot of the newer list, the blended matrix
 	std::vector<uint8_t> m_blend_ok;
@@ -336,6 +363,10 @@ private:
 	// frames' matrices and the older frame's light (the newer's is the list's own as it's drawn)
 	std::vector<std::array<float, 12>> m_blend_from, m_blend_to;
 	std::vector<std::array<float, 4>> m_blend_light;   // x, y, z, and 1 when known
+	// per slot of the newer list, its keyed extras' pairs in the older list's paired slot (-1: none)
+	std::vector<std::vector<int>> m_extra_pair;
+	std::vector<const std::vector<game::render_object> *> m_extra_from;
+	double m_extra_alpha = 1;
 	// while an object is drawn blended: its shades too (push_object)
 	const float *m_shade_from = nullptr, *m_shade_to = nullptr, *m_shade_light = nullptr;
 	int m_replay_slot = -1;                          // the slot being drawn while replaying
@@ -365,6 +396,7 @@ private:
 	uint64_t m_sky_written = ~0ull;                  // the frame they were written in
 	void sky_scroll_written(uint32_t a);
 	void blend_slots(const logic_frame &a, const logic_frame &b, double alpha);
+	void pair_extras(const logic_frame &a, const logic_frame &b, const std::vector<int> &pair);
 	void smooth_turn(logic_frame &lf, const logic_frame &before);
 	void follow_records(logic_frame &lf, const logic_frame &before);
 	void blend_by_records(const logic_frame &a, const logic_frame &b, double alpha);
@@ -374,13 +406,17 @@ private:
 	int m_still_carried = -1;
 	bool m_camera_sure = false;
 	std::vector<float> m_cam_res;
-	struct cam_move { int from = -1, to = -1; double d[3] = {}; double turn = 0, ratio = 0; };
+	bool m_cam_carried = false;   // (SWA: the slots on the camera's move are moved by it, from m_cam_older)
+	std::vector<std::array<float, 12>> m_cam_older;      // (SWA, pair -3 or following the camera) a slot's older matrix, as the camera's move puts it
+	std::vector<char> m_ship;                            // (SWA) a slot paired as a ship, moving by itself: it may move 80% of its depth in a list
+	struct cam_move { int from = -1, to = -1; double d[3] = {}; double turn = 0, ratio = 0; bool fit = false; double R[3][3] = {}, T[3] = {}; std::vector<float> res; };
 	cam_move m_cam_move[16];
 	int m_cam_move_next = 0;
 	void index_objects(logic_frame &lf);
 	void retain_culled_records(logic_frame &frame, const logic_frame &previous);
 	void record_frame();
 	bool smooth_matrix(uint32_t poly_adr, float *out);
+	void smooth_extra(size_t n, const std::array<float, 12> &local, float *out) const;
 	void smooth_sky_shift(float &dx, float &dy) const;
 	// That shift in output pixels at scale s, rounded as the game rounds its scroll (the fraction
 	// of the scroll dropped): at a frame's own moment, the game's own placing.
@@ -444,9 +480,10 @@ private:
 	// each layer at arcade resolution, kept for the game frame it was drawn for: smooth motion draws
 	// several pictures a frame and the tiles only change with the frame. With each row's drawn span,
 	// so the scaling skips what's empty (the HUD and text layers are mostly empty).
-	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; };
+	// `sides`: the game filled the widescreen sides (gameplay layer_sides), so no curtain is carried out
+	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; };
 	// the sky layer as last drawn (once a game frame, as the others; its panorama placing every time)
-	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false; uint64_t m_l4_gen = 0;
+	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false, m_l4_wide = false; uint64_t m_l4_gen = 0;
 	// The GPU's parts (model1_gpu.cpp)
 	gpu_parts *m_parts = nullptr;                    // being drawn in parts
 	bool m_parts_whole = false;                     // this picture can't be: draw it whole
@@ -492,8 +529,13 @@ private:
 	float hud_edge_offset(float left, float right) const;
 	float hud_view_offset(float x, float y) const;
 	void pin_hud_point(point_t *point, float offset) const;
+	std::vector<size_t> direct_groups(point_t *points, quad_t *quads) const;
 	void pin_hud_direct(point_t *points, quad_t *quads);
+	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
+	bool stretch_backdrops() const { return !m_video || m_video->stretch_backdrops; }
+	void fill_backdrop_sides(bitmap_rgb32 &pixels, int layer = -1, int flags = 0);
+	bitmap_rgb32 m_wrap_tmp;                 // fill_backdrop_sides: a layer drawn wrapping across the sides
 public:
 	static bool s_moire_blend;
 	static int s_mark_y1, s_mark_y2;   // rows holding shading marks this frame (y1 > y2: none)
@@ -820,6 +862,7 @@ private:
 		void transform_point(point_t *p) const;
 
 		void recompute_frustum();
+		bool outside(const game::model_bounds &bounds) const;
 
 		int xc = 0, yc = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // x1..y2: clip in render pixels
 		float lx1 = 0, lx2 = 0, ly1 = 0, ly2 = 0;             // the clip as the game set it
@@ -850,6 +893,7 @@ private:
 	std::unique_ptr<quad_t[]> m_quaddb;
 	quad_t      *m_quadpt = nullptr;
 	std::unique_ptr<quad_t *[]> m_quadind;
+	mutable std::vector<quad_t *> m_quadsort;
 
 	uint16_t  m_listctl[2]{};
 	uint16_t  *m_glist = nullptr;
@@ -890,6 +934,17 @@ private:
 	std::vector<rec_batch> m_rec_batches;
 	std::vector<quad_t> m_rec_quads;
 	std::vector<point_t> m_rec_points;
+	std::map<std::array<uint32_t, 12>, std::vector<uint32_t>> m_extra_colours;
+	// A surface model's top edges that no other face of it shares and no wall of it stands on
+	// (push_object, close_steps): a step down or up with no face between, in model space.
+	struct open_edge { glm::vec3 a, b, centre, n; uint32_t face; };
+	std::unordered_map<uint32_t, std::vector<open_edge>> m_open_edges;
+	const std::vector<open_edge> &open_edges(const float *poly_data, uint32_t poly_adr, size_t polygon_words, uint32_t size, uint32_t object_polygon);
+	// a picture's open edges, as drawn (view space), till the batch's quads are sorted
+	struct seen_edge { glm::vec3 a, b, centre, up; float slack; int64_t col; uint32_t object, face; bool foreground; };
+	std::vector<seen_edge> m_seen_edges;
+	uint32_t m_seen_objects = 0;
+	void close_steps();
 	std::vector<gpu3d_poly> m_rec_polys;
 	std::vector<gpu3d_span> m_rec_spans;
 	int m_rec_y0 = 0, m_rec_y1 = -1, m_rec_m0 = 0, m_rec_m1 = -1;
@@ -922,7 +977,7 @@ private:
 	int push_direct(int list_offset);
 	int draw_direct(bitmap_rgb32 &bitmap, const rectangle &cliprect, int list_offset);
 	int skip_direct(int list_offset) const;
-	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0);
+	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0, const game::model_bounds *bounds = nullptr);
 	void    draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 
 	void set_current_render_list();

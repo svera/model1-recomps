@@ -1,0 +1,1 @@
+tests/games/swa/recordings/*.inputs -diff

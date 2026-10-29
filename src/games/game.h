@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -31,10 +32,12 @@ struct profile
 	std::string_view romset;
 	std::string_view recompiler_map;
 	std::string_view make_regions;   // how a development build gets the regions (src/host/regions.h)
-	// work RAM (0x500000 on) the shared code reads: the camera pointer the game last sent (0 between
-	// scenes, and until the boot's over), and the game's mode byte, test_menu_mode in its test menu
-	uint32_t camera_ram;
-	uint32_t mode_ram;
+	// RAM the shared code reads: the camera pointer the game last sent (an offset in work RAM,
+	// 0x500000 on; 0 between scenes, and until the boot's over), and the address of the game's mode
+	// byte (in work RAM or the battery-backed 0x400000 on), test_menu_mode in its test menu. Unset
+	// until the game's RAM layout is known.
+	std::optional<uint32_t> camera_ram;
+	std::optional<uint32_t> mode_ram;
 	uint8_t test_menu_mode;
 	// The V60's average cycles per instruction (the cores charge MAME's estimate of 8 each).
 	double cpu_cycles_per_instruction = 8;
@@ -46,10 +49,31 @@ struct io_profile
 	std::array<std::string_view, 24> digital_controls;
 	// ADC channels 0-7; the I/O board's secondary switch selects channels 4-7.
 	std::array<std::string_view, 8> analog_controls;
-	std::array<std::string_view, 8> analog_environment;
-	std::array<uint8_t, 8> analog_neutral;
+	std::array<std::string_view, 8> analog_environment;   // raw port values (tools/model1run)
+	std::array<uint8_t, 8> analog_neutral;                 // raw port value at rest
 	std::array<host_axis, 8> host_axis_defaults;
 	std::array<analog_kind, 8> analog_kinds;
+	// The host reads a channel as 0 (stick left/forward, key `low`) to 255 (right/back, key `high`),
+	// then maps it onto the cabinet's calibrated range, reversed where the hardware counts the other way.
+	struct analog_range { uint8_t low = 0, high = 255; bool reverse = false; };
+	std::array<analog_range, 8> analog_ranges{};
+	std::array<uint8_t, 8> analog_player{};                // whose pad and keys drive the channel (0, 1)
+
+	uint8_t analog_port(size_t channel, uint8_t host) const
+	{
+		const analog_range &r = analog_ranges[channel];
+		const int value = r.low + (host * (r.high - r.low) + 127) / 255;
+		return uint8_t(r.reverse ? r.low + r.high - value : value);
+	}
+	uint8_t analog_host(size_t channel, uint8_t port) const
+	{
+		const analog_range &r = analog_ranges[channel];
+		const int span = r.high - r.low;
+		if (span <= 0) return 0;
+		int value = std::clamp(int(port), int(r.low), int(r.high));
+		if (r.reverse) value = r.low + r.high - value;
+		return uint8_t(((value - r.low) * 255 + span / 2) / span);
+	}
 };
 
 struct tgp_hle_callbacks
@@ -77,11 +101,22 @@ struct object_effects
 	std::function<void(uint32_t, int, int &, int &, int &)> colour;
 };
 
+struct model_bounds
+{
+	std::array<float, 3> center, extent;
+	float radius = 0;
+};
+
 struct render_object
 {
 	uint32_t texture, polygon, size;
 	uint32_t owner = 0;
 	std::optional<std::array<float, 12>> transform;
+	float fade = 1;                                // its colours scaled toward black (1: as lit)
+	std::optional<model_bounds> bounds;             // optional model-space bound for renderer-only copies
+	// (smooth motion) nonzero: a copy with a transform that pairs with the nearest one with the same
+	// key in the older list's paired slot, its transform blended with that one's
+	uint64_t key = 0;
 };
 
 struct record_visibility
@@ -102,13 +137,21 @@ struct gameplay_callbacks
 	std::function<void(uint16_t)> work_ram_written;
 	// Optional adjustment of a completed TGP result as the V60 reads it.
 	std::function<uint32_t(uint32_t, uint32_t)> copro_result;
+	// Optional adjustment of a word the V60 writes to the TGP's input FIFO (PC, value).
+	std::function<uint32_t(uint32_t, uint32_t)> copro_write;
 	// Optional adjustment of 32-bit reads in an inclusive address range (PC, address, value).
 	// A zero end observes only read32_watch.
 	uint32_t read32_watch = 0;
 	uint32_t read32_watch_end = 0;
 	std::function<uint32_t(uint32_t, uint32_t, uint32_t)> read32_value;
-	// Extra renderer-only objects attached to a matrix as the CPU writes it.
-	std::function<std::vector<render_object>()> matrix_objects;
+	// Optional adjustment of the 8- and 16-bit reads by instructions in [read_pc_first, read_pc_last]
+	// (PC, address, value). These include the instructions' own bytes from the program ROM.
+	uint32_t read_pc_first = 0, read_pc_last = 0;
+	std::function<uint16_t(uint32_t, uint32_t, uint16_t)> read_value;
+	// Extra renderer-only objects attached to a matrix as the CPU writes it. The argument is the
+	// display-list halfword written; the callback may set it to an earlier matrix command of the
+	// same list, whose extras the result then replaces (an empty result removes them).
+	std::function<std::vector<render_object>(uint32_t &)> matrix_objects;
 	// Snapshot active records when a relevant matrix is written, before visibility advances.
 	std::function<std::vector<game::record_visibility>(uint32_t)> record_visibility;
 	std::function<void()> render_begin;
@@ -121,6 +164,10 @@ struct gameplay_callbacks
 	std::function<std::vector<uint32_t>(std::string_view)> screen_hashes;
 	std::function<std::optional<std::string_view>(uint32_t)> screen_name;
 	std::function<bool(uint32_t, bool)> wide_scene;
+	// Widescreen: a tile layer (non-opaque) as drawn this game frame, `ext` columns each side of the
+	// arcade's 496 (`width` = 496 + 2 * ext, pixels 0x00rrggbb, 0xff000000 for nothing). The game may
+	// fill the sides, which are otherwise empty; true when it did.
+	std::function<bool(int layer, uint32_t *pixels, int width, int height, int ext)> layer_sides;
 };
 
 // What the shared video code (src/machine) needs to know about a game's own data: none of it is
@@ -188,7 +235,12 @@ struct hud_tile_range
 struct video_traits
 {
 	bool smooth_frames = false;      // the 3D blended between game frames (a 30 Hz game's)
+	bool separate_parts = false;     // the parts are separate objects (ships, shots), not a fighter's limbs
+	int default_fps = 120;           // the Frame rate setting's first-run choice (30: the arcade's, no blending)
 	bool pin_hud_edges = false;      // move off-center, non-full-screen HUD graphics into widescreen sides
+	// widescreen: the opaque tile layers (the backdrop) stretched across the width; else drawn 1:1,
+	// the sides of each the colour of its edges where those are one colour, black where not
+	bool stretch_backdrops = true;
 	std::vector<uint32_t> foreground_objects;   // screen-space 3D overlays, sorted after world geometry
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera
@@ -196,6 +248,16 @@ struct video_traits
 	// polygon ROM addresses below this are the scenery a moving model's shadow falls on, which
 	// above 1x has its shadows kept off the models (0: no such split, shadows drawn as the arcade)
 	uint32_t scenery_polys_end = 0;
+	// models (first polygon's ROM address, ranges [first, last)) that never move by themselves:
+	// blended between game frames by the camera's move only (SWA's Death Star surface and trench;
+	// { 0, 0 }: none known)
+	uint32_t still_models[2][2] = {};
+	std::vector<uint32_t> camera_anchors;   // stationary models whose unchanged axes determine the camera's move
+	bool still_model(uint32_t m) const
+	{
+		for (const auto &r : still_models) if (m >= r[0] && m < r[1]) return true;
+		return std::find(camera_anchors.begin(), camera_anchors.end(), m) != camera_anchors.end();
+	}
 	std::vector<sky_record> skies;    // empty: no hi-res skies
 	int sky_tile_map = 0, sky_first_row = 0;   // where the game streams the panoramas
 	std::optional<sky_camera> sky_scroll;      // none: the sky's scroll as the tile chip has it

@@ -182,6 +182,8 @@ result load(const definition &set, const std::vector<std::string> &zips)
 	res.regions.sndcpu = std::move(regions[SNDCPU]);
 	res.regions.pcm1 = std::move(regions[PCM1]);
 	res.regions.pcm2 = std::move(regions[PCM2]);
+	res.regions.mpegcpu = std::move(regions[MPEGCPU]);
+	res.regions.mpeg = std::move(regions[MPEG]);
 	if (!regions[TGP_PROGRAM].empty()) { res.regions.tgp_program = std::move(regions[TGP_PROGRAM]); res.has_tgp = true; }
 	if (const supplement *s = set.tgp_program) {
 		auto [z, e] = find(s->name, nullptr, s->crc);

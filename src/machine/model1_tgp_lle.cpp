@@ -3,8 +3,8 @@
 // (BSD-3-Clause, copyright-holders: Olivier Galibert).
 //
 // MAME runs the TGP alongside the V60 on its scheduler. Here it runs on demand: whenever the
-// V60 touches the coprocessor, the TGP runs until it waits for input. The results are the same,
-// and runs repeat exactly.
+// V60 touches the coprocessor, the TGP runs until it waits for input. This preserves FIFO order,
+// but does not model the time the real TGP spends computing between FIFO accesses.
 #include "model1.h"
 #include "../core/mb86233.h"
 
@@ -18,6 +18,7 @@ struct model1::tgp_lle : mb86233_bus
 	u32 ram_adr[4]{};
 	u32 sincos_base = 0, inv_base = 0, isqrt_base = 0, atan_base[4]{}, data_base = 0;
 	std::deque<u32> fifo_in, fifo_out;
+	tgp_diagnostics diagnostics;
 	mb86233_device cpu{*this};
 
 	tgp_lle(model1 &mm, const std::vector<uint8_t> &rom, const std::vector<uint8_t> &data)
@@ -31,6 +32,7 @@ struct model1::tgp_lle : mb86233_bus
 		cpu.reset();
 		fifo_in.clear();
 		fifo_out.clear();
+		diagnostics = {};
 		std::fill(std::begin(ram_adr), std::end(ram_adr), 0);
 		std::fill(copro_ram.begin(), copro_ram.end(), 0);
 		sincos_base = inv_base = isqrt_base = data_base = 0;
@@ -45,7 +47,8 @@ struct model1::tgp_lle : mb86233_bus
 			if (cpu.stalled())
 				return;
 		}
-		fprintf(stderr, "tgp: still running after 6.4M instructions (pc %03x)\n", cpu.pc());
+		fprintf(stderr, "tgp: still running after 6.4M cycles (pc %03x)\n", cpu.pc());
+		diagnostics.sync_limits++;
 	}
 
 	u32 prog_r(u32 a) override { return prog[a & 0x7ff]; }
@@ -55,9 +58,10 @@ struct model1::tgp_lle : mb86233_bus
 		a &= 0xffff;
 		if (a < 0x100) return ram0[a];
 		if (a == 0x100) {
-			if (fifo_in.empty()) { cpu.stall(); return 0; }
+			if (fifo_in.empty()) { diagnostics.input_waits++; cpu.stall(); return 0; }
 			u32 v = fifo_in.front();
 			fifo_in.pop_front();
+			diagnostics.input_read++;
 			return v;
 		}
 		if (a >= 0x200 && a < 0x400) return ram1[a - 0x200];
@@ -69,7 +73,11 @@ struct model1::tgp_lle : mb86233_bus
 		a &= 0xffff;
 		if (a < 0x100) ram0[a] = v;
 		else if (a >= 0x200 && a < 0x400) ram1[a - 0x200] = v;
-		else if (a == 0x400) fifo_out.push_back(v);
+		else if (a == 0x400) {
+			fifo_out.push_back(v);
+			diagnostics.output_written++;
+			diagnostics.output_peak = std::max(diagnostics.output_peak, fifo_out.size());
+		}
 	}
 
 	u32 io_r(u32 a) override
@@ -192,6 +200,17 @@ void model1::lle_reset() { if (m_lle) m_lle->reset(); }
 
 uint64_t model1::tgp_cycles_executed() const { return m_tgp_cycles; }
 
+model1::tgp_diagnostics model1::tgp_status() const
+{
+	if (!m_lle) return {};
+	tgp_diagnostics status = m_lle->diagnostics;
+	status.input_pending = m_lle->fifo_in.size();
+	status.output_pending = m_lle->fifo_out.size();
+	status.pc = m_lle->cpu.pc();
+	status.waiting = m_lle->cpu.stalled();
+	return status;
+}
+
 // V60 side, as MAME's model1_m.cpp with the TGP brought up to date first.
 u16 model1::lle_v60_r(uint32_t a)
 {
@@ -208,12 +227,14 @@ u16 model1::lle_v60_r(uint32_t a)
 	if (a >= 0xd80000 && a < 0xda0000) {
 		if (!((a >> 1) & 1)) {
 			if (t.fifo_out.empty()) {
+				t.diagnostics.output_waits++;
 				m_tgp_underflow[m_maincpu.pc()]++;
 				m_maincpu.stall();     // an IN instruction retries, as on MAME
 				return 0;
 			}
 			m_v60_copro_fifo_r = t.fifo_out.front();
 			t.fifo_out.pop_front();
+			t.diagnostics.output_read++;
 			if (m_gameplay.copro_result)
 				m_v60_copro_fifo_r = m_gameplay.copro_result(m_maincpu.pc(), m_v60_copro_fifo_r);
 			return u16(m_v60_copro_fifo_r);
@@ -240,7 +261,11 @@ void model1::lle_v60_w(uint32_t a, uint16_t data, uint16_t mem_mask)
 	if (a >= 0xd80000 && a < 0xda0000) {
 		if ((a >> 1) & 1) {
 			m_v60_copro_fifo_w = (m_v60_copro_fifo_w & 0x0000ffff) | (u32(data) << 16);
+			if (m_gameplay.copro_write)
+				m_v60_copro_fifo_w = m_gameplay.copro_write(m_maincpu.pc(), m_v60_copro_fifo_w);
 			t.fifo_in.push_back(m_v60_copro_fifo_w);
+			t.diagnostics.input_written++;
+			t.diagnostics.input_peak = std::max(t.diagnostics.input_peak, t.fifo_in.size());
 			t.sync();
 		} else
 			m_v60_copro_fifo_w = (m_v60_copro_fifo_w & 0xffff0000) | data;

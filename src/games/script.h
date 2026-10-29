@@ -18,7 +18,7 @@ namespace game {
 struct script_inputs
 {
 	std::array<uint8_t, 3> pressed{};
-	std::array<int, 3> analog{ -1, -1, -1 };
+	std::array<int, 8> analog{ -1, -1, -1, -1, -1, -1, -1, -1 };
 };
 
 class auto_play

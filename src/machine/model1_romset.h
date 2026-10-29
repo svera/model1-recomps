@@ -11,7 +11,7 @@
 
 namespace romset {
 
-enum region_id { MAINCPU, COPRO_TABLES, COPRO_DATA, OTHER_DATA, OTHER_OTHER_DATA, SNDCPU, PCM1, PCM2, POLYGONS, TGP_PROGRAM, N_REGIONS };
+enum region_id { MAINCPU, COPRO_TABLES, COPRO_DATA, OTHER_DATA, OTHER_OTHER_DATA, SNDCPU, PCM1, PCM2, POLYGONS, TGP_PROGRAM, MPEGCPU, MPEG, N_REGIONS };
 
 // raw; byte16: every other byte; word32: 16-bit words into every other 32-bit slot;
 // wordswap: 16-bit words byteswapped; byte32: every fourth byte
@@ -58,7 +58,7 @@ std::vector<const definition *> registered();
 // per game).
 constexpr region_def COMMON_REGIONS[N_REGIONS] = {
 	{ 0x2000000, 0xff }, { 0x40000, 0 }, {}, { 0x80000, 0 }, { 0x20000, 0 },
-	{ 0xc0000, 0 }, { 0x400000, 0 }, { 0x400000, 0 }, { 0x1000000, 0 }, {},
+	{ 0xc0000, 0 }, { 0x400000, 0 }, { 0x400000, 0 }, { 0x1000000, 0 }, {}, {}, {},
 };
 
 struct result

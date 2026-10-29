@@ -40,9 +40,11 @@ int model1::render_parts(double now, gpu_parts &p, bool shown)
 		p.d3_changed.clear();
 		p.d3_target = -1;
 		p.d3_edge = false;
-		m_redrawing = true;
-		render_smooth(now, shown);
-		m_redrawing = false;
+		if (m_frame_parts) {
+			m_redrawing = true;
+			render_smooth(now, shown);
+			m_redrawing = false;
+		}
 		return 2;
 	}
 	m_last_parts = &p;
@@ -169,7 +171,7 @@ void model1::parts_composite(bitmap_rgb32 &out, uint64_t &key, uint64_t &gen, st
 			for (int x = c.x0[y]; x < c.x1[y]; x++)
 				if (src[x] != KEY) d[x] = src[x];
 			const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
-			if (m_ext && m_wide_frame && el != KEY && er != KEY) {
+			if (m_ext && m_wide_frame && !c.sides && el != KEY && er != KEY) {
 				int covered = 0;
 				for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
 				if (covered * 10 >= SCREEN_W * 9) {

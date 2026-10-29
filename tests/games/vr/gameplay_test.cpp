@@ -55,7 +55,7 @@ static void scripted_inputs()
 	assert(qualifying->frame(6000).pressed[0] == 0x01);
 	assert(qualifying->frame(6060).pressed[0] == 0);
 	assert(qualifying->frame(6120).pressed[0] == 0x10);
-	assert((qualifying->frame(6130).analog == std::array<int, 3>{ 0x80, 0xff, 0x30 }));
+	assert((qualifying->frame(6130).analog == std::array<int, 8>{ 0x80, 0xff, 0x30, -1, -1, -1, -1, -1 }));
 	auto unchecked = game::make_auto_play(title, "qualifying", 12345, false);
 	assert(unchecked && unchecked->min_frames() == 0 && unchecked->finish().empty());
 	assert(unchecked->frame(6130).analog == qualifying->frame(6130).analog);
@@ -207,6 +207,7 @@ static void machine_settings(bool board)
 
 static void scenery_lists()
 {
+	uint32_t word = 0;   // the display-list word matrix_objects is told was written
 	model1::regions regions;
 	regions.title = game::id{ "vr" };
 	regions.maincpu.resize(0x1000000, 0xff);
@@ -261,9 +262,9 @@ static void scenery_lists()
 		machine.cpu().pc_ref() = 0xff7dc5;
 		const auto before = ram;
 		callbacks.work_ram_written(0xff);
-		assert(callbacks.matrix_objects().empty());
+		assert(callbacks.matrix_objects(word).empty());
 		machine.cpu().pc_ref() = 0xff8500;
-		const auto objects = callbacks.matrix_objects();
+		const auto objects = callbacks.matrix_objects(word);
 		const int submitted = lod ? std::min(n, budget / 10 + 1) : n;
 		assert(objects.size() == size_t(256 - submitted));
 		std::array<bool, 256> seen{};
@@ -280,7 +281,7 @@ static void scenery_lists()
 			last_distance = distance;
 		}
 		assert(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
-		assert(callbacks.matrix_objects().empty());
+		assert(callbacks.matrix_objects(word).empty());
 		assert(ram == before && machine.program_rom() == original_rom);
 	}
 	for (bool full : { false, true })
@@ -298,7 +299,7 @@ static void scenery_lists()
 		for (uint32_t offset : { 0x2au, 0x2cu, 0x2eu }) machine.write16(0x407900 + offset, 0);
 		const auto before = ram;
 		state->scenery_pending = true;
-		const auto objects = callbacks.matrix_objects();
+		const auto objects = callbacks.matrix_objects(word);
 		int boards = 0;
 		for (const auto &object : objects)
 			if (object.owner) {
@@ -318,12 +319,12 @@ static void scenery_lists()
 	callbacks.work_ram_written(0xff);
 	bus.write32(0x500100, 0xffddd4);
 	machine.cpu().pc_ref() = 0xff8500;
-	assert(callbacks.matrix_objects().empty() && state->scenery_pending);
+	assert(callbacks.matrix_objects(word).empty() && state->scenery_pending);
 	bus.write32(0x500100, 0xff846f);
-	assert(!callbacks.matrix_objects().empty() && !state->scenery_pending);
+	assert(!callbacks.matrix_objects(word).empty() && !state->scenery_pending);
 	state->extended_draw_distance = false;
 	callbacks.work_ram_written(0xff);
-	assert(callbacks.matrix_objects().empty());
+	assert(callbacks.matrix_objects(word).empty());
 	bus.write32(0x5011b0, 5000);
 	assert(bus.read32(0x5011b0) == 5000);
 	state->extended_draw_distance = true;
@@ -449,13 +450,14 @@ static void rom_lod(const char *dir, bool native)
 	};
 	for (int f = 1; f <= 4800; f++) {
 		const auto inputs = play->frame(f);
-		for (int c = 0; c < 3; c++) {
+		for (size_t c = 0; c < inputs.analog.size(); c++) {
 			if (inputs.analog[c] >= 0) {
 				assert(arcade.set_analog_input(c, uint8_t(inputs.analog[c])));
 				assert(full.set_analog_input(c, uint8_t(inputs.analog[c])));
 			}
-			arcade.m_inputs[c] = full.m_inputs[c] = uint8_t(~inputs.pressed[c]);
 		}
+		for (size_t c = 0; c < inputs.pressed.size(); c++)
+			arcade.m_inputs[c] = full.m_inputs[c] = uint8_t(~inputs.pressed[c]);
 		arcade.run_frame();
 		full.run_frame();
 		assert(arcade.work_ram()[0x1138] == full.work_ram()[0x1138]);
@@ -543,13 +545,14 @@ static void rom_draw_distance(const char *dir, bool native)
 	size_t max_extra_quads = 0;
 	for (int f = 1; f <= 6000; f++) {
 		const auto inputs = play->frame(f);
-		for (int c = 0; c < 3; c++) {
+		for (size_t c = 0; c < inputs.analog.size(); c++) {
 			if (inputs.analog[c] >= 0) {
 				assert(arcade.set_analog_input(c, uint8_t(inputs.analog[c])));
 				assert(extended.set_analog_input(c, uint8_t(inputs.analog[c])));
 			}
-			arcade.m_inputs[c] = extended.m_inputs[c] = uint8_t(~inputs.pressed[c]);
 		}
+		for (size_t c = 0; c < inputs.pressed.size(); c++)
+			arcade.m_inputs[c] = extended.m_inputs[c] = uint8_t(~inputs.pressed[c]);
 		arcade.run_frame();
 		extended.run_frame();
 		assert(arcade.work_ram() == extended.work_ram());
@@ -884,10 +887,10 @@ static void rom_qualifying(const char *dir, bool native)
 	uint32_t record = 0, time = 0, ranking_slot = 0;
 	for (int f = 1; f <= play->min_frames(); f++) {
 		const auto inputs = play->frame(f, machine);
-		for (int c = 0; c < 3; c++) {
+		for (size_t c = 0; c < inputs.analog.size(); c++)
 			if (inputs.analog[c] >= 0) assert(machine.set_analog_input(c, uint8_t(inputs.analog[c])));
+		for (size_t c = 0; c < inputs.pressed.size(); c++)
 			machine.m_inputs[c] = uint8_t(~inputs.pressed[c]);
-		}
 		machine.run_frame();
 		const auto bad = play->check(f, machine);
 		if (!bad.empty()) fprintf(stderr, "%s\n", bad.c_str());

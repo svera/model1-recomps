@@ -22,3 +22,5 @@ Also from MAME, ported into `src/`:
 - `src/machine/model1_tgp_lle.cpp`: the current Model 1 coprocessor glue, `sega/model1_m.cpp`
 - `src/machine/multipcm.*`: the YMW-258-F / 315-5560 MultiPCM, `sound/gew.cpp` and `sound/multipcm.cpp` (Miguel Angel Horna)
 - `src/machine/m1audio.*`: the Model 1 sound board map, `shared/segam1audio.cpp` (R. Belmont)
+- `src/machine/dsbz80.*`: the Sega Z80 Digital Sound Board, `sega/dsbz80.cpp` (R. Belmont, Olivier Galibert)
+- `src/machine/mpeg_audio.*`: the MPEG audio Layer I/II decoder, `sound/mpeg_audio.cpp` (Olivier Galibert)

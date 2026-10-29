@@ -5,7 +5,7 @@
 #   tools/linux/package.sh [game ...]   ->  build/linux/<game>/<FILE>Recomp-linux.tar.gz
 #                                           (VirtuaRacingRecomp-linux.tar.gz)
 #
-# With no game named, every game enabled in tools/release/games.sh is built (currently VR only; settings:
+# With no game named, every game enabled in tools/release/games.sh is built (currently VR and SWA; settings:
 # tools/games/<game>/release/game.sh).
 #
 # Needs Docker able to run linux/amd64 images. Packages contain no ROMs: each reads the player's own

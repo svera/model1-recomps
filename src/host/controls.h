@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,11 @@ struct control_profile
 	std::array<const char *, C_COUNT> names{};        // settings.ini's key_<name> and pad_<name>; none: CONTROL_KEYS
 	std::array<const char *, C_COUNT> key_names{};    // key_<name> when it isn't name()
 	std::array<uint8_t, C_COUNT> bits{};              // the player's input byte's bits it presses (active high)
+	// where each player's buttons go: by default player 1's byte (1) and player 2's (2) with the same
+	// bits; a cabinet that shares one byte gives player 2 its own bits there
+	std::array<uint8_t, 2> button_ports{ 1, 2 };
+	std::optional<std::array<uint8_t, C_COUNT>> p2_bits;
+	std::array<bool, C_COUNT> p1_only{};              // controls player 2 doesn't have (hidden on their pages)
 	std::array<uint8_t, 2> start_bits{};              // each player's start button in the system byte
 	bool hold_start = false;                         // keep Start pressed after its initial pulse
 	std::array<std::array<SDL_Scancode, C_COUNT>, 2> keys{};   // the defaults, per player
@@ -49,8 +55,8 @@ struct control_profile
 	// a key renamed in settings.ini: read from its old name when the new one isn't there, `was` then `now`
 	struct renamed_key { int action; const char *old_name; SDL_Scancode was, now; };
 	std::vector<renamed_key> renamed_keys;
-	// keys on the I/O board's analog channels (player 1): `low`'s key gives 0, `high`'s 255
-	// (-1: none); `dpad`: the d-pad's left and right as well
+	// keys on the I/O board's analog channels (the channel's player, io_profile::analog_player):
+	// `low`'s key gives 0, `high`'s 255 (-1: none); `dpad`: the d-pad's matching directions as well
 	struct analog_key { int channel, low, high; bool dpad; };
 	std::vector<analog_key> analog_keys;
 	const char *pad_page_help = "";                   // after each pad button's help
@@ -65,6 +71,10 @@ struct control_profile
 		names[action] = name;
 	}
 	bool visible(int action) const { return labels[action] != nullptr; }
+	bool visible(int action, int player) const { return visible(action) && !(player && p1_only[action]); }
+	uint8_t bit(int player, int action) const { return player && p2_bits ? (*p2_bits)[action] : bits[action]; }
+	// a player's control held: its bit in their input byte ([system, player 1, player 2])
+	void press(uint8_t (&in)[3], int player, int action) const { in[button_ports[player ? 1 : 0]] |= bit(player, action); }
 	const char *label(int action) const { return labels[action] ? labels[action] : CONTROL_NAMES[action]; }
 	const char *name(int action) const { return names[action] ? names[action] : CONTROL_KEYS[action]; }
 	const char *key_name(int action) const { return key_names[action] ? key_names[action] : name(action); }

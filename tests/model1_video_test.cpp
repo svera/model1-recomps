@@ -1,5 +1,6 @@
 #include "../src/machine/model1.h"
 #include "../src/games/vr/gameplay.h"
+#include "../src/games/swa/gameplay.h"
 #include "../src/games/script.h"
 #include "../src/host/regions.h"
 #include "../src/rt/native.h"
@@ -14,6 +15,530 @@
 
 struct model1_video_test
 {
+	// Stationary camera anchors must not get the surface's missing-step faces: those filled
+	// the cruiser's intentional engine gaps with triangles that flashed between pictures.
+	static void swa_launch_flashes(const char *dir, float aspect)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		while (m.frame_number() < 13938) m.run_frame();
+		m.set_drawing(true);
+		std::vector<std::vector<uint32_t>> frames;
+		int pictures = 0, worst = 0, flashes = 0;
+		while (m.frame_number() < 13990) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				const int w = m.frame_w(), h = m.frame_h();
+				frames.emplace_back(m.frame().data(), m.frame().data() + w * h);
+				if (frames.size() < 3) continue;
+				int colour = 0;
+				for (int y = h / 4; y < h * 3 / 4; y++)
+					for (int x = w * 3 / 5; x < w; x++) {
+						const size_t i = size_t(y) * w + x;
+						const auto a = frames[0][i] & 0xffffff, b = frames[1][i] & 0xffffff, c = frames[2][i] & 0xffffff;
+						const auto difference = [](uint32_t x, uint32_t y) {
+							return std::max({ std::abs(int(x & 255) - int(y & 255)),
+								std::abs(int(x >> 8 & 255) - int(y >> 8 & 255)), std::abs(int(x >> 16 & 255) - int(y >> 16 & 255)) });
+						};
+						colour += difference(a, b) > 40 && difference(b, c) > 40 && difference(a, c) < 10;
+					}
+				pictures++;
+				flashes += colour;
+				worst = std::max(worst, colour);
+				frames.erase(frames.begin());
+			}
+		}
+		printf("SWA exterior ship (aspect %.3f): %d transient right-side pixels over %d pictures, at most %d a picture\n",
+			aspect, flashes, pictures, worst);
+		assert(pictures > 90 && worst < 200);
+	}
+	// The exterior shot after the hangar: the launching X-wing is near the eye, moving slowly
+	// enough to be mistaken for scenery by a camera fitted from the fighters' positions.
+	static void swa_launch_motion(const char *dir, float aspect, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		while (m.frame_number() < 13590) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, parts = 0, cuts = 0, unblended = 0, early = 0;
+		float worst = 0;
+		while (m.frame_number() < 14050) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				if (f < 13602) continue;   // the cut and first list with the fighters have no older poses
+				pictures++;
+				cuts += m.m_blend_cut;
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &s = b.slots[i];
+					if (s.polys.empty() || (s.polys[0] != 0x106162d && s.polys[0] != 0x106197c && s.polys[0] != 0x1061d75)) continue;
+					parts++;
+					if (f < 13640 && std::fabs(s.mat[9]) < 5 && s.mat[11] < 150) early++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { unblended++; continue; }
+					float best = INFINITY;
+					for (const auto &older : a.slots) {
+						if (older.polys.empty() || older.polys[0] != s.polys[0]) continue;
+						float error = 0;
+						for (int k = 0; k < 12; k++) error = std::max(error, std::fabs(m.m_blend_from[i][k] - older.mat[k]));
+						best = std::min(best, error);
+					}
+					worst = std::max(worst, best);
+				}
+			}
+		}
+		printf("SWA exterior launch (aspect %.3f, LOD %s): %d pictures, %d near-launch parts, %d false cuts, %d unblended of %d parts, older matrix error %.3f\n",
+			aspect, lod ? "on" : "off", pictures, early, cuts, unblended, parts, worst);
+		assert(pictures > 800 && parts > 10000 && early > 100 && cuts == 0 && unblended == 0 && worst < 0.1f);
+	}
+	// The camera passes alongside the hangar origin (z = 0), while two copies of a fighter's
+	// model move independently. One axis of its folding wing shrinks through zero.
+	static void swa_hangar_camera()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame a, b, c;
+		a.frame = 10, b.frame = 12, c.frame = 14;
+		int step = 0;
+		for (auto *frame : { &a, &b, &c }) {
+			model1::slot hangar;
+			hangar.polys = { 0x116aebe };
+			hangar.mat[9] = 400 + step * 2, hangar.mat[10] = -200;
+			frame->slots.push_back(hangar);
+			for (int copy = 0; copy < 2; copy++) {
+				model1::slot ship;
+				ship.polys = { 0x116878c };
+				ship.mat[9] = 20 + copy * 100 + step * (copy ? 2 : 3);
+				ship.mat[11] = 600 + copy * 200;
+				if (!copy) ship.mat[4] = step == 2 ? -0.00001f : 0.005f;
+				frame->slots.push_back(ship);
+			}
+			step++;
+		}
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut);
+		m.blend_slots(b, c, 0.5);
+		assert(!m.m_blend_cut && m.m_camera_sure);
+		for (size_t i = 0; i < c.slots.size(); i++) assert(m.m_blend_ok[i]);
+		for (size_t i = 1; i < c.slots.size(); i++)
+			for (int k = 0; k < 12; k++) assert(std::fabs(m.m_blend_from[i][k] - b.slots[i].mat[k]) < 0.001f);
+		assert(std::fabs(m.m_blend[1][9] - 24.5f) < 0.001f);
+		printf("SWA hangar camera: side-on origin is no cut; ships keep their own motion and folding axes blend\n");
+	}
+
+	// The hangar exit's continuous orbit must not become cuts or pull the launching X-wing
+	// back to the place predicted for stationary scenery between successive game pictures.
+	static void swa_hangar_motion(const char *dir, float aspect, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 12520) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, cuts = 0, unblended = 0, parts = 0;
+		float worst = 0;
+		const std::set<uint32_t> xwing{ 0x1167c4b, 0x1167f9a, 0x1168393, 0x1168b71, 0x116878c };
+		while (m.frame_number() < 13590) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				if (f < 12530) continue;
+				pictures++;
+				cuts += m.m_blend_cut;
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &s = b.slots[i];
+					if (s.polys.empty() || !xwing.count(s.polys[0])) continue;
+					parts++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { unblended++; continue; }
+					float best = INFINITY;
+					for (const auto &older : a.slots) {
+						if (older.polys.empty() || older.polys[0] != s.polys[0]) continue;
+						float error = 0;
+						for (int k = 0; k < 12; k++) error = std::max(error, std::fabs(m.m_blend_from[i][k] - older.mat[k]));
+						best = std::min(best, error);
+					}
+					worst = std::max(worst, best);
+				}
+			}
+		}
+		printf("SWA hangar exit (aspect %.3f, LOD %s): %d pictures, %d false cuts, %d unblended of %d X-wing parts, older matrix error %.3f\n",
+			aspect, lod ? "on" : "off", pictures, cuts, unblended, parts, worst);
+		assert(pictures > 2000 && parts > 10000 && cuts == 0 && unblended == 0 && worst < 0.1f);
+	}
+	static void swa_wrap_smooth(const char *dir, bool native, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		game::swa::set_full_draw_distance(m, true);
+		if (native) {
+			rec::hints hints;
+			assert(hints.read("assets/games/swa/swa_map.txt"));
+			rec::attach(m.cpu(), "swa");
+			assert(rec::build_native(m.program_rom(), hints));
+			m.run_cpu = [](int n) { rec::run(n); };
+		}
+		while (m.frame_number() < 6000) m.run_frame();
+		m.set_drawing(true);
+		size_t render_passes = 0, hud_frames = 0;
+		const auto render_begin = m.m_gameplay.render_begin;
+		m.m_gameplay.render_begin = [&] {
+			render_passes++;
+			if (render_begin) render_begin();
+		};
+		for (int frame : { 6072, 6142, 6250, 6972, 7400, 8000, 9000 }) {
+			while (m.frame_number() < uint64_t(frame)) m.run_frame();
+			for (int scale : { 1, 3 }) {
+				m.set_render_scale(scale);
+				for (double fraction : { .25, .5, .75 }) {
+					const double now = frame - fraction;
+					model1::gpu_parts parts;
+					render_passes = 0;
+					const int kind = m.render_parts(now, parts, false);
+					assert(kind == (m.m_above_hud_seen ? 2 : 1));
+					assert(render_passes == (m.m_above_hud_seen ? 2u : 1u));
+					hud_frames += m.m_above_hud_seen;
+					std::vector<uint32_t> pixels;
+					if (kind == 1) model1::compose_cpu(parts, m.frame_w(), m.frame_h(), pixels);
+					else pixels.assign(m.frame().data(), m.frame().data() + size_t(m.frame_w()) * m.frame_h());
+					m.m_redrawing = true;
+					assert(m.render_smooth(now, false));
+					m.m_redrawing = false;
+					assert(std::equal(pixels.begin(), pixels.end(), m.frame().data()));
+				}
+			}
+		}
+		assert(hud_frames > 0);
+		if (native) assert(rec::fallback_count() == 0);
+		printf("SWA %s LOD %s: smooth parts match whole frames at 1x/3x; above-HUD scenes render once\n",
+			native ? "native" : "interpreter", lod ? "on" : "off");
+	}
+	static void copy_bounds_and_sort()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		auto &view = *m.m_view;
+		view.init_translation_matrix();
+		view.a_left = view.a_top = -0.5f;
+		view.a_right = view.a_bottom = 0.5f;
+		const game::model_bounds bounds{ { 0, 0, 0 }, { 1, 2, 3 }, 4 };
+		view.translation[11] = 10;
+		assert(!view.outside(bounds));
+		view.translation[9] = 20;
+		assert(view.outside(bounds));
+		view.translation[9] = 5;
+		assert(!view.outside(bounds));   // intersects the right edge
+		view.translation[9] = 0;
+		view.translation[10] = -20;
+		assert(view.outside(bounds));
+		view.translation[10] = 0;
+		view.translation[11] = -10;
+		assert(view.outside(bounds));
+		view.translation[0] = 20;
+		view.translation[11] = 10;
+		view.translation[9] = 20;
+		assert(!view.outside(bounds));   // scaled bounds still intersect
+
+		for (int count : { 0, 1, 255, 256, 4096, 32768 }) {
+			std::vector<model1::quad_t *> expected;
+			uint32_t random = 12345;
+			for (int i = 0; i < count; i++) {
+				auto &q = m.m_quaddb[i];
+				random = random * 1664525u + 1013904223u;
+				q.z = i % 2 ? std::bit_cast<float>(random & 0xff7fffffu) : float((i * 7919) % 127 - 63);
+				if (i % 23 == 0) q.z = 0.0f;
+				if (i % 29 == 0) q.z = -0.0f;
+				q.foreground = i % 17 == 0;
+				expected.push_back(&q);
+			}
+			m.m_quadpt = m.m_quaddb.get() + expected.size();
+			std::qsort(expected.data(), expected.size(), sizeof(expected[0]), [](const void *a, const void *b) {
+				return (*static_cast<model1::quad_t *const *>(a))->compare(*static_cast<model1::quad_t *const *>(b));
+			});
+			m.sort_quads();
+			assert(std::equal(expected.begin(), expected.end(), m.m_quadind.get()));
+		}
+	}
+
+	static void swa_wrap_transition(const char *dir, bool native, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" })), arcade(load_regions(dir, game::id{ "swa" }));
+		for (model1 *machine : { &m, &arcade }) {
+			machine->reset();
+			machine->set_drawing(false);
+			game::swa::set_lod(*machine, lod);
+		}
+		game::swa::set_full_draw_distance(arcade, false);
+		m.set_aspect(16.0f / 9);
+		arcade.set_aspect(16.0f / 9);
+		if (native) {
+			rec::hints hints;
+			assert(hints.read("assets/games/swa/swa_map.txt"));
+			rec::attach(m.cpu(), "swa");
+			assert(rec::build_native(m.program_rom(), hints));
+			m.run_cpu = [](int n) { rec::run(n); };
+		}
+		game::swa::set_full_draw_distance(m, true);
+		const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
+		const auto no_periodic_extras = [](const model1 &machine) {
+			for (const auto &list : machine.m_list_extra)
+				for (const auto &[matrix, extras] : list)
+					for (const auto &extra : extras) assert(!extra.transform);
+		};
+		size_t arcade_asteroids = 0, arcade_ships = 0;
+		const auto arcade_object = arcade.m_gameplay.object;
+		arcade.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+			if (polygon == (arcade.read32(0x23ba7a) & 0x7fffff) || polygon == (arcade.read32(0x23ba76) & 0x7fffff)) arcade_asteroids++;
+			if (polygon == (arcade.read32(0x9b584) & 0x7fffff) || polygon == (arcade.read32(0x9a63c) & 0x7fffff) ||
+				polygon == (arcade.read32(0x9a63c + 8) & 0x7fffff)) arcade_ships++;
+			return arcade_object(owner, texture, polygon, size, data);
+		};
+		struct ship_sample { glm::vec3 view, relative; float fade; bool asteroid, cluster = false; };
+		std::vector<ship_sample> ships;
+		std::set<uint32_t> globe_polygons, approach_models;
+		const auto object = m.m_gameplay.object;
+		m.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+			if (m.read8(0x40f008) == 3 && m.read8(0x40f770) == 2) {
+				for (auto [model, colour] : { std::pair{0x23b682u, 0x44f9fu}, {0x23b686u, 0x450dau},
+					{0x23b68au, 0x451a7u}, {0x23b68eu, 0x451a8u}, {0x23b692u, 0x45224u}, {0x23b696u, 0x452a0u} })
+					if (polygon == (m.read32(model) & 0x7fffff)) {
+						assert(texture == colour);
+						assert(lod || model < 0x23b68e);
+						globe_polygons.insert(model);
+					}
+			}
+			// Track ship bodies, asteroid clusters and DB88C's small-rock clusters at their final renderer matrices.
+			const bool cluster = polygon == (m.read32(0x23beba) & 0x7fffff);
+			const bool asteroid = cluster || polygon == (m.read32(0x23ba7a) & 0x7fffff) || polygon == (m.read32(0x23ba76) & 0x7fffff);
+			if (asteroid || polygon == (m.read32(0x9b584) & 0x7fffff) ||
+				polygon == (m.read32(0x9a63c) & 0x7fffff) ||
+				polygon == (m.read32(0x9a63c + 2 * 4) & 0x7fffff)) {
+				const auto *v = m.m_view->translation;
+				glm::mat3 rotation(glm::vec3(v[0], v[1], v[2]) / 2.48f,
+					glm::vec3(v[3], v[4], v[5]) / 2.48f, glm::vec3(v[6], v[7], v[8]) / 2.48f);
+				if (asteroid)
+					for (int c = 0; c < 3; c++)
+						for (int r = 0; r < 3; r++)
+							rotation[c][r] = std::bit_cast<float>(m.read32(0x40f570 + 4 * (3 * c + r)));
+				const glm::vec3 view(v[9], v[10], v[11]);
+				ships.push_back({ view, glm::inverse(rotation) * view, m.m_object_fade, asteroid, cluster });
+			}
+			return object(owner, texture, polygon, size, data);
+		};
+		std::map<int, decltype(ships)> frames;
+		size_t death_star_frames = 0;
+		const auto read32_value = m.m_gameplay.read32_value;
+		m.m_gameplay.read32_value = [&](uint32_t pc, uint32_t address, uint32_t value) {
+			const auto result = read32_value(pc, address, value);
+			if (pc == 0xc18af && address == m.cpu().reg(20) + 2 && m.read8(0x40f008) == 3 && m.read8(0x40f770) == 2 &&
+				(value == 0x23b68e || value == 0x23b692 || value == 0x23b696)) {
+				approach_models.insert(value);
+				assert(result == (lod ? value : value - 12));
+			}
+			return result;
+		};
+		for (int f = 1; f <= 29000; f++) {
+			m.run_frame();
+			arcade.run_frame();
+			assert(m.nvram() == arcade.nvram() && m.work_ram() == arcade.work_ram());
+			if (m.read8(0x40f008) == 3 && m.read8(0x40f770) == 2 && f % 100 == 0) {
+				assert(!state->z_wrap_prefetched && state->asteroid_objects.empty());
+				ships.clear();
+				m.redraw();
+				arcade_asteroids = 0;
+				arcade.redraw();
+				assert(arcade_asteroids == 0);
+				assert(std::none_of(ships.begin(), ships.end(), [](const auto &s) { return s.asteroid; }));
+				death_star_frames++;
+			}
+			if ((f >= 6072 && f <= 6180) || (f >= 6968 && f <= 6972)) {
+				ships.clear();
+				m.redraw();
+				frames[f] = ships;
+				const std::vector<uint32_t> pixels(m.frame().data(), m.frame().data() + m.frame_w() * m.frame_h());
+				auto saved0 = m.m_list_extra[0], saved1 = m.m_list_extra[1];
+				for (auto &list : m.m_list_extra)
+					for (auto &[matrix, extras] : list)
+						for (auto &extra : extras) extra.bounds.reset();
+				m.redraw();
+				assert(std::equal(pixels.begin(), pixels.end(), m.frame().data()));
+				m.m_list_extra[0] = std::move(saved0);
+				m.m_list_extra[1] = std::move(saved1);
+				ships = frames[f];
+				arcade_asteroids = arcade_ships = 0;
+				arcade.redraw();
+				no_periodic_extras(arcade);
+				assert(!std::static_pointer_cast<game::swa::gameplay_state>(arcade.game_state())->z_wrap_prefetched);
+			}
+			if (f == 6072) {
+				assert(!state->destroyer_manager && state->destroyer_models.empty() && state->asteroid_objects.empty());
+				assert(std::count_if(ships.begin(), ships.end(), [](const auto &s) { return s.asteroid && !s.cluster; }) >= 5);
+				assert(std::count_if(ships.begin(), ships.end(), [](const auto &s) { return s.cluster; }) >= 5);
+				assert(arcade_asteroids == 0 && arcade_ships == 0);
+			}
+			if (f == 6102) assert(state->asteroid_objects.size() == 38 + 5);
+			if (f == 6142) assert(arcade_asteroids > 0 && arcade_ships > 0);
+			if (f == 6142) {
+				size_t duplicates = 0;
+				for (size_t a = 0; a < ships.size(); a++)
+					for (size_t b = 0; b < a; b++)
+						if (ships[a].asteroid && ships[b].asteroid && glm::length(ships[a].view - ships[b].view) < 1) duplicates++;
+				assert(duplicates == 0);
+			}
+			if (f == 6138) assert(state->destroyer_models.empty() && state->destroyer_manager);
+			if (f == 6142 || f == 6972) {
+				m.set_render_scale(3);
+				m.redraw();
+				const std::vector<uint32_t> pixels(m.frame().data(), m.frame().data() + m.frame_w() * m.frame_h());
+				auto saved0 = m.m_list_extra[0], saved1 = m.m_list_extra[1];
+				for (auto &list : m.m_list_extra)
+					for (auto &[matrix, extras] : list)
+						for (auto &extra : extras) extra.bounds.reset();
+				m.redraw();
+				assert(std::equal(pixels.begin(), pixels.end(), m.frame().data()));
+				m.m_list_extra[0] = std::move(saved0);
+				m.m_list_extra[1] = std::move(saved1);
+				m.set_render_scale(1);
+			}
+		}
+		for (const auto &[after, samples] : frames) {
+			const int before = after - 1;
+			if (!frames.contains(before)) {
+				assert(samples.size() >= 5);
+				continue;
+			}
+			assert(frames[before].size() >= 5 && frames[after].size() >= 5);
+			for (const auto &ship : samples) {
+				if (ship.fade <= 0.17f || ship.view.z <= 0 ||
+					std::fabs(ship.view.x) >= ship.view.z || std::fabs(ship.view.y) >= ship.view.z) continue;
+				float nearest = INFINITY;
+				for (const auto &previous : frames[before])
+					if (ship.asteroid == previous.asteroid && ship.cluster == previous.cluster) nearest = std::min(nearest, glm::length(ship.relative - previous.relative));
+				if (nearest > 4096) {
+					fprintf(stderr, "SWA %s appeared at frame %d: (%g, %g, %g), nearest previous object %g units away\n",
+						ship.cluster ? "rock cluster" : ship.asteroid ? "asteroid" : "ship", after, ship.view.x, ship.view.y, ship.view.z, nearest);
+					assert(false);
+				}
+			}
+		}
+		assert(death_star_frames >= 30);
+		assert(approach_models == (std::set<uint32_t>{0x23b68e, 0x23b692, 0x23b696}));
+		assert(globe_polygons == (lod
+			? std::set<uint32_t>{0x23b682, 0x23b686, 0x23b68a, 0x23b68e, 0x23b692, 0x23b696}
+			: std::set<uint32_t>{0x23b682, 0x23b686, 0x23b68a}));
+		printf("SWA %s LOD %s: fleet, asteroids and rock clusters present from first scene picture (6072); continuous through 6180 and 6968-6972; no asteroids in Death Star demo; globe models follow LOD setting; Arcade has no periodic extras\n",
+			native ? "native" : "interpreter", lod ? "on" : "off");
+		game::swa::set_full_draw_distance(m, false);
+		for (int f = 0; f < 10; f++) {
+			m.run_frame();
+			arcade.run_frame();
+			assert(m.nvram() == arcade.nvram() && m.work_ram() == arcade.work_ram());
+		}
+		m.redraw();
+		arcade.redraw();
+		assert(std::equal(m.frame().data(), m.frame().data() + m.frame_w() * m.frame_h(), arcade.frame().data()));
+		assert(!state->z_wrap_prefetched);
+		if (native) assert(rec::fallback_count() == 0);
+	}
+
+	static void overlay_priority()
+	{
+		for (int scale : { 1, 2 })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) {
+				model1::regions regions;
+				regions.title = game::id{ "swa" };
+				model1 m(std::move(regions));
+				m.set_render_scale(scale);
+				m.set_aspect(aspect);
+				m.m_pens[1] = 0x00ff00;
+				m.m_pens[2] = 0x000000;
+				m.m_pens[3] = 0xffffff;
+				for (int i = 0; i < 16; i++) {
+					m.m_tiles.char_w(16 + i, 0x1111, 0xffff);
+					m.m_tiles.char_w(32 + i, 0x2222, 0xffff);
+					m.m_tiles.char_w(48 + i, 0x3333, 0xffff);
+				}
+				m.m_tiles.tile_w(0, 0x8001, 0xffff);
+				m.m_tiles.tile_w(1, 0x8002, 0xffff);
+				m.m_tiles.tile_w(2, 3, 0xffff);
+				m.m_tiles.update(m.m_pens);
+				auto &bitmap = m.m_bitmap;
+				bitmap.fill(0x808080);
+				for (int layer : { 7, 5, 3, 1 }) m.draw_tiles(bitmap, bitmap.cliprect(), layer, 0);
+				m.build_overlay_mask(bitmap, bitmap.cliprect());
+				bitmap.fill(0xffff00);
+				m.apply_overlay_stencil(bitmap, bitmap.cliprect());
+				for (int y = 0; y < bitmap.height(); y++)
+					for (int x = 0; x < bitmap.width(); x++) {
+						const bool feature = y < 8 * scale && x >= m.m_ext * scale && x < (m.m_ext + 8) * scale;
+						assert(bitmap.pix(y, x) == (feature ? 0x00ff00u : 0xffff00u));
+					}
+			}
+		puts("Overlay priority: only HUD features mask foreground polygons, not dark HUD or bright backgrounds");
+	}
+
+	static void swa_name_entry(const char *dir)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		auto play = game::make_auto_play(title, "", 12345, false);
+		assert(play);
+		for (int f = 1; f <= 15750; f++) {
+			const auto in = play->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t c = 0; c < in.pressed.size(); c++)
+				m.m_inputs[c] = uint8_t(~in.pressed[c]);
+			m.run_frame();
+		}
+		for (int scale : { 1, 2 }) {
+			m.set_render_scale(scale);
+			m.screen_update(m.m_bitmap, m.m_bitmap.cliprect());
+			assert(m.m_above_hud_seen);
+			bitmap_rgb32 unmasked;
+			unmasked.allocate(m.frame_w(), m.frame_h());
+			std::copy_n(m.frame().data(), size_t(m.frame_w()) * m.frame_h(), unmasked.data());
+			m.tgp_render(unmasked, unmasked.cliprect(), model1::RENDER_ABOVE_HUD);
+			size_t yellow = 0;
+			for (int y = 50 * scale; y < m.frame_h(); y++)
+				for (int x = 0; x < m.frame_w(); x++) {
+					const uint32_t pixel = m.m_bitmap.pix(y, x);
+					assert(pixel == unmasked.pix(y, x));
+					if ((pixel & 0xffff00) == 0xffff00 && (pixel & 0xff) == 0) yellow++;
+				}
+			assert(yellow > size_t(1000 * scale * scale));
+			printf("SWA name entry (%dx): %zu yellow letter pixels, no masking by the photograph\n", scale, yellow);
+		}
+	}
+
 	static void trackside_collisions()
 	{
 		model1::regions regions;
@@ -105,7 +630,7 @@ struct model1_video_test
 			return result;
 		};
 		const auto matrix = full.m_gameplay.matrix_objects;
-		full.m_gameplay.matrix_objects = [&] {
+		full.m_gameplay.matrix_objects = [&](uint32_t &word) {
 			if (full.cpu().pc() == 0xff8500) {
 				const uint32_t caller = full.read32(full.cpu().reg(31));
 				if (caller == 0xffb81c || caller == 0xffb859) writes[0]++;
@@ -116,7 +641,7 @@ struct model1_video_test
 				if (caller == 0xffddd4 || caller == 0xffddeb) writes[5]++;
 				if (caller == 0xffd19c) writes[6]++;
 			}
-			auto extra = matrix();
+			auto extra = matrix(word);
 			for (const auto &o : extra)
 				if (o.owner && full.read32(o.owner + 0xa) == 0xffcc7d) {
 					calls[7]++;
@@ -136,11 +661,12 @@ struct model1_video_test
 		for (int f = 1; f <= 6000; f++) {
 			if (racing) {
 				const auto input = play->frame(f);
-				for (model1 *m : { &arcade, &full })
-					for (int c = 0; c < 3; c++) {
+				for (model1 *m : { &arcade, &full }) {
+					for (size_t c = 0; c < input.pressed.size(); c++)
 						m->m_inputs[c] = uint8_t(~input.pressed[c]);
+					for (size_t c = 0; c < input.analog.size(); c++)
 						if (input.analog[c] >= 0) assert(m->set_analog_input(c, uint8_t(input.analog[c])));
-					}
+				}
 			}
 			arcade.run_frame();
 			full.run_frame();
@@ -245,8 +771,8 @@ struct model1_video_test
 			return result;
 		};
 		const auto matrix_objects = m.m_gameplay.matrix_objects;
-		m.m_gameplay.matrix_objects = [&] {
-			auto extra = matrix_objects();
+		m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+			auto extra = matrix_objects(word);
 			if (m.cpu().pc() == 0xff8500) {
 				const uint32_t caller = m.read32(m.cpu().reg(31));
 				if (caller == 0xffd9e8 || caller == 0xffda21 || caller == 0xffda67) parts++;
@@ -437,8 +963,8 @@ struct model1_video_test
 		bool collecting = false;
 		std::set<uint8_t> phases;
 		const auto matrix_objects = m.m_gameplay.matrix_objects;
-		m.m_gameplay.matrix_objects = [&] {
-			auto extra = matrix_objects();
+		m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+			auto extra = matrix_objects(word);
 			if (collecting)
 				for (const auto &object : extra)
 					if (!object.owner) assert(drawn.emplace(object.texture, object.polygon).second);
@@ -476,10 +1002,10 @@ struct model1_video_test
 		};
 		for (int f = 1; f <= 4500; f++) {
 			const auto inputs = play->frame(f);
-			for (int c = 0; c < 3; c++) {
+			for (size_t c = 0; c < inputs.analog.size(); c++)
 				if (inputs.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(inputs.analog[c])));
+			for (size_t c = 0; c < inputs.pressed.size(); c++)
 				m.m_inputs[c] = uint8_t(~inputs.pressed[c]);
-			}
 			if (f == 3300) m.on_instruction = trace;
 			m.run_frame();
 			const auto error = play->check(f, m);
@@ -574,10 +1100,10 @@ struct model1_video_test
 		size_t gauge_pixels = 0, go_pixels = 0;
 		for (int f = 1; f <= 4800; f++) {
 			const auto in = play->frame(f, m);
-			for (int c = 0; c < 3; c++) {
+			for (size_t c = 0; c < in.analog.size(); c++)
 				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t c = 0; c < in.pressed.size(); c++)
 				m.m_inputs[c] = uint8_t(~in.pressed[c]);
-			}
 			m.run_frame();
 			const uint8_t phase = m.work_ram()[0x1138];
 			if (phase != 0x12 && phase != 0x14) continue;
@@ -690,6 +1216,163 @@ struct model1_video_test
 		if (native) assert(rec::fallback_count() == 0);
 		printf("VR opening car (%s, %s): all three parts retained for one update, visible in both missing-frame pictures; CPU, RAM and lists unchanged\n",
 			extended ? "extended" : "arcade", native ? "native" : "interpreter");
+	}
+
+	// SWA's places are tens of thousands of units: the camera's move between two lists fits them
+	// (no cut, every part blended), and keyed copies on the stars' slot blend with their pairs.
+	static void swa_far_blend()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame z, a, b;
+		z.frame = 8, a.frame = 10, b.frame = 12;
+		auto copy = [](uint64_t key, float x, float z) {
+			game::render_object o{ 0, 0x100, 0, 0, std::nullopt };
+			o.key = key;
+			o.transform = std::array<float, 12>{ 1, 0, 0, 0, 1, 0, 0, 0, 1, x, 0, z };
+			return o;
+		};
+		model1::slot stars;
+		stars.polys = { 0x10 };
+		z.slots.push_back(stars);
+		a.slots.push_back(stars);
+		b.slots.push_back(stars);
+		a.slots[0].extra = { copy(1, 1000, 5000), copy(2, 0, 9000), copy(2, 40000, 9000), copy(3, 0, 20000), copy(0, 0, 3000) };
+		b.slots[0].extra = { copy(1, 1100, 5000), copy(2, 40010, 9000), copy(2, 10, 9000), copy(3, 0, 6000), copy(0, 0, 3000) };
+		uint32_t seed = 1;
+		auto next = [&] { seed = seed * 1103515245 + 12345; return float((seed >> 8) & 0xffff) / 65536; };
+		for (int i = 0; i < 24; i++) {
+			model1::slot sa;
+			sa.polys = { 0x200u + i };
+			sa.mat[9] = (next() - 0.5f) * 90000, sa.mat[10] = (next() - 0.5f) * 30000, sa.mat[11] = 3000 + next() * 60000;
+			const float v[3] = { 50 + (next() - 0.5f) * 60, -30 + (next() - 0.5f) * 60, -150 + (next() - 0.5f) * 60 };
+			model1::slot sz = sa, sb = sa;
+			for (int k = 0; k < 3; k++) sz.mat[9 + k] -= v[k], sb.mat[9 + k] += v[k];
+			z.slots.push_back(sz);
+			a.slots.push_back(sa);
+			b.slots.push_back(sb);
+		}
+		m.blend_slots(z, a, 0.5);
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut && m.m_camera_sure && !m.m_camera_cut);
+		for (size_t i = 0; i < b.slots.size(); i++) assert(m.m_blend_ok[i]);
+		m.m_replaying = true;
+		m.m_replay_slot = 0;
+		const float expect[] = { 1050, 40005, 5, 0, 0 };   // (the last two: a far jump and no key, unblended)
+		const float expect_z[] = { 5000, 9000, 9000, 6000, 3000 };
+		for (size_t n = 0; n < b.slots[0].extra.size(); n++) {
+			float out[12];
+			m.smooth_extra(n, *b.slots[0].extra[n].transform, out);
+			assert(std::fabs(out[9] - expect[n]) < 0.01f && std::fabs(out[11] - expect_z[n]) < 0.01f);
+		}
+		m.m_replaying = false;
+		printf("SWA far places: no cut, all parts blended; keyed copies blended with their nearest pair\n");
+	}
+
+	// SWA's Death Star surface: cells of a few models round the camera, the list's order changing as
+	// the camera crosses into the next cell (one leaving it, one coming in). Each cell pairs with
+	// the older copy the camera's move carries onto it, the new one is moved with the camera, and
+	// all of them blend by one move (cells drawn from their own pairs' moves cracked apart); a
+	// ship of its own model, moving by itself, keeps its pair.
+	static void swa_surface_cells()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame z, a, b;
+		z.frame = 8, a.frame = 10, b.frame = 12;
+		const double turn = 2 * M_PI / 180, T[3] = { 40, -20, -300 };
+		const double c = std::cos(turn), s = std::sin(turn);
+		auto move = [&](model1::slot sl, int times) {   // the camera's move: x' = R x + T, `times` over
+			for (int t = 0; t < times; t++) {
+				float out[12];
+				for (int col = 0; col < 4; col++) {
+					const float *v = sl.mat + 3 * col;
+					out[3 * col + 0] = float(c * v[0] + s * v[2] + (col == 3 ? T[0] : 0));
+					out[3 * col + 1] = float(v[1] + (col == 3 ? T[1] : 0));
+					out[3 * col + 2] = float(-s * v[0] + c * v[2] + (col == 3 ? T[2] : 0));
+				}
+				std::copy_n(out, 12, sl.mat);
+			}
+			return sl;
+		};
+		std::vector<model1::slot> cells;
+		for (int i = 0; i < 30; i++) {
+			model1::slot sl;
+			sl.polys = { 0x300u + uint32_t(i % 3) };
+			sl.mat[9] = float((i % 6 - 2.5) * 3000), sl.mat[10] = float(-400 - (i % 4) * 600), sl.mat[11] = float(800 + (i / 6) * 3500);
+			cells.push_back(sl);
+		}
+		model1::slot ship;
+		ship.polys = { 0x900 };
+		ship.mat[9] = 200, ship.mat[10] = -100, ship.mat[11] = 2000;
+		model1::slot stars;
+		stars.polys = { 0x10 };
+		for (auto *lf : { &z, &a }) lf->slots.push_back(stars);
+		for (size_t i = 0; i < cells.size(); i++) z.slots.push_back(cells[i]), a.slots.push_back(move(cells[i], 1));
+		z.slots.push_back(ship), a.slots.push_back(move(ship, 1));
+		// the newer list in another order: cell 4 left it, one came in at the back, of a model in use
+		b.slots.push_back(move(stars, 0));
+		for (size_t i = 5; i < cells.size(); i++) b.slots.push_back(move(cells[i], 2));
+		for (size_t i = 0; i < 4; i++) b.slots.push_back(move(cells[i], 2));
+		model1::slot arrived;
+		arrived.polys = { 0x301 };
+		arrived.mat[9] = -9000, arrived.mat[10] = -400, arrived.mat[11] = 21000;
+		b.slots.push_back(move(arrived, 2));
+		model1::slot ship_b = move(ship, 2);
+		ship_b.mat[9] += 60;   // (its own move, 3% of its depth)
+		b.slots.push_back(ship_b);
+		m.blend_slots(z, a, 0.5);
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut && m.m_camera_sure && !m.m_camera_cut);
+		for (size_t i = 0; i < b.slots.size(); i++) assert(m.m_blend_ok[i]);
+		// every cell from its own older place (the camera's move undone), every one blended by one
+		// move: the turn halfway back, from the newer place
+		const double ch = std::cos(-turn / 2), sh = std::sin(-turn / 2);
+		const size_t first = 1, last = b.slots.size() - 2;
+		for (size_t i = first; i <= last; i++) {
+			const float *pb = b.slots[i].mat, *from = m.m_blend_from[i].data();
+			const double x = pb[9] - T[0], y = pb[10] - T[1], zz = pb[11] - T[2];
+			assert(std::fabs(from[9] - (c * x - s * zz)) < 0.5 && std::fabs(from[10] - y) < 0.5 && std::fabs(from[11] - (s * x + c * zz)) < 0.5);
+			const float *b0 = b.slots[first].mat, *m0 = m.m_blend[first].data(), *mi = m.m_blend[i].data();
+			const double dx = pb[9] - b0[9], dy = pb[10] - b0[10], dz = pb[11] - b0[11];
+			assert(std::fabs((mi[9] - m0[9]) - (ch * dx + sh * dz)) < 0.5);
+			assert(std::fabs((mi[10] - m0[10]) - dy) < 0.5);
+			assert(std::fabs((mi[11] - m0[11]) - (-sh * dx + ch * dz)) < 0.5);
+		}
+		const size_t s_i = b.slots.size() - 1;
+		for (int k = 0; k < 12; k++) assert(m.m_blend_from[s_i][k] == a.slots.back().mat[k]);
+		// a fit most slots are off (the trench's walls, a move one cell along fitting a third of
+		// them): not the camera's, nothing moved by it; each blends from its own pair
+		{
+			model1::regions tr;
+			tr.title = game::id{ "swa" };
+			model1 t(std::move(tr));
+			model1::logic_frame tb;
+			tb.frame = 12;
+			tb.slots.push_back(stars);
+			for (size_t i = 0; i < cells.size(); i++) {
+				model1::slot sl = move(cells[i], 2);
+				if (i % 3) sl.mat[9] += float((i % 2 ? 0.08 : -0.08) * sl.mat[11]);
+				tb.slots.push_back(sl);
+			}
+			model1::logic_frame ta = a;
+			ta.slots.pop_back();
+			model1::logic_frame tz = z;
+			tz.slots.pop_back();
+			t.blend_slots(tz, ta, 0.5);
+			t.blend_slots(ta, tb, 0.5);
+			assert(!t.m_cam_carried);
+			int own = 0;
+			for (size_t i = 1; i < tb.slots.size(); i++)
+				if ((i - 1) % 3 && t.m_blend_ok[i]) {
+					for (int k = 0; k < 12; k++) assert(t.m_blend_from[i][k] == ta.slots[i].mat[k]);
+					own++;
+				}
+			assert(own >= 12);
+		}
+		printf("SWA surface cells: re-ordered and new cells paired by the camera's move, all blended by one move; a ship keeps its pair; a fit most are off moves none\n");
 	}
 
 	// A camera swaying (turning back and forth over a degree a list) about a car it keeps in place:
@@ -913,7 +1596,7 @@ struct model1_video_test
 		for (bool smooth : { false, true }) {
 			m.set_smooth(smooth);
 			bool pending = true;
-			m.m_gameplay.matrix_objects = [&] {
+			m.m_gameplay.matrix_objects = [&](uint32_t &) {
 				if (!pending) return std::vector<game::render_object>{};
 				pending = false;
 				return std::vector<game::render_object>{ { 0x40000, 0x1234, 0 } };
@@ -934,6 +1617,22 @@ struct model1_video_test
 			m.list_written(0, 8);
 			assert(m.m_list_extra[0].empty());
 			assert(frame.slots[1].extra.front().polygon == 0x1234);
+			// a write naming an earlier matrix command: its extras replaced, the written word's dropped
+			m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+				if (word != 20) return std::vector<game::render_object>{};
+				word = 8;
+				return std::vector<game::render_object>{ { 0x40000, 0x5678, 0 } };
+			};
+			m.list_written(0, 8);
+			m.m_list_extra[0][20] = { { 0x40000, 0x9abc, 0 } };
+			m.list_written(0, 20);
+			assert(m.m_list_extra[0].size() == 1 && m.m_list_extra[0].at(8).front().polygon == 0x5678);
+			m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+				word = 8;
+				return std::vector<game::render_object>{};
+			};
+			m.list_written(0, 21);
+			assert(m.m_list_extra[0].empty());
 			m.m_gameplay.matrix_objects = {};
 		}
 	}
@@ -1039,6 +1738,155 @@ struct model1_video_test
 			extended ? "extended" : "arcade", views, checked);
 	}
 
+	static void object_bounds()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		regions.polygons.resize(17 * sizeof(uint32_t));
+		model1 m(std::move(regions));
+		m.m_quadpt = m.m_quaddb.get();
+		m.m_pointpt = m.m_pointdb.get();
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		m.m_view->viewx = 0;
+		const auto check = [&](uint32_t texture, uint32_t polygon, uint32_t size, size_t quads = 0) {
+			m.m_quadpt = m.m_quaddb.get();
+			m.m_pointpt = m.m_pointdb.get();
+			float old_z = 0;
+			m.push_object(texture, polygon, size, old_z);
+			assert(m.m_quadpt == m.m_quaddb.get() + quads);
+			assert(m.m_pointpt <= m.m_pointdb.get() + 4);
+			assert(m.m_view->viewx == 0);
+		};
+		check(0x7d082d7d, 0x082d7d08, 0);
+		check(0x2d000520, 0xd0f4212d, 0);
+		check(0x3ffff, 0, 0);
+		check(0x3fffe, 0, 0);
+		check(0x100000, 0, 0);
+		check(0x40000, 0, 0x1000000);
+		check(0x40000, 12, 0);
+		check(0x40000, 0x800000 | (0x400000 - 5), 0);
+		check(0x40000, 11, 0);
+		check(0x40000, 0x800000 | (0x400000 - 6), 0);
+		auto *rom = reinterpret_cast<uint32_t *>(m.m_regions.polygons.data());
+		rom[6] = 0x1001;
+		check(0xfffff, 0, 0);
+		rom[6] = 1;
+		rom[16] = 1;
+		check(0x40000, 0, 0);
+		rom[16] = 0;
+		check(0x40000, 0, 0);
+		// The final word may terminate a stream without another complete record.
+		check(0xffffe, 0, 1);
+		rom[6] = 0;
+		check(0x40000, 0, 0);
+		std::fill_n(m.m_view->translation, 12, 0.0f);
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->ayys = 0;
+		const std::array<uint32_t, 17> visible{
+			0xbf800000, 0xbf800000, 0x3f800000,
+			0xbf800000, 0x3f800000, 0x3f800000,
+			0x5201, 0, 0, 0x3f800000,
+			0x3f800000, 0xbf800000, 0x3f800000,
+			0x3f800000, 0x3f800000, 0x3f800000, 0
+		};
+		std::copy(visible.begin(), visible.end(), rom);
+		check(0xffffe, 0, 0, 1);
+		check(0x3ffff, 0, 0, 1);
+		rom[6] = 0x4201;
+		check(0x3ffff, 0, 0);
+		rom[6] = 0x5201;
+		check(0x7d082d7d, 0x082d7d08, 0);
+		check(0xffffe, 0, 1, 1);
+		puts("Model 1 object address and polygon boundary tests passed");
+	}
+
+	static void swa_destroyer_bounds(const char *path)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(path, title));
+		m.reset();
+		auto script = game::make_auto_play(title, "progression", 12345, false);
+		assert(script);
+		const auto press = [&](uint8_t button) {
+			m.m_inputs[0] = uint8_t(~button);
+			for (int f = 0; f < 10; ++f) m.run_frame();
+			m.m_inputs[0] = 0xff;
+			for (int f = 0; f < 60; ++f) m.run_frame();
+		};
+		for (int f = 0; f < 1300; ++f) m.run_frame();
+		press(4);
+		for (int i = 0; i < 7; ++i) press(8);
+		press(4);
+		for (int row = 0; row < 3; ++row) {
+			press(8);
+			for (int i = 0; i < 3; ++i) press(4);
+		}
+		press(8); press(8); press(4);
+		for (int i = 0; i < 4; ++i) press(8);
+		press(4);
+		for (int f = 0; f < 600; ++f) m.run_frame();
+		bool malformed = false;
+		m.on_instruction = [&](uint32_t pc) {
+			if (pc == 0xc197f && m.cpu().reg(0) == 0xd93ce) {
+				assert(m.read32(0xd93ce) == 0x082d7d08);
+				assert(m.read32(0xd93d2) == 0x7d082d7d);
+				malformed = true;
+			}
+		};
+		uint64_t stage = 0;
+		for (uint64_t f = 1; f <= 14500; ++f) {
+			const bool destroyer = m.read8(0x40f008) == 13 && m.read8(0x40f009) == 5;
+			if (destroyer && !stage) stage = f;
+			auto in = script->frame(f, m);
+			if (destroyer) {
+				in.analog[0] = 127;
+				in.analog[1] = f - stage < 60 ? 227 : 127;
+				in.analog[2] = 28;
+			}
+			for (size_t c = 0; c < in.analog.size(); ++c)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); ++p) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.set_drawing(f % 4 == 0 || f % 150 == 0);
+			m.run_frame();
+		}
+		assert(stage && malformed);
+		puts("SWA real-input destroyer malformed-object route survived");
+	}
+
+	// an extra object's fade scales its polygons' colours toward black
+	static void object_fade()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = { -1, -1, 10, 1, -1, 10, 0, 0, 0, -1, 1, 1, 10, -1, 1, 10 };
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t flags = 0x00004000 | (1 << 8) | 1;   // a two-sided quad linked to the first edge
+		std::memcpy(poly + 6, &flags, 4);
+		m.m_tgp_ram[0] = 0x400 | 1;   // unlit: full intensity
+		m.m_paletteram16[0x1001] = 0x7fff;
+		for (int channel : { 0, 0x2000, 0x4000 }) m.m_color_xlat[(31 << 8) | 0x3f | channel] = 31 << 3;
+		const auto colour = [&](float fade) {
+			m.m_quadpt = m.m_quaddb.get();
+			m.m_pointpt = m.m_pointdb.get();
+			float old_z = 0;
+			m.m_object_fade = fade;
+			m.push_object(0x40000, 0x800000, 1, old_z);
+			m.m_object_fade = 1;
+			assert(m.m_quadpt > m.m_quaddb.get());
+			return m.m_quaddb[0].col & 0xffffff;
+		};
+		const uint32_t lit = colour(1), half = colour(.5f), none = colour(0);
+		assert(lit != 0 && none == 0);
+		for (int sh = 0; sh <= 16; sh += 8)
+			assert(std::abs(int((half >> sh) & 0xff) - int(std::lround(((lit >> sh) & 0xff) * .5f))) <= 1);
+	}
+
 	static void foreground_order()
 	{
 		model1::regions regions;
@@ -1075,6 +1923,111 @@ struct model1_video_test
 		assert(m.m_quadpt > m.m_quaddb.get());
 		for (auto *p = m.m_quaddb.get(); p < m.m_quadpt; p++)
 			assert(p->foreground && p->z == -.1f);
+	}
+
+	// widescreen: a direct poly across the arcade's whole screen (SWA's hit flash) reaches the wide
+	// picture's edges; one touching a single edge stays
+	static void wide_direct_overlay()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.m_wide_frame = true;
+		const float ext = float(m.m_ext);
+		assert(ext > 0);
+		auto direct = [&](std::initializer_list<std::pair<float, float>> corners) {
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			model1::quad_t q;
+			int i = 0;
+			for (auto [x, y] : corners) {
+				model1::point_t *p = m.m_pointpt++;
+				p->fx = (x + ext) * m.m_view->scale;
+				p->fy = y * m.m_view->scale;
+				p->s.x = int32_t(p->fx);
+				q.p[i++] = p;
+			}
+			*m.m_quadpt++ = q;
+			m.widen_direct(m.m_pointdb.get(), m.m_quaddb.get());
+			std::vector<float> xs;
+			for (model1::point_t *p = m.m_pointdb.get(); p < m.m_pointpt; p++) xs.push_back(p->fx / m.m_view->scale - ext);
+			return xs;
+		};
+		const auto flash = direct({ { 0, -1 }, { 496, -1 }, { 496, 383 }, { 0, 383 } });
+		assert(flash[0] == -ext && flash[1] == 496 + ext && flash[2] == 496 + ext && flash[3] == -ext);
+		const auto panel = direct({ { 0, 55 }, { 384, 55 }, { 384, 223 }, { 0, 223 } });
+		assert(panel[0] == 0 && panel[1] == 384);
+		m.m_wide_frame = false;
+		const auto narrow = direct({ { 0, -1 }, { 496, -1 }, { 496, 383 }, { 0, 383 } });
+		assert(narrow[0] == 0 && narrow[1] == 496);
+		m.m_pointpt = m.m_pointdb.get();
+		m.m_quadpt = m.m_quaddb.get();
+		puts("Model 1 widescreen direct overlay checks passed");
+	}
+
+	// widescreen, SWA: an opaque layer isn't stretched; its sides continue a plain edge's colour, else black
+	static void unstretched_backdrops()
+	{
+		constexpr uint32_t KEY = 0xff000000;
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.m_wide_frame = true;
+		assert(!m.stretch_backdrops());
+		const int ext = m.m_ext, w = model1::SCREEN_W + 2 * ext;
+		bitmap_rgb32 px;
+		px.allocate(w, model1::SCREEN_H);
+		px.fill(KEY);
+		for (int y = 0; y < model1::SCREEN_H; y++)
+			for (int x = ext; x < ext + model1::SCREEN_W; x++) px.pix(y, x) = 0x00ffffff;
+		px.pix(100, ext + model1::SCREEN_W - 1) = 0x00123456;    // art reaching the right edge
+		m.fill_backdrop_sides(px);
+		for (int y = 0; y < model1::SCREEN_H; y++) {
+			assert(px.pix(y, 0) == 0x00ffffff && px.pix(y, ext - 1) == 0x00ffffff);
+			assert(px.pix(y, ext + model1::SCREEN_W) == 0 && px.pix(y, w - 1) == 0);
+		}
+		m.m_wide_frame = false;
+		px.fill(KEY);
+		px.pix(0, ext) = 0x00ffffff;
+		m.fill_backdrop_sides(px);
+		assert(px.pix(0, 0) == KEY);
+
+		model1::regions vr;
+		vr.title = game::id{ "vr" };
+		assert(model1(std::move(vr)).stretch_backdrops());
+		puts("Model 1 unstretched widescreen backdrop checks passed");
+	}
+
+	// A split-mode layer pair (SWA's opening starfield) drawn wide: the two maps sit side by side as
+	// one 1024-pixel strip, so the sides carry on from it instead of staying empty.
+	static void wide_split_tiles()
+	{
+		constexpr int ext = 83, h = 20;
+		segas24_tile t;
+		std::vector<uint32_t> pens(0x2000);
+		for (size_t i = 0; i < pens.size(); i++) pens[i] = uint32_t(i);
+		for (int i = 0; i < 16; i++) { t.char_w(16 + i, 0x1111, 0xffff); t.char_w(32 + i, 0x2222, 0xffff); }
+		for (int e = 0; e < 0x1000; e++) { t.tile_w(0x2000 + e, 1, 0xffff); t.tile_w(0x3000 + e, 2, 0xffff); }
+		t.tile_w(0x5002, 0x200 | h, 0xffff);     // layer 4's scroll, the first map on the left
+		t.tile_w(0x5006, 0x4000, 0xffff);        // split side by side
+		t.update(pens.data());
+		bitmap_rgb32 wide, plain;
+		wide.allocate(496 + 2 * ext, 384);
+		plain.allocate(496 + 2 * ext, 384);
+		wide.fill(0xff000000);
+		plain.fill(0xff000000);
+		t.m_ox = ext;
+		t.draw_wide(wide, 4, segas24_tile::DRAW_OPAQUE, ext);
+		t.draw(plain, plain.cliprect(), 4, 0, segas24_tile::DRAW_OPAQUE);
+		for (int y = 0; y < 384; y += 50)
+			for (int x = -ext; x < 496 + ext; x++) {
+				const uint32_t want = (x < h || x >= 512 + h) ? 1 : 2;
+				assert(wide.pix(y, x + ext) == want);
+				if (x >= 0 && x < 496) assert(plain.pix(y, x + ext) == want);
+			}
+		puts("Model 1 wide split-mode tile checks passed");
 	}
 
 	static void hud_edge_pinning()
@@ -1239,10 +2192,10 @@ struct model1_video_test
 		size_t checked = 0, handoffs = 0;
 		for (int f = 1; f <= 20100; f++) {
 			const auto in = play->frame(f, m);
-			for (int c = 0; c < 3; c++) {
+			for (size_t c = 0; c < in.analog.size(); c++)
 				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t c = 0; c < in.pressed.size(); c++)
 				m.m_inputs[c] = uint8_t(~in.pressed[c]);
-			}
 			m.run_frame();
 			if (f < 19900) continue;
 			for (double fraction : { .25, .75 }) {
@@ -1386,10 +2339,721 @@ struct model1_video_test
 			smooth ? "smooth" : "arcade motion", extended ? "extended distance" : "arcade distance",
 			scale, aspect, tested, logo_pixels, originally_hidden);
 	}
+	// SWA's free-play attract run: a TIE overtakes the X-wing on the Death Star surface, closing on
+	// the camera (TIME 147, game frames 54188-54191). Its parts were moved with the camera as
+	// scenery, from a place nearer the camera than either list had it: each list's pictures started
+	// too big and shrank, a trail of copies. Its wings, a finer model as it nears, have no older copy.
+	static void swa_passing_tie(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < FROM - 8) m.run_frame();
+		m.set_drawing(true);
+		std::vector<size_t> blue;
+		while (m.frame_number() < 54191) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			if (f < FROM) continue;
+			for (int q = 0; q < 4; q++) {
+				m.render_smooth(f - 1 + q / 4.0);
+				size_t n = 0;
+				const uint32_t *px = m.frame().data();
+				for (int y = m.frame_h() / 6; y < m.frame_h(); y++)
+					for (int x = 0; x < m.frame_w(); x++) {
+						const uint32_t c = px[size_t(y) * m.frame_w() + x];
+						n += (c & 255) > 120 && (c >> 16 & 255) < 60 && (c >> 8 & 255) < 60;
+					}
+				blue.push_back(n);
+			}
+		}
+		// the TIE's wings (blue) fill more of the screen in each picture, never shrinking or leaping
+		std::string seq;
+		for (size_t n : blue) seq += " " + std::to_string(n);
+		printf("SWA passing TIE, wing pixels by picture:%s\n", seq.c_str());
+		assert(blue.size() == size_t(54191 - FROM + 1) * 4);
+		assert(blue.back() > 10 * blue.front());
+		for (size_t i = 1; i < blue.size(); i++) {
+			assert(blue[i] * 50 >= blue[i - 1] * 49);
+			assert(blue[i] * 3 <= blue[i - 1] * 4 + 3000);
+		}
+	}
+	static constexpr uint64_t FROM = 54188;
+	// The same run at TIME 151 (game frames 53947-53949), drawn as at 60 frames a second: one
+	// picture a frame, a quarter and three quarters into each pair of lists. A dark polygon lies
+	// under the surface, hidden by its cells. The pair's camera move was fitted to cells still
+	// paired with other copies of their model, and none followed it, and a cell was paired with
+	// another copy a cell along as a ship. The first picture of the pair swept the cells off it:
+	// a dark slab at the top of the surface for one picture, as the arcade never shows.
+	static void swa_surface_slab(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 53940) m.run_frame();
+		m.set_drawing(true);
+		std::string seq;
+		size_t worst = 0;
+		while (m.frame_number() < 53956) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 53946) continue;
+			// the slab's grey, over the surface at the top of the screen, left of the trench
+			size_t n = 0;
+			const uint32_t *px = m.frame().data();
+			const int w = m.frame_w(), h = m.frame_h();
+			for (int y = h * 10 / 100; y < h * 16 / 100; y++)
+				for (int x = w * 28 / 100; x < w * 38 / 100; x++) {
+					const uint32_t c = px[size_t(y) * w + x];
+					const int r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+					n += r >= 35 && r <= 65 && g >= 35 && g <= 65 && b >= 35 && b <= 65;
+				}
+			seq += " " + std::to_string(n);
+			worst = std::max(worst, n);
+		}
+		printf("SWA surface at TIME 151, slab pixels by picture:%s\n", seq.c_str());
+		assert(worst < 50);
+	}
+
+	// At TIME 150 cells of the trench's rim were paired as ships with another copy most of their
+	// depth away, beyond the ships' far guard, so they were jumped: drawn a picture unblended.
+	static void swa_trench_jump(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 54020) m.run_frame();
+		m.set_drawing(true);
+		std::string seq;
+		int total = 0;
+		while (m.frame_number() < 54053) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 54030) continue;
+			seq += " " + std::to_string(m.m_smooth_stats[1]);
+			total += m.m_smooth_stats[1];
+		}
+		printf("SWA trench at TIME 150, jumped slots by picture:%s\n", seq.c_str());
+		assert(total == 0);
+	}
+	// The attract's run over the Death Star in the cockpit (TIME 124): as the camera crossed into the
+	// next cell, the surface's list in another order, the camera's move was lost, dozens of its cells
+	// drawn unblended for a picture, the surface shaking. Each picture's unblended cells counted.
+	static void swa_cockpit_surface(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 28280) m.run_frame();
+		m.set_drawing(true);
+		int worst = 0, worst_frame = 0;
+		while (m.frame_number() < 28420) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 28290 || m.m_replay_older) continue;   // (the camera's move not known yet; a cut)
+			const auto &slots = m.m_logic[1].slots;
+			int n = 0;
+			for (size_t i = 0; i < slots.size() && i < m.m_blend_ok.size(); i++)
+				n += !slots[i].polys.empty() && slots[i].polys[0] >= 0x1020000 && slots[i].polys[0] < 0x1050000 && !m.m_blend_ok[i];
+			if (n > worst) worst = n, worst_frame = f;
+		}
+		printf("SWA cockpit over the Death Star (TIME 124): at most %d surface cells unblended a picture (frame %d)\n", worst, worst_frame);
+		assert(worst == 0);
+	}
+	// In the trench (attract, TIME 159) the walls' places lie nearly in a plane, and the camera's
+	// fitted turn came out as their mirror image: blended by it, the walls were turned inside out,
+	// culled, and the trench went black for a picture, several times a run.
+	static void swa_trench_mirror(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 53470) m.run_frame();
+		m.set_drawing(true);
+		double worst = 0;
+		int worst_frame = 0;
+		while (m.frame_number() < 53540) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 53480) continue;
+			const uint32_t *px = m.frame().data();
+			const int w = m.frame_w(), h = m.frame_h();
+			size_t n = 0;
+			for (int y = h / 8; y < h; y++)
+				for (int x = 0; x < w; x++) {
+					const uint32_t c = px[size_t(y) * w + x];
+					n += (c >> 16 & 255) + (c >> 8 & 255) + (c & 255) < 20;
+				}
+			const double black = double(n) / (size_t(w) * (h - h / 8));
+			if (black > worst) worst = black, worst_frame = f;
+		}
+		printf("SWA trench at TIME 159: at most %.0f%% of the picture black (frame %d)\n", worst * 100, worst_frame);
+		assert(worst < 0.3);
+	}
+
+	// The third-person asteroid run (attract, free play, TIME 158): the Full fleet's and asteroids'
+	// copies hang on the stars' matrix, its own place passing the camera's plane. Taken for a fast
+	// move, or paired by the camera's move (no copies), the copies weren't blended: the star
+	// cruisers stepped every other picture. Each picture's copies on the stars' matrix are blended.
+	static void swa_fleet_carrier(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 34262) m.run_frame();
+		m.set_drawing(true);
+		int unblended = 0, pictures = 0;
+		std::string at;
+		while (m.frame_number() < 34300) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			m.render_smooth(f - 0.5);
+			if (f < 34270 || m.m_replay_older) continue;
+			const auto &slots = m.m_logic[1].slots;
+			size_t c = 0;
+			for (size_t i = 0; i < slots.size(); i++) if (slots[i].extra.size() > slots[c].extra.size()) c = i;
+			assert(slots[c].extra.size() > 100);
+			pictures++;
+			if (c >= m.m_blend_ok.size() || !m.m_blend_ok[c] || !m.m_extra_from[c]) unblended++, at += " " + std::to_string(f);
+		}
+		printf("SWA asteroid run (TIME 158): fleet copies unblended in %d of %d pictures%s\n", unblended, pictures, at.c_str());
+		assert(pictures > 10 && unblended == 0);
+	}
+
+	// The same run's start (TIME 178 to 172), the top of the screen. The destroyer manager
+	// reordered its copies' sources between lists: a star cruiser's copy, paired by its key with
+	// another cruiser 44000 units off, swept across the top. And the camera flew through a big
+	// asteroid, its faces behind the eye in one list, in front in the next: blended, they came out
+	// just by the eye, a brown face over the top half for a picture. Each copy is paired with a
+	// cruiser near it; the picture between the asteroid's lists has no more of it than the lists.
+	static void swa_asteroid_top_edge(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		for (int i = 0; i < 60 && game::swa::coin_setting(m) < 0; i++) m.run_frame();
+		const int64_t coin = game::swa::coin_setting(m);
+		assert(coin >= 0);
+		game::swa::set_coin_setting(m, game::swa::with_coin_entry(coin, game::swa::COIN_SETTING_FREE_PLAY));
+		m.reset();
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 33460) m.run_frame();
+		m.set_drawing(true);
+		float farthest = 0;
+		int pictures = 0, mispaired = 0;
+		while (m.frame_number() < 33500) {
+			m.run_frame();
+			m.render_smooth(m.frame_number() - 0.5);
+			if (m.m_replay_older) continue;
+			const auto &slots = m.m_logic[1].slots;
+			size_t c = 0;
+			for (size_t i = 0; i < slots.size(); i++) if (slots[i].extra.size() > slots[c].extra.size()) c = i;
+			if (c >= m.m_blend_ok.size() || !m.m_blend_ok[c] || !m.m_extra_from[c]) continue;
+			pictures++;
+			const auto &to = slots[c].extra, &from = *m.m_extra_from[c];
+			const auto &pairs = m.m_extra_pair[c];
+			for (size_t k = 0; k < to.size() && k < pairs.size(); k++) {
+				if (pairs[k] < 0) continue;
+				const auto &tb = *to[k].transform, &ta = *from[pairs[k]].transform;
+				const float d = std::hypot(tb[9] - ta[9], tb[10] - ta[10], tb[11] - ta[11]);
+				float nearest = d;
+				for (const auto &e : from)
+					if (e.transform && e.polygon == to[k].polygon)
+						nearest = std::min(nearest, std::hypot(tb[9] - (*e.transform)[9], tb[10] - (*e.transform)[10], tb[11] - (*e.transform)[11]));
+				if (d > 4 * nearest + 100) mispaired++, farthest = std::max(farthest, d);
+			}
+		}
+		printf("SWA asteroid run (TIME 178): %d copies paired past a nearer copy of their model (up to %.0f units) over %d pictures\n", mispaired, farthest, pictures);
+		m.set_drawing(false);
+		while (m.frame_number() < 33836) m.run_frame();
+		m.set_drawing(true);
+		int brown = 0;
+		while (m.frame_number() < 33843) {
+			m.run_frame();
+			m.render_smooth(m.frame_number() - 0.75);
+			m.render_smooth(m.frame_number() - 0.25);
+		}
+		m.render_smooth(33842.25);
+		const int w = m.frame_w(), h = m.frame_h();
+		for (int y = 0; y < h / 3; y++)
+			for (int x = 0; x < w; x++) {
+				const uint32_t p = m.frame().data()[size_t(y) * w + x];
+				const int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+				brown += r > 70 && r < 200 && r * 10 > g * 13 && g > b;
+			}
+		printf("SWA asteroid run (TIME 172): asteroid over the top third %d pixels (lists up to ~38000)\n", brown);
+		assert(pictures > 10 && mispaired == 0 && brown < 45000);
+	}
+
+
+	static void swa_globe_camera()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame a, b, c;
+		a.frame = 10, b.frame = 12, c.frame = 14;
+		for (uint32_t poly : { 0x108126bu, 0x1082ac8u, 0x1083ebbu }) {
+			model1::slot s;
+			s.polys = { poly };
+			s.mat[10] = -16000, s.mat[11] = 280000;
+			a.slots.push_back(s);
+			s.mat[11] -= 160;
+			b.slots.push_back(s);
+		}
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut);
+		for (int i = 0; i < 3; i++) {
+			assert(m.m_blend_ok[i]);
+			assert(std::fabs(m.m_blend[i][11] - 279920) < 0.1f);
+		}
+		c.slots = b.slots;
+		for (auto &s : c.slots)
+			for (int col = 0; col < 4; col++) {
+				const float x = s.mat[3 * col], z = s.mat[3 * col + 2];
+				s.mat[3 * col] = z;
+				s.mat[3 * col + 2] = -x;
+			}
+		m.blend_slots(b, c, 0.5);
+		assert(m.m_camera_cut && m.m_blend_cut);
+		for (bool ok : m.m_blend_ok) assert(!ok);
+		printf("SWA globe camera: coincident stationary parts determine motion; a genuine 90-degree cut stays unblended\n");
+	}
+
+	// The stationary globe's three parts share one origin. Fitting the moving ships invented cuts
+	// around TIME 170; refitting their places also moved the globe's older origin thousands of units.
+	static void swa_globe_motion(const char *dir, float aspect, bool lod = false)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		game::swa::set_full_draw_distance(m, true);
+		std::set<uint32_t> globe;
+		for (uint32_t at = 0x23b682; at <= 0x23b696; at += 4) globe.insert(m.read32(at) & 0xffffff);
+		int pictures = 0, cuts = 0, wrong = 0;
+		float worst = 0;
+		while (m.frame_number() < 53100) {
+			const int next = int(m.frame_number()) + 1;
+			m.set_drawing((next >= 25098 && next <= 25900) || next >= 52498);
+			m.run_frame();
+			const int f = int(m.frame_number());
+			if (!((f >= 25100 && f <= 25900) || f >= 52500)) continue;
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &sl = b.slots[i];
+					if (sl.polys.empty() || !globe.count(sl.polys[0] & 0xffffff)) continue;
+					pictures++;
+					cuts += m.m_blend_cut;
+					const auto older = std::find_if(a.slots.begin(), a.slots.end(), [&](const model1::slot &s) {
+						return !s.polys.empty() && globe.count(s.polys[0] & 0xffffff);
+					});
+					if (older == a.slots.end() || i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { wrong++; continue; }
+					for (int k = 0; k < 12; k++) worst = std::max(worst, std::fabs(m.m_blend_from[i][k] - older->mat[k]));
+				}
+			}
+		}
+		printf("SWA globe approach (aspect %.3f, LOD %s): %d part-pictures, %d false cuts, %d unblended, older matrix error %.3f\n",
+			aspect, lod ? "on" : "off", pictures, cuts, wrong, worst);
+		assert(pictures > 4000 && cuts == 0 && wrong == 0 && worst < 0.5f);
+	}
+
+	// The Death Star demo (TIME 175), 16:9: an X-wing passing 300 units to the left of the camera,
+	// seen only at the wide screen's edge, its z 0 to 200. Its move each list, 5% of its distance,
+	// was over 60% of its z: taken for a jump, it stood still a list and leapt, over and over (and
+	// so did the ships and cells at both edges, 780 of the run's 1120 jumps). Each picture blends it.
+	static void swa_side_ship(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 52505) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, unblended = 0;
+		std::string at;
+		while (m.frame_number() < 52530) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double k : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + k);
+				if (f < 52512) continue;
+				const auto &slots = m.m_logic[1].slots;
+				for (size_t i = 0; i < slots.size(); i++) {
+					if (slots[i].polys.empty() || slots[i].polys[0] != 0x108764c || slots[i].mat[9] > -200) continue;
+					pictures++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) unblended++, at += " " + std::to_string(f);
+				}
+			}
+		}
+		printf("SWA Death Star demo (TIME 175), an X-wing at the screen's left edge: unblended in %d of %d pictures%s\n", unblended, pictures, at.c_str());
+		assert(pictures > 20 && unblended == 0);
+	}
+
+	// each list's surface cells within `slope_x`, `slope_y` of the view (Full, LOD off), by the
+	// list's frame, over the frame ranges given
+	using swa_cell = std::tuple<uint32_t, int, int, int>;
+	static std::map<int, std::set<swa_cell>> swa_cells_in_view(const char *dir, float aspect,
+		std::initializer_list<std::pair<int, int>> ranges, float slope_x, float slope_y)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		std::map<int, std::set<swa_cell>> lists;
+		for (auto [from, to] : ranges) {
+			m.set_drawing(false);
+			while (m.frame_number() < uint64_t(from)) m.run_frame();
+			m.set_drawing(true);
+			while (m.frame_number() < uint64_t(to)) {
+				m.run_frame();
+				m.render_smooth(m.frame_number() - 0.5);
+				auto &out = lists[m.m_logic[1].frame];
+				const auto add = [&](uint32_t polygon, const float *at) {
+					if (!m.m_video->still_model(polygon) || at[2] < 100 || std::fabs(at[0]) > slope_x * at[2] || std::fabs(at[1]) > slope_y * at[2]) return;
+					out.emplace(polygon, int(std::lround(at[0] / 4)), int(std::lround(at[1] / 4)), int(std::lround(at[2] / 4)));
+				};
+				for (const auto &s : m.m_logic[1].slots) {
+					for (uint32_t p : s.polys) add(p, &s.mat[9]);
+					for (const auto &e : s.extra) {
+						if (!e.transform) continue;
+						const auto &t = *e.transform;
+						float at[3];
+						for (int r = 0; r < 3; r++) at[r] = s.mat[9 + r] + s.mat[r] * t[9] + s.mat[3 + r] * t[10] + s.mat[6 + r] * t[11];
+						add(e.polygon, at);
+					}
+				}
+			}
+		}
+		return lists;
+	}
+
+	// The Death Star demo's low flight (TIME 145-140), draw distance Full: 16:9 left out far cells
+	// 4:3 draws, in the middle of the picture. The far layer's side cells past the last band the game
+	// draws a cell in were never attached, and the far ring started past the farthest of the merged
+	// headings' lists, so cells nearer than it that no list has were drawn by none: holes in the
+	// distance that came and went as the heading turned. Every surface cell 4:3 draws in view is
+	// drawn at 16:9 too.
+	static void swa_wide_far_cells(const char *dir)
+	{
+		const std::initializer_list<std::pair<int, int>> ranges = { { 53798, 53806 }, { 54290, 54298 }, { 54322, 54328 } };
+		const auto narrow = swa_cells_in_view(dir, 4.0f / 3, ranges, 1.2f, 1), wide = swa_cells_in_view(dir, 16.0f / 9, ranges, 1.2f, 1);
+		int lists = 0, cells = 0, missing = 0;
+		std::string at;
+		for (const auto &[frame, in43] : narrow) {
+			const auto w = wide.find(frame);
+			if (w == wide.end()) continue;
+			lists++;
+			cells += int(in43.size());
+			int here = 0;
+			for (const auto &c : in43) here += !w->second.count(c);
+			if (here) at += " " + std::to_string(frame) + ":" + std::to_string(here);
+			missing += here;
+		}
+		printf("SWA Death Star demo (TIME 145-140), Full distance: %d of 4:3's %d surface cells in view missing at 16:9 over %d lists%s\n",
+			missing, cells, lists, at.c_str());
+		assert(lists > 5 && cells > 1000 && missing == 0);
+	}
+
+	// The Death Star demo's low flight (TIME 136-133), 4:3, draw distance Full: the far ring past one
+	// heading's list spans only that list's spread, so the horizon's corners at the picture's left and
+	// right were empty, the gaps jumping as the camera turned the heading a step (3,148 of 19,432 cells
+	// 16:9 draws within 4:3's view weren't drawn at 4:3). Full takes the neighbouring headings' cells,
+	// as 16:9 does: all but one hidden cell over two lists are drawn at 4:3 too.
+	static void swa_horizon_corners(const char *dir)
+	{
+		const std::initializer_list<std::pair<int, int>> ranges = { { 54862, 54872 }, { 54928, 54938 }, { 54966, 54976 } };
+		const auto narrow = swa_cells_in_view(dir, 4.0f / 3, ranges, 1.2f, 0.93f), wide = swa_cells_in_view(dir, 16.0f / 9, ranges, 1.2f, 0.93f);
+		int lists = 0, cells = 0, missing = 0;
+		std::string at;
+		for (const auto &[frame, in169] : wide) {
+			const auto n = narrow.find(frame);
+			if (n == narrow.end()) continue;
+			lists++;
+			cells += int(in169.size());
+			int here = 0;
+			for (const auto &c : in169) here += !n->second.count(c);
+			if (here) at += " " + std::to_string(frame) + ":" + std::to_string(here);
+			missing += here;
+		}
+		printf("SWA Death Star demo (TIME 136-133), Full distance: %d of 16:9's %d surface cells within 4:3's view missing at 4:3 over %d lists%s\n",
+			missing, cells, lists, at.c_str());
+		assert(lists > 5 && cells > 1000 && missing < 50);
+	}
+
+	// The Death Star demo (TIME 123), 16:9: the far ground under the left of the picture, one face
+	// 270,000 units across, turns with the view, and a corner far off to the side crossed the eye's
+	// plane between two lists: taken for a face passing through the eye (the asteroid's), it was left
+	// out, and the backdrop showed black through a quarter of the picture for four pictures. The
+	// lists draw it grey there.
+	static void swa_far_ground(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 55618) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, black = 0;
+		while (m.frame_number() < 55622) {
+			m.run_frame();
+			for (double k : { 0.25, 0.75 }) {
+				m.render_smooth(double(m.frame_number()) - 1 + k);
+				pictures++;
+				const int w = m.frame_w(), h = m.frame_h();
+				for (int y = h / 3; y < h * 2 / 3; y++)
+					for (int x = 0; x < w / 6; x++) black += (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+			}
+		}
+		printf("SWA Death Star demo (TIME 123), 16:9: %d black pixels under the left of the picture over %d pictures\n", black, pictures);
+		assert(pictures == 8 && black < 500);
+	}
+
+	// The attract's trench run in the cockpit (TIME 160): the game draws ten rows of the trench from
+	// a row behind, about 14,000 units ahead, black beyond. Full must leave the descent unchanged,
+	// then add rows only once the view reaches its level-flight depth.
+	static void swa_trench_distance(const char *dir)
+	{
+		auto black_middle = [&](bool full) {
+			model1 m(load_regions(dir, game::id{ "swa" }));
+			m.reset();
+			m.set_drawing(false);
+			m.set_aspect(16.0f / 9);
+			m.set_edge_aa(false);
+			game::swa::set_full_draw_distance(m, full);
+			while (m.frame_number() < 25999) m.run_frame();
+			const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
+			const uint64_t start = state->trench_cells;
+			while (m.frame_number() < 26099) m.run_frame();
+			m.set_drawing(true);
+			m.run_frame();
+			const int w = m.frame_w(), h = m.frame_h();
+			int black = 0;
+			for (int y = h * 42 / 100; y < h * 46 / 100; y++)
+				for (int x = w * 51 / 100; x < w * 535 / 1000; x++) black += (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+			const uint64_t before = state->trench_cells;
+			int descending = 0, level = 0;
+			const auto hook = m.m_gameplay.matrix_objects;
+			m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+				auto objects = hook(word);
+				if (m.cpu().pc() != 0xd5525 || m.cpu().reg(3) != 1 || m.cpu().reg(4) != 1) return objects;
+				const float height = std::bit_cast<float>(m.read32(m.cpu().reg(25) + 0x7424));
+				if (height > -511) {
+					descending++;
+					assert(objects.empty());
+				} else {
+					level++;
+					assert(objects.empty() != full);
+				}
+				return objects;
+			};
+			m.set_drawing(false);
+			while (m.frame_number() < 26300) m.run_frame();
+			assert(descending > 50 && level > 20);
+			assert((state->trench_cells > before) == full);
+			return std::pair{ black, before - start };
+		};
+		const auto [arcade, arcade_cells] = black_middle(false);
+		const auto [full, full_cells] = black_middle(true);
+		printf("SWA trench entry: %d black pixels with Arcade, %d with Full (%llu early cells); extended rows start at level-flight depth\n",
+			arcade, full, (unsigned long long)full_cells);
+		assert(arcade_cells == 0 && full_cells == 0 && arcade > 100 && full == arcade);
+	}
+
+	// The Death Star demo (TIME 150), 16:9: the surface blocks have steps with no face between the
+	// two tops, in a block and between neighbouring ones, which the lists' eyes only see side-on.
+	// The blended eyes, a little to one side, looked into them at the screen's left edge: big black
+	// wedges for a single picture. Pixels black in one picture but in neither neighbour at the left
+	// edge, where the wedges were.
+	static void swa_open_steps(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(16.0f / 9);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 53558) m.run_frame();
+		m.set_drawing(true);
+		std::vector<std::vector<uint8_t>> black;
+		std::vector<double> times;
+		int pictures = 0, flashes = 0;
+		std::string at;
+		while (m.frame_number() < 53622) {
+			m.run_frame();
+			for (double k : { 0.25, 0.75 }) {
+				const double t = double(m.frame_number()) - 1 + k;
+				m.render_smooth(t);
+				const int w = m.frame_w(), h = m.frame_h(), strip = w / 8;
+				std::vector<uint8_t> b(size_t(strip) * h);
+				for (int y = 0; y < h; y++)
+					for (int x = 0; x < strip; x++) b[size_t(y) * strip + x] = (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+				black.push_back(std::move(b));
+				times.push_back(t);
+				if (black.size() < 3) continue;
+				pictures++;
+				int here = 0;
+				for (size_t i = 0; i < black[1].size(); i++) here += black[1][i] && !black[0][i] && !black[2][i];
+				if (here > 200) at += " " + std::to_string(times[1]).substr(0, 8) + ":" + std::to_string(here);
+				flashes += here;
+				black.erase(black.begin());
+				times.erase(times.begin());
+			}
+		}
+		printf("SWA Death Star demo (TIME 150), 16:9: %d one-picture black pixels at the left edge over %d pictures%s\n", flashes, pictures, at.c_str());
+		assert(pictures > 100 && flashes < 1000);
+	}
+
+
 };
 
 int main(int argc, char **argv)
 {
+	if (argc > 2 && std::string(argv[2]) == "--swa-launch-flashes") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-launch") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
+		for (bool lod : { false, true })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_motion(argv[1], aspect, lod);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-hangar") {
+		for (bool lod : { false, true })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_motion(argv[1], aspect, lod);
+		return 0;
+	}
+	model1_video_test::copy_bounds_and_sort();
+	if (argc > 2 && (std::string(argv[2]) == "--swa-wrap" || std::string(argv[2]) == "--swa-wrap-smooth")) {
+		for (bool native : { false, true })
+			for (bool lod : { false, true }) {
+				if (std::string(argv[2]) == "--swa-wrap") model1_video_test::swa_wrap_transition(argv[1], native, lod);
+				model1_video_test::swa_wrap_smooth(argv[1], native, lod);
+			}
+		return 0;
+	}
+	model1_video_test::object_bounds();
+	if (argc > 2 && std::string(argv[2]) == "--swa-trench-distance") {
+		model1_video_test::swa_trench_distance(argv[1]);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-globe") {
+		for (bool lod : { false, true })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_globe_motion(argv[1], aspect, lod);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-object-bounds") {
+		model1_video_test::swa_destroyer_bounds(argv[1]);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-ships") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_motion(argv[1], aspect, false);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_motion(argv[1], aspect, false);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_globe_motion(argv[1], aspect);
+		model1_video_test::swa_passing_tie(argv[1]);
+		model1_video_test::swa_surface_slab(argv[1]);
+		model1_video_test::swa_trench_jump(argv[1]);
+		model1_video_test::swa_cockpit_surface(argv[1]);
+		model1_video_test::swa_trench_mirror(argv[1]);
+		model1_video_test::swa_fleet_carrier(argv[1]);
+		model1_video_test::swa_asteroid_top_edge(argv[1]);
+		model1_video_test::swa_side_ship(argv[1]);
+		model1_video_test::swa_wide_far_cells(argv[1]);
+		model1_video_test::swa_horizon_corners(argv[1]);
+		model1_video_test::swa_open_steps(argv[1]);
+		model1_video_test::swa_far_ground(argv[1]);
+		model1_video_test::swa_trench_distance(argv[1]);
+		return 0;
+	}
+	model1_video_test::overlay_priority();
+	if (argc > 2 && std::string(argv[2]) == "--swa-priority") {
+		model1_video_test::swa_name_entry(argv[1]);
+		return 0;
+	}
 	model1_video_test::trackside_collisions();
 	if (argc > 2 && std::string(argv[2]) == "--direction-signs") {
 		for (bool native : { false, true })
@@ -1448,9 +3112,17 @@ int main(int argc, char **argv)
 	}
 	model1_video_test::foreground_order();
 	model1_video_test::extra_scenery();
+	model1_video_test::object_fade();
 	model1_video_test::scenery_records();
 	model1_video_test::culled_records();
 	model1_video_test::hud_edge_pinning();
+	model1_video_test::wide_direct_overlay();
+	model1_video_test::unstretched_backdrops();
+	model1_video_test::wide_split_tiles();
+	model1_video_test::swa_far_blend();
+	model1_video_test::swa_surface_cells();
+	model1_video_test::swa_globe_camera();
+	model1_video_test::swa_hangar_camera();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);

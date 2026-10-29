@@ -32,5 +32,7 @@ inline model1::regions load_regions(const std::string &dir, game::id title)
 	if (FILE *f = fopen((dir + "/copro_data.bin").c_str(), "rb")) { fclose(f); r.copro_data = load_file(dir + "/copro_data.bin", title); }
 	if (FILE *f = fopen((dir + "/tgp_program.bin").c_str(), "rb")) { fclose(f); r.tgp_program = load_file(dir + "/tgp_program.bin", title); }
 	if (FILE *f = fopen((dir + "/ioboard.bin").c_str(), "rb")) { fclose(f); r.ioboard = load_file(dir + "/ioboard.bin", title); }
+	if (FILE *f = fopen((dir + "/mpegcpu.bin").c_str(), "rb")) { fclose(f); r.mpegcpu = load_file(dir + "/mpegcpu.bin", title); }
+	if (FILE *f = fopen((dir + "/mpeg.bin").c_str(), "rb")) { fclose(f); r.mpeg = load_file(dir + "/mpeg.bin", title); }
 	return r;
 }

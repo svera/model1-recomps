@@ -5,7 +5,7 @@ namespace game::vf {
 const profile PROFILE{
 	ID, "Virtua Fighter", "vf", "games/vf/vf_map.txt",
 	"run tools/romset.py on your vf.zip",
-	0x17f0, 0x3002, 3
+	0x17f0, 0x503002, 3
 };
 
 const io_profile IO_PROFILE{

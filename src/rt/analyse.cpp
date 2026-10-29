@@ -21,7 +21,12 @@ struct analyser
 	uint8_t rd8(uint32_t a) const { return mem[a & 0xffffff]; }
 	uint16_t rd16(uint32_t a) const { return rd8(a) | (rd8(a + 1) << 8); }
 
-	static bool is_code_addr(uint32_t a) { return (a >= 0x200000 && a < 0x300000) || (a >= 0xf80000 && a <= 0xffffff); }
+	// The program ROM's windows: 0x000000-0x0fffff (SWA runs from its mirror at 0x0c0000),
+	// 0x200000-0x2fffff and 0xf80000-0xffffff.
+	static bool is_code_addr(uint32_t a)
+	{
+		return a < 0x100000 || (a >= 0x200000 && a < 0x300000) || (a >= 0xf80000 && a <= 0xffffff);
+	}
 
 	insn decode(uint32_t a) const
 	{

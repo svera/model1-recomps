@@ -23,12 +23,15 @@ jobs:
           - platform: mac
             runner: macos-15
             archive: build/mac/vr/VirtuaRacingRecomp-mac.zip
+            swa_archive: build/mac/swa/StarWarsArcadeRecomp-mac.zip
           - platform: win
             runner: macos-15
             archive: build/win/vr/VirtuaRacingRecomp-windows.zip
+            swa_archive: build/win/swa/StarWarsArcadeRecomp-windows.zip
           - platform: linux
             runner: ubuntu-24.04
             archive: build/linux/vr/VirtuaRacingRecomp-linux.tar.gz
+            swa_archive: build/linux/swa/StarWarsArcadeRecomp-linux.tar.gz
     env:
       M1_VERSION: ${{ github.event.release.tag_name }}
     steps:
@@ -45,13 +48,23 @@ jobs:
       - name: Build package
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: tools/"$PLATFORM"/package.sh vr
+        run: tools/"$PLATFORM"/package.sh vr swa
+
+      - name: Verify packages
+        env:
+          VR_ARCHIVE: ${{ matrix.archive }}
+          SWA_ARCHIVE: ${{ matrix.swa_archive }}
+        run: |
+          test -s "$VR_ARCHIVE"
+          test -s "$SWA_ARCHIVE"
 
       - name: Store package
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
-          path: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.swa_archive }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -78,7 +91,10 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$RELEASE_TAG" \
-            packages/VirtuaRacingRecomp-mac.zip \
-            packages/VirtuaRacingRecomp-windows.zip \
-            packages/VirtuaRacingRecomp-linux.tar.gz \
+            packages/vr/VirtuaRacingRecomp-mac.zip \
+            packages/vr/VirtuaRacingRecomp-windows.zip \
+            packages/vr/VirtuaRacingRecomp-linux.tar.gz \
+            packages/swa/StarWarsArcadeRecomp-mac.zip \
+            packages/swa/StarWarsArcadeRecomp-windows.zip \
+            packages/swa/StarWarsArcadeRecomp-linux.tar.gz \
             --clobber
