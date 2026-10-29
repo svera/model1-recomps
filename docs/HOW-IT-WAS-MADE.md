@@ -298,6 +298,48 @@ The AI wrote nearly all the code. A person decided what was right.
   ship only if it moves less than 0.6 of its depth and isn't scenery. The first picture of a pair now fits the
   previous pair's move first, so it pairs the same way as later pictures. The faint dotted lines that remain also
   show unsmoothed: they are the arcade's own. VF and VR are unaffected.
+- **Full trench draw distance appearing during the entry descent** →
+  D547F starts drawing its ten-row grid while the ship is still descending. The renderer's extra
+  rows now wait until the entry view reaches its level-flight depth (Y = -512, with one unit of
+  tolerance for floating-point movement), rather than starting with the drawer. This is a depth
+  check, not an attract-frame timer. The `--swa-trench-distance` regression (also in `--swa-ships`)
+  checks that the early entry picture matches Arcade, no extra rows appear above that depth,
+  and every sampled level-depth grid gets the extra rows with Full only.
+- **Flashing on the right side of the exterior launch ship (attract, smooth motion)** →
+  stationary camera anchors were also receiving the Death Star surface's open-step repair.
+  That added faces across intentional gaps between the ship's engines, which flashed as the
+  view moved. Camera anchors now stay out of that repair without changing their motion fitting
+  or the surface blocks' gap filling. `--swa-launch-flashes` checks transient right-side pixels
+  at 4:3 and 16:9; it also runs in `--swa-launch` and `--swa-ships`.
+- **Stiff motion at the start of the exterior X-wing launch shot (attract, smooth motion)** →
+  this is the grey exterior shot after the blue hangar, not the hangar's orbit. Its stationary
+  exterior model (`0x116482e`, drawn by EECAB) now anchors the camera too. Without that reference,
+  the slowly launching fighter near the eye was within the camera-fit tolerance and was blended
+  as scenery, from a predicted older position instead of its actual one. The `--swa-launch`
+  regression checks the first moving frames as well as the rest of the shot, at 4:3 and 16:9
+  with LOD on and off: 898 pictures and 13,470 fighter parts per combination, no false cuts or
+  unblended parts, and every part starts at an actual older pose. LOD-off checks also run in
+  `--swa-ships`. The intentional cut into the shot is left unchanged.
+- **The X-wing moving strangely while leaving the hangar (attract, smooth motion)** →
+  the hangar's stationary model now anchors the camera, rather than fitting its move from the ships.
+  The camera passes alongside the hangar origin: measuring the move against its Z alone invented cuts
+  when Z approached zero. An anchored camera now uses the origin's full distance from the eye.
+  Paired ships keep their actual older transforms instead of being moved as stationary scenery when
+  their own movement happens to fall within the camera-fit tolerance. Finally, a folding wing's axis
+  scaling through almost zero does not establish a turn; its numerical direction flip had left the wing
+  unblended for a game picture. The `--swa-hangar` regression checks 2,122 interpolated pictures per
+  aspect/LOD combination (4:3 and 16:9, LOD on and off): no false cuts, no unblended X-wing parts, and
+  every paired part starts at an actual older pose. The LOD-off checks also run in `--swa-ships`;
+  shared video tests cover a side-on anchor, independently moving copies and a folding axis.
+- **The Death Star lurching during the attract approach (around TIME 170, smooth motion)** →
+  its three globe parts share one origin, so their positions alone cannot determine the camera's turn.
+  Fitting the moving ships instead invented 75 cuts over the two sampled approaches; carrying the older picture
+  into each false cut made the globe move unevenly. Its stationary models now supply the camera's turn from
+  their axes and the shift from their origin. Moving ships cannot override that known camera with a cut vote,
+  nor pull the fit away from it during the close-object refit. Genuine camera cuts still use the turn and shift
+  guards. The `--swa-globe` regression (also in `--swa-ships`) checks both approaches at 4:3 and 16:9:
+  8,412 globe part-pictures per aspect, no false cuts or unblended parts, and an older-matrix error below 0.1 units.
+  The focused test also covers LOD on, including the globe's approach patches.
 - **A dark slab over the Death Star surface (around TIME 126) and a missing trench wall (TIME 156, "Pull up!")** →
   both came from the surface fix above. Near the camera, the game swaps a cell for a finer model (5 polygons → 77–1,269).
   That cell was paired with a copy of its model one cell along and blended across the screen → a cell whose older copy

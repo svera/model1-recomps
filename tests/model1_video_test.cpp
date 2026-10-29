@@ -15,6 +15,177 @@
 
 struct model1_video_test
 {
+	// Stationary camera anchors must not get the surface's missing-step faces: those filled
+	// the cruiser's intentional engine gaps with triangles that flashed between pictures.
+	static void swa_launch_flashes(const char *dir, float aspect)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		while (m.frame_number() < 13938) m.run_frame();
+		m.set_drawing(true);
+		std::vector<std::vector<uint32_t>> frames;
+		int pictures = 0, worst = 0, flashes = 0;
+		while (m.frame_number() < 13990) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				const int w = m.frame_w(), h = m.frame_h();
+				frames.emplace_back(m.frame().data(), m.frame().data() + w * h);
+				if (frames.size() < 3) continue;
+				int colour = 0;
+				for (int y = h / 4; y < h * 3 / 4; y++)
+					for (int x = w * 3 / 5; x < w; x++) {
+						const size_t i = size_t(y) * w + x;
+						const auto a = frames[0][i] & 0xffffff, b = frames[1][i] & 0xffffff, c = frames[2][i] & 0xffffff;
+						const auto difference = [](uint32_t x, uint32_t y) {
+							return std::max({ std::abs(int(x & 255) - int(y & 255)),
+								std::abs(int(x >> 8 & 255) - int(y >> 8 & 255)), std::abs(int(x >> 16 & 255) - int(y >> 16 & 255)) });
+						};
+						colour += difference(a, b) > 40 && difference(b, c) > 40 && difference(a, c) < 10;
+					}
+				pictures++;
+				flashes += colour;
+				worst = std::max(worst, colour);
+				frames.erase(frames.begin());
+			}
+		}
+		printf("SWA exterior ship (aspect %.3f): %d transient right-side pixels over %d pictures, at most %d a picture\n",
+			aspect, flashes, pictures, worst);
+		assert(pictures > 90 && worst < 200);
+	}
+	// The exterior shot after the hangar: the launching X-wing is near the eye, moving slowly
+	// enough to be mistaken for scenery by a camera fitted from the fighters' positions.
+	static void swa_launch_motion(const char *dir, float aspect, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		while (m.frame_number() < 13590) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, parts = 0, cuts = 0, unblended = 0, early = 0;
+		float worst = 0;
+		while (m.frame_number() < 14050) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				if (f < 13602) continue;   // the cut and first list with the fighters have no older poses
+				pictures++;
+				cuts += m.m_blend_cut;
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &s = b.slots[i];
+					if (s.polys.empty() || (s.polys[0] != 0x106162d && s.polys[0] != 0x106197c && s.polys[0] != 0x1061d75)) continue;
+					parts++;
+					if (f < 13640 && std::fabs(s.mat[9]) < 5 && s.mat[11] < 150) early++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { unblended++; continue; }
+					float best = INFINITY;
+					for (const auto &older : a.slots) {
+						if (older.polys.empty() || older.polys[0] != s.polys[0]) continue;
+						float error = 0;
+						for (int k = 0; k < 12; k++) error = std::max(error, std::fabs(m.m_blend_from[i][k] - older.mat[k]));
+						best = std::min(best, error);
+					}
+					worst = std::max(worst, best);
+				}
+			}
+		}
+		printf("SWA exterior launch (aspect %.3f, LOD %s): %d pictures, %d near-launch parts, %d false cuts, %d unblended of %d parts, older matrix error %.3f\n",
+			aspect, lod ? "on" : "off", pictures, early, cuts, unblended, parts, worst);
+		assert(pictures > 800 && parts > 10000 && early > 100 && cuts == 0 && unblended == 0 && worst < 0.1f);
+	}
+	// The camera passes alongside the hangar origin (z = 0), while two copies of a fighter's
+	// model move independently. One axis of its folding wing shrinks through zero.
+	static void swa_hangar_camera()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame a, b, c;
+		a.frame = 10, b.frame = 12, c.frame = 14;
+		int step = 0;
+		for (auto *frame : { &a, &b, &c }) {
+			model1::slot hangar;
+			hangar.polys = { 0x116aebe };
+			hangar.mat[9] = 400 + step * 2, hangar.mat[10] = -200;
+			frame->slots.push_back(hangar);
+			for (int copy = 0; copy < 2; copy++) {
+				model1::slot ship;
+				ship.polys = { 0x116878c };
+				ship.mat[9] = 20 + copy * 100 + step * (copy ? 2 : 3);
+				ship.mat[11] = 600 + copy * 200;
+				if (!copy) ship.mat[4] = step == 2 ? -0.00001f : 0.005f;
+				frame->slots.push_back(ship);
+			}
+			step++;
+		}
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut);
+		m.blend_slots(b, c, 0.5);
+		assert(!m.m_blend_cut && m.m_camera_sure);
+		for (size_t i = 0; i < c.slots.size(); i++) assert(m.m_blend_ok[i]);
+		for (size_t i = 1; i < c.slots.size(); i++)
+			for (int k = 0; k < 12; k++) assert(std::fabs(m.m_blend_from[i][k] - b.slots[i].mat[k]) < 0.001f);
+		assert(std::fabs(m.m_blend[1][9] - 24.5f) < 0.001f);
+		printf("SWA hangar camera: side-on origin is no cut; ships keep their own motion and folding axes blend\n");
+	}
+
+	// The hangar exit's continuous orbit must not become cuts or pull the launching X-wing
+	// back to the place predicted for stationary scenery between successive game pictures.
+	static void swa_hangar_motion(const char *dir, float aspect, bool lod)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		game::swa::set_full_draw_distance(m, true);
+		while (m.frame_number() < 12520) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, cuts = 0, unblended = 0, parts = 0;
+		float worst = 0;
+		const std::set<uint32_t> xwing{ 0x1167c4b, 0x1167f9a, 0x1168393, 0x1168b71, 0x116878c };
+		while (m.frame_number() < 13590) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				if (f < 12530) continue;
+				pictures++;
+				cuts += m.m_blend_cut;
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &s = b.slots[i];
+					if (s.polys.empty() || !xwing.count(s.polys[0])) continue;
+					parts++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { unblended++; continue; }
+					float best = INFINITY;
+					for (const auto &older : a.slots) {
+						if (older.polys.empty() || older.polys[0] != s.polys[0]) continue;
+						float error = 0;
+						for (int k = 0; k < 12; k++) error = std::max(error, std::fabs(m.m_blend_from[i][k] - older.mat[k]));
+						best = std::min(best, error);
+					}
+					worst = std::max(worst, best);
+				}
+			}
+		}
+		printf("SWA hangar exit (aspect %.3f, LOD %s): %d pictures, %d false cuts, %d unblended of %d X-wing parts, older matrix error %.3f\n",
+			aspect, lod ? "on" : "off", pictures, cuts, unblended, parts, worst);
+		assert(pictures > 2000 && parts > 10000 && cuts == 0 && unblended == 0 && worst < 0.1f);
+	}
 	static void swa_wrap_smooth(const char *dir, bool native, bool lod)
 	{
 		model1 m(load_regions(dir, game::id{ "swa" }));
@@ -2478,6 +2649,83 @@ struct model1_video_test
 	}
 
 
+	static void swa_globe_camera()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		model1::logic_frame a, b, c;
+		a.frame = 10, b.frame = 12, c.frame = 14;
+		for (uint32_t poly : { 0x108126bu, 0x1082ac8u, 0x1083ebbu }) {
+			model1::slot s;
+			s.polys = { poly };
+			s.mat[10] = -16000, s.mat[11] = 280000;
+			a.slots.push_back(s);
+			s.mat[11] -= 160;
+			b.slots.push_back(s);
+		}
+		m.blend_slots(a, b, 0.5);
+		assert(!m.m_blend_cut);
+		for (int i = 0; i < 3; i++) {
+			assert(m.m_blend_ok[i]);
+			assert(std::fabs(m.m_blend[i][11] - 279920) < 0.1f);
+		}
+		c.slots = b.slots;
+		for (auto &s : c.slots)
+			for (int col = 0; col < 4; col++) {
+				const float x = s.mat[3 * col], z = s.mat[3 * col + 2];
+				s.mat[3 * col] = z;
+				s.mat[3 * col + 2] = -x;
+			}
+		m.blend_slots(b, c, 0.5);
+		assert(m.m_camera_cut && m.m_blend_cut);
+		for (bool ok : m.m_blend_ok) assert(!ok);
+		printf("SWA globe camera: coincident stationary parts determine motion; a genuine 90-degree cut stays unblended\n");
+	}
+
+	// The stationary globe's three parts share one origin. Fitting the moving ships invented cuts
+	// around TIME 170; refitting their places also moved the globe's older origin thousands of units.
+	static void swa_globe_motion(const char *dir, float aspect, bool lod = false)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, lod);
+		game::swa::set_full_draw_distance(m, true);
+		std::set<uint32_t> globe;
+		for (uint32_t at = 0x23b682; at <= 0x23b696; at += 4) globe.insert(m.read32(at) & 0xffffff);
+		int pictures = 0, cuts = 0, wrong = 0;
+		float worst = 0;
+		while (m.frame_number() < 53100) {
+			const int next = int(m.frame_number()) + 1;
+			m.set_drawing((next >= 25098 && next <= 25900) || next >= 52498);
+			m.run_frame();
+			const int f = int(m.frame_number());
+			if (!((f >= 25100 && f <= 25900) || f >= 52500)) continue;
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &sl = b.slots[i];
+					if (sl.polys.empty() || !globe.count(sl.polys[0] & 0xffffff)) continue;
+					pictures++;
+					cuts += m.m_blend_cut;
+					const auto older = std::find_if(a.slots.begin(), a.slots.end(), [&](const model1::slot &s) {
+						return !s.polys.empty() && globe.count(s.polys[0] & 0xffffff);
+					});
+					if (older == a.slots.end() || i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { wrong++; continue; }
+					for (int k = 0; k < 12; k++) worst = std::max(worst, std::fabs(m.m_blend_from[i][k] - older->mat[k]));
+				}
+			}
+		}
+		printf("SWA globe approach (aspect %.3f, LOD %s): %d part-pictures, %d false cuts, %d unblended, older matrix error %.3f\n",
+			aspect, lod ? "on" : "off", pictures, cuts, wrong, worst);
+		assert(pictures > 4000 && cuts == 0 && wrong == 0 && worst < 0.5f);
+	}
+
 	// The Death Star demo (TIME 175), 16:9: an X-wing passing 300 units to the left of the camera,
 	// seen only at the wide screen's edge, its z 0 to 200. Its move each list, 5% of its distance,
 	// was over 60% of its z: taken for a jump, it stood still a list and leapt, over and over (and
@@ -2642,8 +2890,8 @@ struct model1_video_test
 	}
 
 	// The attract's trench run in the cockpit (TIME 160): the game draws ten rows of the trench from
-	// a row behind, about 14,000 units ahead, black beyond. Draw distance Full draws its rows on to
-	// the table's end: the picture's middle, black there with the arcade's distance, is the trench.
+	// a row behind, about 14,000 units ahead, black beyond. Full must leave the descent unchanged,
+	// then add rows only once the view reaches its level-flight depth.
 	static void swa_trench_distance(const char *dir)
 	{
 		auto black_middle = [&](bool full) {
@@ -2653,6 +2901,9 @@ struct model1_video_test
 			m.set_aspect(16.0f / 9);
 			m.set_edge_aa(false);
 			game::swa::set_full_draw_distance(m, full);
+			while (m.frame_number() < 25999) m.run_frame();
+			const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
+			const uint64_t start = state->trench_cells;
 			while (m.frame_number() < 26099) m.run_frame();
 			m.set_drawing(true);
 			m.run_frame();
@@ -2660,14 +2911,33 @@ struct model1_video_test
 			int black = 0;
 			for (int y = h * 42 / 100; y < h * 46 / 100; y++)
 				for (int x = w * 51 / 100; x < w * 535 / 1000; x++) black += (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
-			const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
-			return std::pair{ black, state->trench_cells };
+			const uint64_t before = state->trench_cells;
+			int descending = 0, level = 0;
+			const auto hook = m.m_gameplay.matrix_objects;
+			m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+				auto objects = hook(word);
+				if (m.cpu().pc() != 0xd5525 || m.cpu().reg(3) != 1 || m.cpu().reg(4) != 1) return objects;
+				const float height = std::bit_cast<float>(m.read32(m.cpu().reg(25) + 0x7424));
+				if (height > -511) {
+					descending++;
+					assert(objects.empty());
+				} else {
+					level++;
+					assert(objects.empty() != full);
+				}
+				return objects;
+			};
+			m.set_drawing(false);
+			while (m.frame_number() < 26300) m.run_frame();
+			assert(descending > 50 && level > 20);
+			assert((state->trench_cells > before) == full);
+			return std::pair{ black, before - start };
 		};
 		const auto [arcade, arcade_cells] = black_middle(false);
 		const auto [full, full_cells] = black_middle(true);
-		printf("SWA trench (TIME 160): %d black pixels at the vanishing point with the arcade's distance, %d with Full (%llu cells added)\n",
+		printf("SWA trench entry: %d black pixels with Arcade, %d with Full (%llu early cells); extended rows start at level-flight depth\n",
 			arcade, full, (unsigned long long)full_cells);
-		assert(arcade_cells == 0 && full_cells > 0 && arcade > 100 && full * 5 < arcade);
+		assert(arcade_cells == 0 && full_cells == 0 && arcade > 100 && full == arcade);
 	}
 
 	// The Death Star demo (TIME 150), 16:9: the surface blocks have steps with no face between the
@@ -2721,6 +2991,21 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 2 && std::string(argv[2]) == "--swa-launch-flashes") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-launch") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
+		for (bool lod : { false, true })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_motion(argv[1], aspect, lod);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-hangar") {
+		for (bool lod : { false, true })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_motion(argv[1], aspect, lod);
+		return 0;
+	}
 	model1_video_test::copy_bounds_and_sort();
 	if (argc > 2 && (std::string(argv[2]) == "--swa-wrap" || std::string(argv[2]) == "--swa-wrap-smooth")) {
 		for (bool native : { false, true })
@@ -2731,11 +3016,24 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	model1_video_test::object_bounds();
+	if (argc > 2 && std::string(argv[2]) == "--swa-trench-distance") {
+		model1_video_test::swa_trench_distance(argv[1]);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-globe") {
+		for (bool lod : { false, true })
+			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_globe_motion(argv[1], aspect, lod);
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--swa-object-bounds") {
 		model1_video_test::swa_destroyer_bounds(argv[1]);
 		return 0;
 	}
 	if (argc > 2 && std::string(argv[2]) == "--swa-ships") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_motion(argv[1], aspect, false);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_motion(argv[1], aspect, false);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_globe_motion(argv[1], aspect);
 		model1_video_test::swa_passing_tie(argv[1]);
 		model1_video_test::swa_surface_slab(argv[1]);
 		model1_video_test::swa_trench_jump(argv[1]);
@@ -2823,6 +3121,8 @@ int main(int argc, char **argv)
 	model1_video_test::wide_split_tiles();
 	model1_video_test::swa_far_blend();
 	model1_video_test::swa_surface_cells();
+	model1_video_test::swa_globe_camera();
+	model1_video_test::swa_hangar_camera();
 	model1_video_test::swaying_camera();
 	if (argc > 2 && std::string(argv[2]) == "--goal") {
 		model1_video_test::goal_fly_in(argv[1]);
@@ -2869,4 +3169,3 @@ int main(int argc, char **argv)
 	}
 	puts("Model 1 video tests passed");
 }
-

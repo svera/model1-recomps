@@ -252,10 +252,11 @@ struct video_traits
 	// blended between game frames by the camera's move only (SWA's Death Star surface and trench;
 	// { 0, 0 }: none known)
 	uint32_t still_models[2][2] = {};
+	std::vector<uint32_t> camera_anchors;   // stationary models whose unchanged axes determine the camera's move
 	bool still_model(uint32_t m) const
 	{
 		for (const auto &r : still_models) if (m >= r[0] && m < r[1]) return true;
-		return false;
+		return std::find(camera_anchors.begin(), camera_anchors.end(), m) != camera_anchors.end();
 	}
 	std::vector<sky_record> skies;    // empty: no hi-res skies
 	int sky_tile_map = 0, sky_first_row = 0;   // where the game streams the panoramas

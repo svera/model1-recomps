@@ -38,6 +38,8 @@
 // this heading's don't (side_cells) are added the same way, band by band, with bounds so the
 // renderer culls those outside the wide view. Full takes one heading more each side (at 4:3 too):
 // one list's far ring leaves the horizon's corners empty, the gaps jumping as the heading steps.
+// Inside the trench (D547F), Full adds the remaining rows of its finite model table only after
+// the entry view reaches its level-flight height (-512); the descent keeps the arcade's grid.
 //
 // The coarse layers are the surface's own distant detail: each coarse cell's model is a simpler
 // version of the 2 x 2 fine cells it covers (fine cells 2x, 2x + 1 by 2z, 2z + 1; its centre is half
@@ -129,6 +131,9 @@ constexpr uint32_t TRENCH_MATRIX_WRITE = 0x0d5525;   // mov.w #B, [R2+]: a cell'
 constexpr uint32_t TRENCH_ROWS = 0x269516, TRENCH_ROWS_END = 0x269b16;
 constexpr uint32_t TRENCH_ENTRY_SIZE = 8, TRENCH_COLUMNS = 4;
 constexpr float TRENCH_CELL = 2048;
+constexpr uint32_t TRENCH_VIEW_HEIGHT = 0x7424;   // in the game's variables (R25)
+constexpr float TRENCH_LEVEL_HEIGHT = -512;
+constexpr float TRENCH_HEIGHT_EPSILON = 1;   // the level view fluctuates by a few thousandths
 constexpr int TRENCH_ENTRY_REG = 1, TRENCH_ROW_REG = 3, TRENCH_COLUMN_REG = 4;
 // the asteroid field's repeating objects
 constexpr uint32_t MATRIX_WRITES[] = { 0x0c18c1, 0x0c191b, 0x0c1995, 0x0c1a12, 0x0c1ae6 };   // mov.w #B, -44[R11]
@@ -605,6 +610,8 @@ std::vector<render_object> trench_rows(model1 &machine, gameplay_state &state)
 	auto reg = [&](int r) { return machine.cpu().reg(r); };
 	const uint32_t entry = reg(TRENCH_ENTRY_REG);
 	if (reg(TRENCH_ROW_REG) != 1 || reg(TRENCH_COLUMN_REG) != 1 || entry < TRENCH_ROWS || entry >= TRENCH_ROWS_END) return {};
+	const float height = std::bit_cast<float>(machine.read32(reg(VARIABLES_REG) + TRENCH_VIEW_HEIGHT));
+	if (height > TRENCH_LEVEL_HEIGHT + TRENCH_HEIGHT_EPSILON) return {};
 	std::vector<render_object> objects;
 	const uint32_t row_size = TRENCH_ENTRY_SIZE * TRENCH_COLUMNS;
 	for (uint32_t row = entry + TRENCH_ENTRY_SIZE, n = 1; row + row_size <= TRENCH_ROWS_END; row += row_size, n++)
@@ -1392,4 +1399,3 @@ bool set_coin_setting(model1 &machine, int64_t value)
 }
 
 }
-

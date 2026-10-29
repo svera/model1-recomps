@@ -1413,11 +1413,13 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	if (!size)
 		size = 0xffffffff;
 
-	// Smooth motion: a still surface model's open edges (open_edges), for close_steps
+	// Smooth motion: a still surface model's open edges (open_edges), for close_steps.
+	// Camera anchors are stationary too, but their hulls' intentional gaps are not surface steps.
 	const std::vector<open_edge> *open = nullptr;
 	std::vector<std::pair<uint32_t, uint32_t>> top_colours;   // (face, colour) as drawn in this picture
 	if (m_replaying && m_alpha < 1 && !clipped_object && !effect.point && !(object_polygon & 0x800000) &&
-		m_video->still_model(object_polygon)) {
+		m_video->still_model(object_polygon) &&
+		std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), object_polygon) == m_video->camera_anchors.end()) {
 		open = &open_edges(poly_data, poly_adr, polygon_words, size, object_polygon);
 		if (open->empty()) open = nullptr;
 	}
@@ -3001,4 +3003,3 @@ bool model1::bench3d(int reps, double &cpu_ms, double &gpu_ms, long long *differ
 	cpu_ms = c[c.size() / 2]; gpu_ms = g[g.size() / 2];
 	return true;
 }
-

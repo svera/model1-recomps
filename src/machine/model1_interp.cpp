@@ -561,7 +561,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		Q.push_back({ pb[9], pb[10], pb[11] });
 		K.push_back(int(k));
 	}
-	if (P.size() < 8) return 0;
+	if (P.empty()) return 0;
 	// (SWA's Death Star surface: models that never move by themselves)
 	std::vector<char> still(P.size());
 	int n_still = 0;
@@ -569,7 +569,6 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		const uint32_t f = first(b.slots[K[i]]);
 		n_still += still[i] = m_video->still_model(f);
 	}
-	if (n_still < 8) n_still = 0;
 	double R[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }, T[3] = {};
 	std::vector<char> fits(P.size(), 1);
 	std::vector<char> use(P.size(), 1);
@@ -697,7 +696,43 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		return true;
 	};
 	auto still_on = [&] { int n = 0; for (size_t i = 0; i < P.size(); i++) n += still[i] && res[i] <= 0.02; return n; };
-	if (!robust()) return 0;
+	// A few stationary parts at one origin (SWA's globe) cannot fit a camera from their places.
+	// Their axes do determine it; fitting the moving ships instead invented cuts on the approach.
+	auto stationary_axes = [&] {
+		if (m_video->camera_anchors.empty()) return false;
+		std::vector<char> anchors(P.size());
+		for (size_t i = 0; i < P.size(); i++) {
+			const uint32_t f = first(b.slots[K[i]]);
+			anchors[i] = std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), first(a.slots[pair[K[i]]])) != m_video->camera_anchors.end() &&
+				std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), f) != m_video->camera_anchors.end();
+		}
+		const auto found = std::find(anchors.begin(), anchors.end(), 1);
+		if (found == anchors.end()) return false;
+		const size_t at = size_t(found - anchors.begin());
+		const float *ma = a.slots[pair[K[at]]].mat, *mb = b.slots[K[at]].mat;
+		const glm::dmat3 ra(glm::make_mat3(ma)), rb(glm::make_mat3(mb));
+		if (std::fabs(glm::determinant(ra)) < 1e-12) return false;
+		const glm::dmat3 turn = rb * glm::inverse(ra);
+		const glm::dmat3 check = glm::transpose(turn) * turn;
+		if (std::fabs(glm::determinant(turn) - 1) > 0.001) return false;
+		for (int c = 0; c < 3; c++)
+			for (int r = 0; r < 3; r++)
+				if (std::fabs(check[c][r] - (c == r ? 1.0 : 0.0)) > 0.001) return false;
+		for (size_t i = 0; i < P.size(); i++)
+			if (anchors[i] && (glm::length(glm::dvec3(P[i].x - P[at].x, P[i].y - P[at].y, P[i].z - P[at].z)) > 1 ||
+				glm::length(glm::dvec3(Q[i].x - Q[at].x, Q[i].y - Q[at].y, Q[i].z - Q[at].z)) > 1)) return false;
+		const glm::dvec3 shift = glm::dvec3(Q[at].x, Q[at].y, Q[at].z) - turn * glm::dvec3(P[at].x, P[at].y, P[at].z);
+		for (int r = 0; r < 3; r++) {
+			for (int c = 0; c < 3; c++) R[r][c] = turn[c][r];
+			T[r] = shift[r];
+		}
+		for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
+		use = anchors;
+		return true;
+	};
+	const bool anchored = stationary_axes();
+	if (!anchored && (P.size() < 8 || !robust())) return 0;
+	if (n_still < 8 && !anchored) n_still = 0;
 	// (SWA: fitted again to the Death Star's surface alone when most of it came off the fit. The
 	// cockpit's frame, the ships and the far scenery, half the list, are off the camera's move; as
 	// the camera crossed into the next cell, the surface's list in another order and a few cells
@@ -705,7 +740,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 	// move was dropped, dozens of cells drawn unblended, the surface shaking through the cockpit's
 	// run. Alone it isn't always better: in the trench, its cells' z crossing 0 beside the camera,
 	// the few there steer it. The fit that carries more of the surface is kept.)
-	if (n_still && still_on() * 2 <= n_still) {
+	if (!anchored && n_still >= 8 && still_on() * 2 <= n_still) {
 		double R0[3][3], T0[3];
 		memcpy(R0, R, sizeof R), memcpy(T0, T, sizeof T);
 		const std::vector<double> res0 = res;
@@ -734,7 +769,8 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		for (size_t i = 0; i < P.size(); i++)
 			if (use[i]) {
 				mv += std::sqrt((Q[i].x - P[i].x) * (Q[i].x - P[i].x) + (Q[i].y - P[i].y) * (Q[i].y - P[i].y) + (Q[i].z - P[i].z) * (Q[i].z - P[i].z));
-				dp += std::max(std::fabs(P[i].z), 1.0);
+				dp += anchored ? std::max(std::sqrt(P[i].x * P[i].x + P[i].y * P[i].y + P[i].z * P[i].z), 1.0)
+					: std::max(std::fabs(P[i].z), 1.0);
 				d[0] += Q[i].x - P[i].x; d[1] += Q[i].y - P[i].y; d[2] += Q[i].z - P[i].z; n++;
 			}
 		const double turn = std::acos(tr) * 180 / M_PI;
@@ -818,7 +854,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		const std::vector<double> first_res = res;
 		double first_R[3][3], first_T[3];
 		memcpy(first_R, R, sizeof R), memcpy(first_T, T, sizeof T);
-		if (fit(w)) {
+		if (!anchored && fit(w)) {
 			for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
 			if (on_it() < kept) res = first_res, memcpy(R, first_R, sizeof R), memcpy(T, first_T, sizeof T);
 		}
@@ -852,10 +888,17 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		std::vector<size_t> ship;       // (ships moved with the camera all the same: none of their model near)
 		for (size_t k = 0; k < b.slots.size(); k++) {
 			if (b.slots[k].polys.empty()) continue;
+			const uint32_t f = first(b.slots[k]);
+			// With an exact stationary reference, a paired ship keeps its own motion, however
+			// close it is to the camera's. The launch X-wing otherwise slid back each list.
+			if (anchored && pair[k] >= 0 && !m_video->still_model(f) && first(a.slots[pair[k]]) == f) {
+				m_cam_res[k] = -1;
+				m_ship[k] = 1;
+				continue;
+			}
 			if (pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.02f) { by_camera(k); continue; }
 			const float *pb = b.slots[k].mat;
 			const pt q{ pb[9], pb[10], pb[11] };
-			const uint32_t f = first(b.slots[k]);
 			int best = -1;
 			double bres = pair[k] >= 0 ? std::min(m_cam_res[k] * 0.25, 0.01) : 0.01;
 			for (size_t o = 0; o < a.slots.size(); o++)
@@ -1296,10 +1339,15 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 		// a part that moved far, or turned sharply (a cut can keep the parts' places and swing the
 		// camera round them: blending two far-apart turns squashes and stretches the shapes)
 		bool turned = false;
+		float axes_a = 0, axes_b = 0;
+		if (m_video->separate_parts)
+			for (int r = 0; r < 9; r++) axes_a += pa[r] * pa[r], axes_b += pb[r] * pb[r];
 		for (int r = 0; r < 9 && !turned; r += 3) {
 			const float la = pa[r] * pa[r] + pa[r + 1] * pa[r + 1] + pa[r + 2] * pa[r + 2];
 			const float lb = pb[r] * pb[r] + pb[r + 1] * pb[r + 1] + pb[r + 2] * pb[r + 2];
 			const float dot = pa[r] * pb[r] + pa[r + 1] * pb[r + 1] + pa[r + 2] * pb[r + 2];
+			// A folding part's axis scaling through zero has no direction to compare.
+			if (m_video->separate_parts && (la < 1e-6f * axes_a || lb < 1e-6f * axes_b)) continue;
 			if (la > 0 && lb > 0 && dot < 0.77f * std::sqrt(la * lb)) turned = true;     // over ~40 degrees
 		}
 		// (SWA's shots and passing fighters move 30-50% of their depth in a list as they near the
@@ -1340,6 +1388,15 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	if (m_camera_sure) {
 		cut_jumps = 0;
 		for (size_t i = 0; i < b.slots.size(); i++) cut_jumps += m_blend_ok[i] && m_cam_res[i] > 0.3f;
+		// Moving ships can outnumber the globe and disagree with its camera. Stationary geometry
+		// following the known move cannot vote for a cut just because the ships do.
+		int stationary = 0, following = 0;
+		for (size_t i = 0; i < b.slots.size(); i++)
+			if (std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), first(b.slots[i])) != m_video->camera_anchors.end()) {
+				stationary++;
+				following += m_cam_res[i] >= 0 && m_cam_res[i] <= 0.02f;
+			}
+		if (stationary && following == stationary) cut_jumps = 0;
 	}
 	// (SWA's scenes have 3-9 parts: one shot fired was a cut, and two fighters and a shot passing
 	// the camera, 3 of 5 parts. Its new and fast parts are drawn where they are; a cut moves nearly all.)
