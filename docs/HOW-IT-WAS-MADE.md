@@ -173,7 +173,10 @@ own extras for a game (VF's widescreen pictures, cheats, panoramas, select icon)
 game's host and, for a static build, one game's recompiled table; the generic tools link none, and each game has
 `<name>run-static`, `<name>lock-static` and `<name>script-static` with its own. The entries the recompiled code falls
 back to the interpreter for are noted in `build/cov/<name>/runtime_entries.txt` and go into that game's next recompile.
-The downloads are made the same way for every game and every platform too: `tools/mac/package.sh`,
+The **Package release** workflow (`.github/workflows/release.yml`) runs when a GitHub release is
+published, builds VR and SWA from that release's tag for macOS, Windows and Linux, and attaches
+all six archives to the release. Each platform verifies that both packages exist before storing them.
+The packaging scripts, `tools/mac/package.sh`,
 `tools/win/package.sh` and `tools/linux/package.sh` (which runs `tools/linux/container.sh` in Valve's Steam Runtime)
 take the games to package (all by default), build SDL3 and FreeType from the checked sources `tools/release/deps.sh`
 fetches, and write `build/<os>/<game>/<File>Recomp-<os>`; each reads a game's settings from
