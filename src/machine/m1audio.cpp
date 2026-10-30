@@ -42,7 +42,7 @@ struct m1audio::ym_glue : ymfm::ymfm_interface
 m1audio::m1audio(std::vector<uint8_t> &sndcpu, std::vector<uint8_t> &pcm1, std::vector<uint8_t> &pcm2)
 	: m_rom(sndcpu), m_pcm1_rom(pcm1), m_pcm2_rom(pcm2), m_ram(0x10000), m_ym(std::make_unique<ym_glue>())
 {
-	g_board = this;
+	if (g_board) m68k_get_context(g_board->m_cpu_context.data());
 	m_pcm1.read_byte = [this](uint32_t a) -> uint8_t {
 		a &= 0x3fffff;
 		uint32_t off = a < 0x100000 ? a : m_bank1 * 0x100000 + (a & 0xfffff);
@@ -57,6 +57,9 @@ m1audio::m1audio(std::vector<uint8_t> &sndcpu, std::vector<uint8_t> &pcm1, std::
 	m_pcm2.start();
 	m68k_init();
 	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
+	m_cpu_context.resize(m68k_context_size());
+	m68k_get_context(m_cpu_context.data());
+	g_board = this;
 }
 
 void m1audio::attach_dsb(const std::vector<uint8_t> &cpu_rom, const std::vector<uint8_t> &mpeg_rom)
@@ -66,9 +69,17 @@ void m1audio::attach_dsb(const std::vector<uint8_t> &cpu_rom, const std::vector<
 
 m1audio::~m1audio() { if (g_board == this) g_board = nullptr; }
 
+void m1audio::activate()
+{
+	if (g_board == this) return;
+	if (g_board) m68k_get_context(g_board->m_cpu_context.data());
+	m68k_set_context(m_cpu_context.data());
+	g_board = this;
+}
+
 void m1audio::reset()
 {
-	g_board = this;
+	activate();
 	std::fill(m_ram.begin(), m_ram.end(), 0);
 	m_rx.clear(); m_tx.clear();
 	m_rx_latch = -1;
@@ -153,6 +164,7 @@ void m1audio::write8(uint32_t a, uint8_t v)
 // RxRDY drives the 68000's IRQ 2 (autovectored).
 void m1audio::update_irq()
 {
+	activate();
 	m68k_set_irq(m_rx_latch >= 0 ? 2 : 0);
 }
 
@@ -162,7 +174,7 @@ int m1audio::irq_ack(int) { return M68K_INT_ACK_AUTOVECTOR; }
 
 void m1audio::run(double usec, std::vector<int16_t> &out)
 {
-	g_board = this;
+	activate();
 	// a received byte reaches the UART's buffer when the previous one has been read
 	if (m_rx_latch < 0 && !m_rx.empty()) {
 		m_rx_latch = m_rx.front();

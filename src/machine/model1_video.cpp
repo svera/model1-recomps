@@ -12,6 +12,8 @@
 
 
 #include <glm/geometric.hpp>
+#include <glm/mat3x3.hpp>
+#include <glm/matrix.hpp>
 #include <glm/vec2.hpp>
 
 #define LOG_TGP (1U << 1)
@@ -25,14 +27,6 @@ enum { MOIRE = 0x01000000 };
 constexpr uint32_t MOIRE_MARK = 0x01000000;   // in a drawn pixel's unused top byte: already shaded
 constexpr int GEOMETRY_QUADS = 1000000;
 constexpr int GEOMETRY_POINTS = GEOMETRY_QUADS * 2;
-bool model1::s_moire_blend = false;
-int model1::s_mark_y1 = 1 << 30, model1::s_mark_y2 = -1;
-bool model1::s_hd_raster = false;
-std::vector<int32_t> model1::s_owner;
-int32_t model1::s_owner_base = 0;
-static int s_last_count = 0;           // the polygons in the last pass that noted owners
-int model1::s_depth_w = 0;
-int model1::s_depth_pass = 0;
 thread_local int model1::s_cur_quad = 0;
 thread_local bool model1::s_cur_mshadow = false;
 // The polygons are drawn in row bands, several at once (draw_quads): each band notes its own
@@ -42,7 +36,6 @@ static thread_local int t_mark_y1 = 1 << 30, t_mark_y2 = -1;
 static thread_local int t_band_y1 = -(1 << 30), t_band_y2 = 1 << 30;
 static thread_local rectangle t_full_clip;
 static thread_local bool t_banded = false;
-std::vector<uint8_t> model1::s_qscenery;
 // Recording for the GPU at 1x: the rasterizer's own spans, kept instead of drawn
 static thread_local std::vector<gpu3d_span> *t_sink = nullptr;
 static thread_local uint32_t t_sink_poly = 0;
@@ -52,7 +45,7 @@ static thread_local uint32_t t_sink_poly = 0;
 // edge inclusive, right edge exclusive; rows half-open the same way). Two polygons that share an
 // edge compute the same crossing on every row, so the pixels along it go to exactly one of them:
 // no backdrop showing through between neighbours, nothing drawn twice.
-void model1::fill_quad_hd(bitmap_rgb32 &bitmap, view_t *view, const quad_t &q, int color)
+void model1::fill_quad_hd(bitmap_rgb32 &bitmap, view_t *view, const quad_t &q, int color) const
 {
 	float vx[4], vy[4];
 	for (int i = 0; i < 4; i++) { vx[i] = q.p[i]->fx; vy[i] = q.p[i]->fy; }
@@ -202,7 +195,7 @@ void model1::draw_hline(bitmap_rgb32 &bitmap, int x1, int x2, int y, int color)
 	}
 }
 
-void model1::draw_hline_moired(bitmap_rgb32 &bitmap, int x1, int x2, int y, int color)
+void model1::draw_hline_moired(bitmap_rgb32 &bitmap, int x1, int x2, int y, int color) const
 {
 	if (t_sink) { t_sink->push_back({ t_sink_poly, y, x1, x2 }); return; }
 	uint32_t *const base = &bitmap.pix(y);
@@ -229,7 +222,7 @@ void model1::draw_hline_moired(bitmap_rgb32 &bitmap, int x1, int x2, int y, int 
 	}
 }
 
-void model1::fill_slope(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t x1, int32_t x2, int32_t sl1, int32_t sl2, int32_t y1, int32_t y2, int32_t *nx1, int32_t *nx2)
+void model1::fill_slope(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t x1, int32_t x2, int32_t sl1, int32_t sl2, int32_t y1, int32_t y2, int32_t *nx1, int32_t *nx2) const
 {
 	if(y1 > view->y2)
 	{
@@ -308,7 +301,7 @@ void model1::fill_slope(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t x
 	*nx2 = x2;
 }
 
-void model1::fill_line(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t y, int32_t x1, int32_t x2)
+void model1::fill_line(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t y, int32_t x1, int32_t x2) const
 {
 	int xx1 = x1>>FRAC_SHIFT;
 	int xx2 = x2>>FRAC_SHIFT;
@@ -793,7 +786,7 @@ void model1::raster_quads(bitmap_rgb32 &bitmap, view_t *view, int count)
 		for (int i = 0; i < count; i++) s_qscenery[i] = scenery_model(m_quadind[i]->obj);
 		s_depth_pass = 1;
 	}
-	struct pass_end { ~pass_end() { s_depth_pass = 0; s_cur_mshadow = false; } } pass_end_;
+	struct pass_end { int &depth; ~pass_end() { depth = 0; s_cur_mshadow = false; } } pass_end_{s_depth_pass};
 	// Above 1x: the rows in bands, a thread each, every band drawing all the polygons in order
 	// within its rows: the same picture, several times faster. (Picking prints, so stays serial.)
 	static const bool serial = getenv("M1_SERIAL_POLYS") != nullptr;   // testing: the one-thread path
@@ -822,7 +815,10 @@ void model1::raster_quads(bitmap_rgb32 &bitmap, view_t *view, int count)
 		count = 0;                    // drawn: skip the serial loop below
 	}
 	t_mark_y1 = 1 << 30; t_mark_y2 = -1;
-	struct merge_marks { ~merge_marks() { s_mark_y1 = std::min(s_mark_y1, t_mark_y1); s_mark_y2 = std::max(s_mark_y2, t_mark_y2); } } merge_marks_;
+	struct merge_marks {
+		int &lo, &hi;
+		~merge_marks() { lo = std::min(lo, t_mark_y1); hi = std::max(hi, t_mark_y2); }
+	} merge_marks_{s_mark_y1, s_mark_y2};
 	for (int i = 0; i < count; i++)
 	{
 		s_cur_quad = i;
@@ -875,7 +871,7 @@ void model1::view_t::recompute_frustum()
 {
 	// MAME's frustum runs through the last pixel's corner; the crack-free filler samples pixel
 	// centres, so above 1x it reaches the far edge of the last row and column
-	const float edge = s_hd_raster ? 1.0f : 0.0f;
+	const float edge = hd_raster ? 1.0f : 0.0f;
 	a_left   = ( lx1 - xc - viewx) / zoomx;
 	a_right  = ( lx2 + edge - xc - viewx) / zoomx;
 	a_bottom = (-ly1 + yc - viewy) / zoomy;
@@ -1370,7 +1366,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		return;
 	}
 	game::object_effects effect;
-	if (m_gameplay.object) effect = m_gameplay.object(owner, tex_adr, poly_adr, size, poly_data);
+	if (m_gameplay.object && !m_probing) effect = m_gameplay.object(owner, tex_adr, poly_adr, size, poly_data);
 	if (effect.hidden) return;
 	const bool clipped_object = bounds && !effect.point && m_view->outside(*bounds);
 	std::vector<uint32_t> *colours = nullptr;
@@ -1417,8 +1413,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	// Camera anchors are stationary too, but their hulls' intentional gaps are not surface steps.
 	const std::vector<open_edge> *open = nullptr;
 	std::vector<std::pair<uint32_t, uint32_t>> top_colours;   // (face, colour) as drawn in this picture
-	if (m_replaying && m_alpha < 1 && !clipped_object && !effect.point && !(object_polygon & 0x800000) &&
-		m_video->still_model(object_polygon) &&
+	if (m_replaying && m_alpha < 1 && !m_probing && !clipped_object && !effect.point && !(object_polygon & 0x800000) &&
+		m_video->step_model(object_polygon) &&
 		std::find(m_video->camera_anchors.begin(), m_video->camera_anchors.end(), object_polygon) == m_video->camera_anchors.end()) {
 		open = &open_edges(poly_data, poly_adr, polygon_words, size, object_polygon);
 		if (open->empty()) open = nullptr;
@@ -1434,6 +1430,40 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	if (m_replaying && m_video->separate_parts && m_shade_from && m_shade_to && m_alpha < 1 && !m_video->still_model(object_polygon) &&
 		size_t(m_replay_slot) < m_blend.size() && std::equal(m_view->translation, m_view->translation + 12, m_blend[m_replay_slot].begin()))
 		eye_from = m_shade_from, eye_to = m_shade_to;   // (drawn by its slot's matrix: not a copy hung on it)
+	// (A list carried on past its frame into a cut (render_smooth's probe): the eye where list a
+	// drew it, as this picture places the object. A face between there and the eye, the camera
+	// that the game stopped against a wall carried on through it, is m_extra_crossed.)
+	bool extra_check = false;
+	glm::vec3 extra_eye(0);
+	if (m_probing && !m_extra_crossed && size_t(m_replay_slot) < m_blend.size() && m_blend_ok[m_replay_slot] &&
+		std::equal(m_view->translation, m_view->translation + 12, m_blend[m_replay_slot].begin())) {
+		const float *t = m_blend_to[m_replay_slot].data();
+		const glm::mat3 at(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8]);
+		if (std::fabs(glm::determinant(at)) > 1e-12f) {
+			point_t e;
+			const glm::vec3 p = glm::inverse(at) * -glm::vec3(t[9] + m_view->vxx, t[10] + m_view->vyy, t[11] + m_view->vzz);
+			e.x = p.x, e.y = p.y, e.z = p.z;
+			m_view->transform_point(&e);
+			extra_eye = glm::vec3(e.x, e.y, e.z);
+			extra_check = glm::length(extra_eye) > 0;
+		}
+	}
+	if (m_probing && !extra_check) {
+		if (pin_object) { m_view->viewx = original_viewx; m_view->recompute_frustum(); }
+		return;
+	}
+	const auto eye_through = [&](const quad_t &q) {
+		glm::vec3 v[4];
+		for (int k = 0; k < 4; k++) v[k] = glm::vec3(q.p[k]->x, q.p[k]->y, q.p[k]->z);
+		glm::vec3 n(0);
+		for (int k = 0; k < 4; k++) n += glm::cross(v[k], v[(k + 1) & 3]);   // (Newell's: a quad or a triangle)
+		const float d_eye = glm::dot(n, extra_eye - v[0]), d_now = glm::dot(n, -v[0]);
+		if ((d_eye > 0) == (d_now > 0) || d_eye == d_now) return false;
+		const glm::vec3 x = extra_eye * (1 - d_eye / (d_eye - d_now));
+		for (int k = 0; k < 4; k++)
+			if (glm::dot(n, glm::cross(v[(k + 1) & 3] - v[k], x - v[k])) < 0) return false;
+		return true;
+	};
 	// (A corner far off to the side crosses the eye's plane as the view turns: a big backdrop face
 	// (the Death Star's far ground) swinging past the eye, its corner 80 times as far as it moves a
 	// list, is left as it is. The asteroid's corners passed within 2 to 8 times their move.)
@@ -1452,7 +1482,6 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		const glm::vec3 crossing = from + (to - from) * (z_from / (z_from - z_to));
 		p->passes_eye = glm::length(crossing) < 16 * glm::length(to - from);
 	};
-
 	require_geometry_space(2, 0);
 	point_t *old_p0 = m_pointpt++;
 	point_t *old_p1 = m_pointpt++;
@@ -1602,13 +1631,15 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		if (!link)
 			goto next;
 
-		if (!(flags & 0x00004000) && view_determinant(old_p1, old_p0, p0) > 0)
-			goto next;
-
 		cquad.p[0] = old_p1;
 		cquad.p[1] = old_p0;
 		cquad.p[2] = p0;
 		cquad.p[3] = p1;
+		if (extra_check && eye_through(cquad)) { m_extra_crossed = true; extra_check = false; }
+		if (m_probing) goto next;
+
+		if (!(flags & 0x00004000) && view_determinant(old_p1, old_p0, p0) > 0)
+			goto next;
 
 		switch ((flags >> 10) & 3)
 		{
@@ -2051,6 +2082,11 @@ int model1::skip_direct(int list_offset) const
 
 void model1::draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
+	if (m_probing) {
+		m_quadpt = &m_quaddb[0];
+		m_pointpt = &m_pointdb[0];
+		return;
+	}
 	if (!m_seen_edges.empty()) {
 		if (m_replaying) close_steps();
 		else m_seen_edges.clear();
@@ -2255,11 +2291,12 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 		m_view->init_translation_matrix();
 		float old_z = 0;
 		uint32_t owner = 0;
-		if (m_gameplay.render_begin) m_gameplay.render_begin();
+		if (m_gameplay.render_begin && !m_probing) m_gameplay.render_begin();
 		struct render_scope {
 			std::function<void()> &end;
-			~render_scope() { if (end) end(); }
-		} scope{m_gameplay.render_end};
+			bool probing;
+			~render_scope() { if (end && !probing) end(); }
+		} scope{m_gameplay.render_end, m_probing};
 
 		int list_offset = 0;
 		bool retained_drawn = false;

@@ -12,6 +12,8 @@ Code ported from MAME (with the original headers kept) lives in `src/`:
 - `src/machine/model1_video.cpp`: the Model 1 rasterizer, current `sega/model1_v.cpp` (Olivier Galibert)
 - `src/machine/s24tile.h`: the System 24 tile chip, `sega/segaic24.cpp` (Olivier Galibert)
 - `src/machine/model1.cpp`: memory map and IRQ glue, `sega/model1.cpp`
+- `src/machine/m1comm.h`: two-cabinet shared-memory simulation, following `sega/m1comm.cpp`
+  (Ariane Fugmann); the loopback transport is new project code.
 
 BSD-3-Clause: redistribution in source and binary form requires keeping the copyright notice,
 the list of conditions and the disclaimer; see https://opensource.org/license/bsd-3-clause.

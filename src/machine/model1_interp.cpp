@@ -384,6 +384,22 @@ bool model1::render_smooth(double now, bool shown)
 		const double c = std::min(alpha, 1.0);
 		blend_slots(m_logic_prev, a, 1 + (cut ? c - 0.25 * c * c : 0.5 * (1 - (1 - c) * (1 - c))));
 		m_replay_extra = !m_blend_cut;
+		// (Carried on, the eye can pass where the game never put it: into a cut where the ship hit
+		// a wall in the Super Star Destroyer's tunnels, the eye carried on through the wall, the
+		// wall seen from behind and left out, a hole for a picture. Such a picture is the older list
+		// as it is, as the arcade shows it.)
+		if (m_replay_extra) {
+			const view_t view = *m_view;
+			const auto done = m_render_done;
+			m_extra_crossed = false;
+			m_probing = true;
+			tgp_render(m_bitmap, m_bitmap.cliprect(), RENDER_BELOW_HUD);
+			m_probing = false;
+			m_render_done = done;
+			*m_view = view;
+			if (m_extra_crossed) m_replay_extra = false;
+			m_extra_crossed = false;
+		}
 		if (!cut && m_replay_extra) m_still_carried = b.frame;   // (the list after it catches up from there)
 	}
 	m_blend_cut = cut;

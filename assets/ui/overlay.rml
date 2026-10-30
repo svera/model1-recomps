@@ -30,7 +30,23 @@
 			color: #0b1430;
 			decorator: horizontal-gradient(#ffd23f #ff8f1f);
 		}
+		#notice {
+			position: absolute;
+			left: 5%;
+			width: 90%;
+			bottom: 12dp;
+			text-align: center;
+		}
+		#notice span {
+			display: block;
+			padding: 6dp 18dp;
+			font-size: 22dp;
+			font-weight: 600;
+			color: #ffd23f;
+			background-color: #0b1430e6;
+			border-top: 2dp #ffd23f;
+		}
 	</style>
 </head>
-<body><div id="fps"></div><div id="toast"></div></body>
+<body><div id="fps"></div><div id="toast"></div><div id="notice"></div></body>
 </rml>

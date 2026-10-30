@@ -355,6 +355,35 @@ bool set_machine_setting(model1 &machine, machine_setting setting, int value)
 	});
 }
 
+bool set_link_player(model1 &machine, int player)
+{
+	if (player < 1 || player > 2) {
+		fprintf(stderr, "VR: link player must be 1 (master) or 2 (slave)\n");
+		return false;
+	}
+	return edit_eeprom_settings(machine, 5, [&](uint16_t *e) {
+		const uint16_t value = uint16_t((e[6] & 0x00ff) | (player << 8));
+		if (e[6] == value) return false;
+		e[6] = value;
+		return true;
+	});
+}
+
+bool set_standalone(model1 &machine)
+{
+	return edit_eeprom_settings(machine, 5, [&](uint16_t *e) {
+		if (!(e[6] & 0xff00)) return false;
+		e[6] &= 0x00ff;
+		return true;
+	});
+}
+
+bool in_attract_mode(model1 &machine)
+{
+	const auto phase = machine.work_ram()[0x1138];
+	return machine.past_boot() && !machine.in_test_menu_mode() && (phase == 0x03 || phase == 0x07);
+}
+
 void camera_cycle::update(model1 &machine, bool pressed)
 {
 	const uint8_t phase = machine.work_ram()[0x1138];

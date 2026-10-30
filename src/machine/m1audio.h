@@ -34,7 +34,7 @@ public:
 	bool tx_pending() const { return !m_tx.empty(); }
 	uint8_t tx_byte() { uint8_t b = m_tx.front(); m_tx.pop_front(); return b; }
 
-	// Musashi's memory callbacks land here (one board per process).
+	// Musashi's memory callbacks land on the board selected for this slice.
 	uint8_t read8(uint32_t a);
 	void write8(uint32_t a, uint8_t v);
 	uint16_t read16(uint32_t a);
@@ -45,6 +45,8 @@ private:
 	struct ym_glue;
 	std::vector<uint8_t> &m_rom, &m_pcm1_rom, &m_pcm2_rom;
 	std::vector<uint8_t> m_ram;
+	std::vector<uint8_t> m_cpu_context;
+	void activate();
 	multipcm_device m_pcm1{10000000}, m_pcm2{10000000};
 	std::unique_ptr<ym_glue> m_ym;
 	std::unique_ptr<dsbz80> m_dsb;

@@ -3,6 +3,7 @@
 #include "../core/v60_device.h"
 #include <cstddef>
 #include <string_view>
+#include <memory>
 
 struct rec_entry { uint32_t addr; void (*fn)(v60_device &); };
 extern const rec_entry rec_table[];
@@ -15,7 +16,7 @@ extern int cycles;
 
 void after_insn_slow();
 void call(uint32_t addr);               // runs the code at addr until it returns
-void use_table(const rec_entry *t, size_t n);   // the recompiled functions (the C++ build's by default)
+void use_table(const rec_entry *t, size_t n, std::shared_ptr<const void> owner = {});   // the recompiled functions (the C++ build's by default)
 size_t fallback_count();
 uint32_t first_fallback_address();
 void reset_fallbacks();
@@ -30,4 +31,22 @@ void attach(v60_device &c, std::string_view game);
 // Back to the interpreter: the CPU counts its own cycles again and the game stack is freed.
 void detach(v60_device &c);
 void run(int cycles);                   // runs the game for a scanline's worth of cycles
+
+// Independently suspended runtimes, selected only between CPU slices on one thread.
+// Native code is compiled for the selected context's CPU and owned by that context.
+// A context must be destroyed before its attached CPU.
+class context
+{
+public:
+	struct state;
+	context();
+	~context();
+	context(const context &) = delete;
+	context &operator=(const context &) = delete;
+	void activate();
+	void attach(v60_device &cpu, std::string_view game);
+	void run(int cycles);
+private:
+	std::unique_ptr<state> m;
+};
 }

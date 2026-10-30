@@ -11,7 +11,9 @@ namespace rec {
 struct native_stats { size_t functions = 0, instructions = 0, native = 0, code_bytes = 0; double ms = 0; };
 
 // mem: the main CPU's address space (16 MB). Builds every function and makes rec::call use them.
-// Call after rec::attach. Returns false (and the game runs on the interpreter) on failure.
+// Call after rec::attach (or context::attach); the selected context owns the resulting code.
+// When rebuilding, discard its suspended stack with attach before resuming execution.
+// Returns false on failure; the caller must explicitly report or handle the failure.
 bool build_native(const std::vector<uint8_t> &mem, const hints &map, native_stats *stats = nullptr);
 
 } // namespace rec

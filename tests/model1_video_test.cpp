@@ -15,6 +15,77 @@
 
 struct model1_video_test
 {
+	// The Super Star Destroyer's scenery must survive the moving-object eye-crossing guard.
+	// Compare the same smoothed pose with that guard disabled only during rasterization;
+	// hide moving effects so their intentional suppression cannot mask a missing wall.
+	// Nor may its pieces' open gaps be closed as surface steps: the lists show the void beyond,
+	// and a step face flashed in at the screen's edges between them.
+	static void swa_tunnel(const char *dir, float aspect)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(4.0f / 3);   // (the wide view culls differently: the recording's flight leaves the tunnel)
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		auto object = m.m_gameplay.object;
+		m.m_gameplay.object = [object](uint32_t owner, uint32_t tex, uint32_t poly, uint32_t size, const float *data) {
+			auto effect = object ? object(owner, tex, poly, size, data) : game::object_effects{};
+			if (poly < 0x100000 || poly >= 0x16482e) effect.hidden = true;
+			return effect;
+		};
+		const auto *video = m.m_video;
+		auto reference_video = *video;
+		reference_video.separate_parts = false;
+		bool reference = false;
+		auto begin = m.m_gameplay.render_begin, end = m.m_gameplay.render_end;
+		m.m_gameplay.render_begin = [&] {
+			if (begin) begin();
+			if (reference) m.m_video = &reference_video;
+		};
+		m.m_gameplay.render_end = [&] {
+			m.m_video = video;
+			if (end) end();
+		};
+		auto script = game::make_auto_play(title, "recording", 12345, false);
+		assert(script);
+		int pictures = 0;
+		size_t different = 0, scenery_pixels = 0;
+		uint32_t stepped = 0;
+		for (int f = 1; f <= 16220; f++) {
+			if (f == 14400) m.set_aspect(aspect);
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.set_drawing(f >= 15980);
+			m.run_frame();
+			if (f < 15990) continue;
+			for (double phase : { 0.25, 0.5, 0.75 }) {
+				const uint32_t seen = m.m_seen_objects;
+				m.render_smooth(f - 1 + phase);
+				stepped += m.m_seen_objects - seen;
+				const size_t pixels = size_t(m.frame_w()) * m.frame_h();
+				const std::vector<uint32_t> actual(m.frame().data(), m.frame().data() + pixels);
+				reference = true;
+				m.render_smooth(f - 1 + phase);
+				reference = false;
+				for (size_t i = 0; i < pixels; i++) {
+					different += actual[i] != m.frame().data()[i];
+					const uint32_t c = m.frame().data()[i];
+					const int r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+					scenery_pixels += r > 40 && r == g && g == b;
+				}
+				pictures++;
+			}
+		}
+		printf("SWA destroyer trench (aspect %.3f): %zu pixels lost to the eye-crossing guard over %d pictures (%zu scenery pixels), %u models stepped\n",
+			aspect, different, pictures, scenery_pixels, stepped);
+		assert(pictures > 600 && scenery_pixels > size_t(pictures) * 10000 && different == 0 && stepped == 0);
+	}
 	// Stationary camera anchors must not get the surface's missing-step faces: those filled
 	// the cruiser's intentional engine gaps with triangles that flashed between pictures.
 	static void swa_launch_flashes(const char *dir, float aspect)
@@ -2991,6 +3062,10 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 2 && std::string(argv[2]) == "--swa-tunnel") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_tunnel(argv[1], aspect);
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--swa-launch-flashes") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
 		return 0;

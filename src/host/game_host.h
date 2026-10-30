@@ -30,6 +30,8 @@ struct host_context
 	std::function<void(const std::string &, std::function<bool(const SDL_Event &)>, std::function<void()>)> capture;
 	std::function<void()> refresh_menu;
 	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings
+	int link_player = 0;                     // experimental VR cabinet: 1 master, 2 slave
+	bool standalone_cabinet = false;         // force standalone instead of restoring a saved link role
 };
 
 class game_host
@@ -87,6 +89,8 @@ public:
 	virtual void before_frame() {}
 	virtual void after_frame() {}
 	virtual bool hide_frame() const { return false; }
+	// A queued local multiplayer join may reboot only from an idle attract screen.
+	virtual bool can_join_local_cabinet() const { return false; }
 
 	// Optional text accompanying the battery-backed save (games without one return an empty name).
 	virtual const char *save_sidecar_name() const { return ""; }
