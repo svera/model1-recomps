@@ -472,6 +472,14 @@ The AI wrote nearly all the code. A person decided what was right.
   eye and left out. Now a face is left out only when a corner crosses the eye's plane within 16 times its move
   between the lists. The asteroid's corners crossed within 2 to 8 times their move, this one 80 times. A regression
   test (`--swa-ships`) counts black pixels there (27,432 before, 0 now). The asteroid's count is unchanged.
+- **The Super Star Destroyer's hull missing at the bottom right (start of its stage, smooth motion)** → the same
+  asteroid rule again. The scripted fly-over at the start of the stage skims about 1,000 units over the hull's white
+  top, and the hull moves about 880 units per list. The near corners of its 2,000-unit faces cross the eye's plane
+  between lists, at 1 to 6 times their move, so they were taken for faces passing the eye. In every blended picture
+  the near top was left out, which showed the grey hull below and black beside it. This wasn't widescreen,
+  draw distance or culling: 4:3, Arcade, and pictures without smooth motion drew it whole. A face is now left out only
+  when it is smaller than its corner's move: the asteroid's faces were 0.4 to 0.6 times their move, the hull's 1 or
+  more. The asteroid's and far ground's counts in `--swa-ships` are unchanged (6,880 and 0).
 - **Surface blocks coming and going at the screen's sides from TIME 135 (Death Star demo, third-person view)** →
   mostly the game's own behaviour: the arcade video shows the same. It happens at 4:3 and without smooth motion too.
   Adding three more headings' cells or widening the game's view test changed no near surface cell. What was ours was
@@ -480,6 +488,46 @@ The AI wrote nearly all the code. A person decided what was right.
   heading's cells each side (at any aspect), as 16:9 already did for its width. A regression test (`--swa-ships`)
   checks that the cells 16:9 draws within 4:3's view are drawn at 4:3 (3,148 of 19,432 missing before, 16 now: one
   cell hidden behind nearer blocks).
+- **Tunnel walls flickering in the Super Star Destroyer stage (smooth motion)** → three causes, found one after
+  another. None of them was in the game's lists, which are the same at 4:3 and 21:9 in the tunnel.
+  - **A wall vanishing for a picture after a collision.** When the ship hit a wall, the game stopped the camera, and
+    the list became a cut. Smooth motion carries the camera on past a cut, and here it carried the eye through the
+    wall. The wall was then seen from behind and culled, leaving a hole for a picture. A probe render now checks
+    whether the carried-on eye crosses a face. If it does, the picture shows the older list as it is, as the arcade
+    shows it.
+  - **Side walls blinking out without any collision.** This was the asteroid rule above. The tunnel's big side walls
+    have near corners that pass behind the eye every list as the ship flies on, so the rule left their faces out of
+    every picture between lists. At 120 fps a wall showed in one picture in four. A census over the whole game found
+    the 272 models at 0x1100004–0x116482E only in the tunnel, and always carried by the camera's move. The traits now
+    name that range in `still_models`, which the rule skips. (A first fix named only part of it, 0x1123b6a onwards,
+    which missed the largest side wall.)
+  - **Wall pieces at the screen's edges popping in.** Naming the tunnel as still also turned on the surface's step
+    closing above, which is meant for the Death Star's blocks. The tunnel's pieces have open gaps where the lists show
+    the black beyond. The step closing filled them in pictures between lists only, so a grey face flashed in at the
+    left and right edges. A separate trait, `step_models`, now names the models whose steps are closed: the Death Star
+    surface and trench, not the tunnel.
+  - **The red girders at the tunnel's end glitching (TIME 97–90).** There were two causes. First, the girders, the
+    exit shaft and the tunnel's ceiling slabs are models outside the tunnel's range (0x1095754–0x1095895,
+    0x10AB336–0x10AC521, 0x10F601A and 0x10F60D5). A census showed them only in the tunnel and its exit, and always on
+    the camera's move. Until they were named in `still_models`, the eye-crossing rule dropped the faces of the huge,
+    close girder from the pictures between lists. Second, a jump at each list's own picture. A still model starts
+    each pair where the camera's move takes the newer list's matrix back to. That move was fitted to the parts'
+    *places* only, then fitted again weighted by depth. With 15–25 parts in view, a few far apart steered it half a
+    degree off. The girder's far ends then began every pair a few pixels from where the older list had them, and
+    snapped back at the list's picture: one face's corner went 550, 552, 554 (list), 552, 554. The move now takes its
+    turn from the still models' own *axes* (a still model's axes turn exactly as the camera does), with the shift
+    they agree on. It is kept when it carries at least as many still models as the fitted one did, and the
+    depth-weighted refit is skipped then.
+
+  The harness's recorded run leaves the tunnel at 21:9, because the wide view culls differently and the flight
+  diverges. So the checks fly it at 4:3 and switch to 21:9 at frame 14400, keeping the recorded inputs. Every
+  picture of that flight at 120 fps timing was compared at the screen's edges against its neighbours. The
+  remaining one-picture changes are effects: explosions, hit flashes and laser bolts. A regression test
+  (`--swa-tunnel`, in `test-swa-video`) renders the tunnel at 4:3 and 16:9 and compares each picture with the
+  eye-crossing rule off (4,731,490 pixels lost over 693 pictures with the first fix's range, 0 now). It also checks
+  that no tunnel model is passed to the step closing (23,142 were with the tunnel among the step models). A third
+  check flies on to the girders at 21:9 and asserts that every blended pair starts the girder exactly where the
+  older list has it (48 of 161 pairs were off before, by up to 2.4% of its distance; none now).
 - **A crash at exit on Linux** → a widescreen write ran past the end of each line in the tile chip → found with ASan
   and fixed. ASan now runs clean at several scales and shapes.
 
@@ -1871,6 +1919,29 @@ to the wide picture's edges. A recorded complete game draws no other direct poly
 whole width; the gunner panels that touch only the left edge stay where they are. The Model 1
 video test checks both cases and 4:3 frames.
 
+Hyperspace (the jump before a stage, TIME 200) ends with white streaks that, in widescreen, filled
+only the 4:3 middle while the blue tunnel reached the edges. The streaks are not culled. `0C5775`
+draws them itself, one line-cluster model (polygon data `10884FB`) under each cell of a fixed
+12 × 10 grid. The loop translates the TGP's matrix by the next (x, y) step from the table at
+`26D5F5` and writes the object with `0C18C7`. The grid's cells are 45 units apart and reach
+±247.5 in x and ±202.5 in y, which is exactly the 4:3 view. Its first 20 cells are the two side
+columns, left and right in turn. In a wide frame, `wide_streaks` gives each side-column cell (at
+the matrix write `0C191B`, called from `0C57D6`) more copies of the same model 45, 90, … units
+further out. It adds as many as the extra width needs; the streaks' screen reach grows with their x.
+They are renderer-only extras of that cell's matrix, so they move with it in the blended (60/120 FPS)
+pictures. `--swa-wide-hyperspace` (also part of `--swa-ships`) renders that hyperspace at 21:9 at
+quarter steps and requires streaks at both sides in every picture. It finds at least 23,700 white
+pixels per side with the change and about 2,600 (only the canopy struts) without it.
+
+The blue tunnel before the streaks moved strangely at 60/120 FPS. It is 6 rings of 3 copies of one
+model (`108813E`), all 18 in one run of slots. The 3 pieces of a ring share one position and differ
+only in their turn about the view axis. Runs of copies pair by the least total move, and that was
+measured on positions alone, so within a ring the pairing was a tie. A piece could pair with its
+neighbour about 60° round: it swirled towards that one's angle in the pictures between, or the
+sharp turn left it unblended and it jumped while the rest glided (4 of the 18 at frame 6620). The
+pairing cost now adds a tie-breaking 0.001 × the difference of the two matrices' axes, so each
+piece pairs with the copy turned least from it; copies apart in place still pair as before.
+
 The game decides what to draw with the TGP's view test: command 0x31 sets its extents (two
 distances, then right, left, top and bottom in screen pixels: 50, 50, 248, -248, 192, -192 from
 `0D7BC0`, `C2ADA` and `CADDD`) and each 0x32 (an object's position and radius) returns its
@@ -1939,6 +2010,27 @@ renderer, so replays keep the player's choice. `make test-swa-recording` runs th
 of both recordings with Full, and every game RAM check matches the interpreter's arcade run.
 It adds about 860,000 cells over the whole game and lights about 17,900 far bands.
 `make test-swa-profile` checks the added-cell selection without the ROM.
+
+The Super Star Destroyer stage's open trench, before the tunnel, was left out at first. Arcade and
+Full gave pixel-identical pictures, ending against black about 33,000-36,000 units ahead. Tracing
+the display-list writes showed that its scenery does not come from `0EAA2D`. `0EB028` calls a copy
+of it, `0EB0F8`, four times (R28 again `99BE0`-`99CA0`). The setup at `0EB245` reads each layer's
+cell shift, row shift, width (R8) and length (R9) from records at `0EB9C2`. The heading lists have
+the same format. The differences are:
+
+- the map is finite: cells with x or z outside the width or length are skipped, and nothing wraps;
+- there are five cell types: 0 plain, 1 turned, 2 raised, 3 raised and turned, and 4 at the
+  height in `7730[R25]`;
+- there are no band light reads.
+
+Its far layer is 2 cells wide and 56 long, at 4,096 units per cell. Full now attaches the cells
+past that layer's list at its matrix write `0EB1EB`, from the far layer's first plain cell. It
+uses the same out-to-18-cells, within-direction selection as the Death Star, and places raised
+cells at their height. The added cells are the structures the game itself draws further along the
+trench once it gets near; inside the tunnel its walls hide them. `--swa-destroyer-distance`
+(also part of `--swa-tunnel`) runs the recording through TIME 155-138. It requires no cells added
+with Arcade, more than 1,000 with Full, and more scenery around the vanishing point; with the hook
+removed, Full matched Arcade exactly and the test failed.
 
 #### The asteroid field
 

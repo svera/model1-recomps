@@ -251,7 +251,7 @@ struct video_traits
 	// models (first polygon's ROM address, ranges [first, last)) that never move by themselves:
 	// blended between game frames by the camera's move only (SWA's Death Star and destroyer scenery;
 	// { 0, 0 }: none known)
-	uint32_t still_models[3][2] = {};
+	uint32_t still_models[6][2] = {};
 	std::vector<uint32_t> camera_anchors;   // stationary models whose unchanged axes determine the camera's move
 	bool still_model(uint32_t m) const
 	{

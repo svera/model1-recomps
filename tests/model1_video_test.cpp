@@ -20,6 +20,46 @@ struct model1_video_test
 	// hide moving effects so their intentional suppression cannot mask a missing wall.
 	// Nor may its pieces' open gaps be closed as surface steps: the lists show the void beyond,
 	// and a step face flashed in at the screen's edges between them.
+	// Hyperspace before the first stage (TIME 200, 21:9): C5775 draws its streaks as a 12 x 10 grid of
+	// line clusters that spans only the 4:3 view, so a wide picture's sides showed the bare tunnel.
+	// Every picture, the in-between ones too, must have streaks at both sides.
+	static void swa_wide_hyperspace(const char *dir)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(64.0f / 27);
+		m.set_edge_aa(false);
+		auto script = game::make_auto_play(title, "recording", 12345, false);
+		assert(script);
+		int pictures = 0, fewest = 1 << 30;
+		for (int f = 1; f <= 7190; f++) {
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.set_drawing(f >= 7130);
+			m.run_frame();
+			if (f < 7140) continue;
+			for (double phase : { 0.25, 0.5, 0.75, 1.0 }) {
+				m.render_smooth(f - 1 + phase);
+				const int w = m.frame_w(), h = m.frame_h();
+				int left = 0, right = 0;
+				for (int y = 0; y < h * 3 / 4; y++)
+					for (int x = 0; x < w / 5; x++) {
+						auto white = [&](int at) { const uint32_t c = m.frame().data()[size_t(y) * w + at]; return (c >> 16 & 255) > 180 && (c >> 8 & 255) > 180 && (c & 255) > 180; };
+						left += white(x);
+						right += white(w - 1 - x);
+					}
+				fewest = std::min({ fewest, left, right });
+				pictures++;
+			}
+		}
+		printf("SWA hyperspace (21:9): at least %d streak pixels at each side over %d pictures\n", fewest, pictures);
+		assert(pictures == 204 && fewest > 10000);
+	}
 	static void swa_tunnel(const char *dir, float aspect)
 	{
 		const game::id title{ "swa" };
@@ -85,6 +125,98 @@ struct model1_video_test
 		printf("SWA destroyer trench (aspect %.3f): %zu pixels lost to the eye-crossing guard over %d pictures (%zu scenery pixels), %u models stepped\n",
 			aspect, different, pictures, scenery_pixels, stepped);
 		assert(pictures > 600 && scenery_pixels > size_t(pictures) * 10000 && different == 0 && stepped == 0);
+	}
+	// The Super Star Destroyer's red girders at the tunnel's end (TIME 97-90, 21:9): each pair must
+	// start the girder where the older list has it (a cut shows the newer list whole). The camera's move fitted to the parts' places
+	// alone was half a degree off; the girder, huge and close, began every pair a few pixels from
+	// its own place and jumped back at each list's picture.
+	static void swa_tunnel_girders(const char *dir)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(4.0f / 3);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		auto script = game::make_auto_play(title, "recording", 12345, false);
+		assert(script);
+		int pairs = 0, off = 0;
+		double worst = 0;
+		for (int f = 1; f <= 17980; f++) {
+			if (f == 14400) m.set_aspect(64.0f / 27);
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.set_drawing(f >= 17800);
+			m.run_frame();
+			if (f < 17810) continue;
+			m.render_smooth(f - 0.875);
+			const auto &a = m.m_logic[0].slots, &b = m.m_logic[1].slots;
+			for (size_t i = 0; i < b.size() && i < m.m_blend_ok.size(); i++) {
+				if (m.m_blend_cut || !m.m_blend_ok[i] || b[i].polys.empty() || b[i].polys[0] != 0x1095895) continue;
+				const float *from = m.m_blend_from[i].data();
+				double best = 1e30;
+				for (const auto &s : a) {
+					if (s.polys.empty() || s.polys[0] != 0x1095895) continue;
+					double d = 0;
+					for (int k = 0; k < 9; k++) d = std::max(d, double(std::fabs(from[k] - s.mat[k])));
+					const double far = std::max(std::sqrt(double(s.mat[9]) * s.mat[9] + double(s.mat[10]) * s.mat[10] + double(s.mat[11]) * s.mat[11]), 1.0);
+					for (int k = 9; k < 12; k++) d = std::max(d, std::fabs(from[k] - s.mat[k]) / far);
+					best = std::min(best, d);
+				}
+				if (best > 1e29) continue;
+				pairs++;
+				worst = std::max(worst, best);
+				off += best > 0.001;
+			}
+		}
+		printf("SWA destroyer tunnel's end girders (21:9): %d of %d pairs started off the older list's girder (worst %.4f)\n", off, pairs, worst);
+		assert(pairs > 100 && off == 0);
+	}
+	// The Super Star Destroyer's open trench before the tunnel (TIME 155-138): the game draws the
+	// surface map (EB0F8) only nine cells ahead, black beyond. Full must add the map's cells past
+	// that reach: more scenery around the vanishing point than Arcade, none added with Arcade.
+	static void swa_destroyer_distance(const char *dir)
+	{
+		const game::id title{ "swa" };
+		auto run = [&](bool full) {
+			model1 m(load_regions(dir, title));
+			m.reset();
+			m.set_drawing(false);
+			m.set_aspect(4.0f / 3);
+			m.set_edge_aa(false);
+			game::swa::set_full_draw_distance(m, full);
+			auto script = game::make_auto_play(title, "recording", 12345, false);
+			assert(script);
+			int scenery = 0;
+			for (int f = 1; f <= 15000; f++) {
+				const auto in = script->frame(f, m);
+				for (size_t c = 0; c < in.analog.size(); c++)
+					if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+				for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+				m.set_drawing(f >= 14600 && f % 25 == 0);
+				m.run_frame();
+				if (f < 14600 || f % 25) continue;
+				const int w = m.frame_w(), h = m.frame_h();
+				for (int y = h * 35 / 100; y < h * 55 / 100; y++)
+					for (int x = w * 40 / 100; x < w * 60 / 100; x++) {
+						const uint32_t c = m.frame().data()[size_t(y) * w + x];
+						const int r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+						scenery += r > 40 && r == g && g == b;
+					}
+			}
+			const auto state = std::static_pointer_cast<game::swa::gameplay_state>(m.game_state());
+			return std::pair{ scenery, state->destroyer_cells };
+		};
+		const auto [arcade, arcade_cells] = run(false);
+		const auto [full, full_cells] = run(true);
+		printf("SWA destroyer trench: %d scenery pixels about the vanishing point with Arcade, %d with Full (%llu cells added)\n",
+			arcade, full, (unsigned long long)full_cells);
+		assert(arcade_cells == 0 && full_cells > 1000 && full > arcade + 500);
 	}
 	// Stationary camera anchors must not get the surface's missing-step faces: those filled
 	// the cruiser's intentional engine gaps with triangles that flashed between pictures.
@@ -3062,8 +3194,18 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 2 && std::string(argv[2]) == "--swa-destroyer-distance") {
+		model1_video_test::swa_destroyer_distance(argv[1]);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-wide-hyperspace") {
+		model1_video_test::swa_wide_hyperspace(argv[1]);
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--swa-tunnel") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_tunnel(argv[1], aspect);
+		model1_video_test::swa_tunnel_girders(argv[1]);
+		model1_video_test::swa_destroyer_distance(argv[1]);
 		return 0;
 	}
 	if (argc > 2 && std::string(argv[2]) == "--swa-launch-flashes") {
@@ -3119,6 +3261,7 @@ int main(int argc, char **argv)
 		model1_video_test::swa_side_ship(argv[1]);
 		model1_video_test::swa_wide_far_cells(argv[1]);
 		model1_video_test::swa_horizon_corners(argv[1]);
+		model1_video_test::swa_wide_hyperspace(argv[1]);
 		model1_video_test::swa_open_steps(argv[1]);
 		model1_video_test::swa_far_ground(argv[1]);
 		model1_video_test::swa_trench_distance(argv[1]);

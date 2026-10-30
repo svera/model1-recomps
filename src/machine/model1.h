@@ -273,6 +273,7 @@ public:
 		spoint_t s;
 		float fx = 0, fy = 0;   // s before truncation, for the crack-free filler above 1x
 		bool passes_eye = false;      // (smooth motion, separate parts) crosses the eye's plane near the eye between the lists blended
+		float eye_move = 0;           // (the same) how far it moves between those lists
 	};
 
 	class quad_t

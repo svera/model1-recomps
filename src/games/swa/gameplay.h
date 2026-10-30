@@ -30,6 +30,12 @@ struct gameplay_state : game::gameplay_state
 	bool fleet_stern = false;      // (LOD off) a fleet ship given the full hull: its stern to add
 	uint64_t surface_cells = 0;    // surface cells added beyond the arcade's (Draw distance Full)
 	uint64_t trench_cells = 0;     // the trench's cells added past the arcade's grid, seen from inside (Full)
+	uint64_t destroyer_cells = 0;  // the Super Star Destroyer's surface cells added past the arcade's (Full)
+	// the Super Star Destroyer's surface pass: the layers whose extra cells are attached, latest layer and frame
+	uint32_t destroyer_attached = 0;
+	int destroyer_layer = -1;
+	uint64_t destroyer_frame = 0;
+	uint32_t streak_matrix = ~0u;   // the hyperspace streak matrix command last given its wide columns
 	uint64_t bands_lit = 0;        // far bands' light raised (Draw distance Full)
 	uint64_t fine_cells = 0;       // coarse surface cells drawn as their four fine cells (LOD off)
 	uint64_t coarse_hidden = 0;    // coarse surface models the renderer left out for them (LOD off)

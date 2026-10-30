@@ -1425,7 +1425,10 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	// just by the eye in the pictures between, and the face, cut by the view's sides there, filled
 	// half the screen for a picture; the game's lists never draw it so near. Such a face is left
 	// out between the lists. The surface's cells, carried by the camera's move, cross the eye's
-	// plane every list: left as they are.)
+	// plane every list: left as they are. So does a face wider than its corner's move: the Super
+	// Star Destroyer's hull, flown low over at the start of its stage, faces 2000 units across
+	// moving 880 a list, spans the eye's plane rather than passing by the eye; left out, its
+	// near side went black. The asteroid's faces were 0.4-0.6 of their move.)
 	const float *eye_from = nullptr, *eye_to = nullptr;
 	if (m_replaying && m_video->separate_parts && m_shade_from && m_shade_to && m_alpha < 1 && !m_video->still_model(object_polygon) &&
 		size_t(m_replay_slot) < m_blend.size() && std::equal(m_view->translation, m_view->translation + 12, m_blend[m_replay_slot].begin()))
@@ -1480,7 +1483,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		p->passes_eye = false;
 		if ((z_from > 0) == (z_to > 0)) return;
 		const glm::vec3 crossing = from + (to - from) * (z_from / (z_from - z_to));
-		p->passes_eye = glm::length(crossing) < 16 * glm::length(to - from);
+		p->eye_move = glm::length(to - from);
+		p->passes_eye = glm::length(crossing) < 16 * p->eye_move;
 	};
 	require_geometry_space(2, 0);
 	point_t *old_p0 = m_pointpt++;
@@ -1659,9 +1663,11 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		}
 
 		if (eye_from) {
-			bool crossed = false;
-			for (const point_t *p : cquad.p) crossed |= p->passes_eye;
-			if (crossed) goto next;
+			float move = 0;
+			for (const point_t *p : cquad.p) if (p->passes_eye) move = std::max(move, p->eye_move);
+			if (move > 0 && std::max(glm::distance(glm::vec3(cquad.p[0]->x, cquad.p[0]->y, cquad.p[0]->z), glm::vec3(cquad.p[2]->x, cquad.p[2]->y, cquad.p[2]->z)),
+				glm::distance(glm::vec3(cquad.p[1]->x, cquad.p[1]->y, cquad.p[1]->z), glm::vec3(cquad.p[3]->x, cquad.p[3]->y, cquad.p[3]->z))) < move)
+				goto next;
 		}
 		if (bounds) {
 			// Preserve the sort-depth update above even when no pixels can survive clipping.
