@@ -46,6 +46,8 @@ model1::model1(regions &&r)
 
 void model1::reset()
 {
+	m_scanline = 0;
+	if (m_comm) m_comm->reset();
 	m_tgp_cycles = 0;
 	m_cpu_owed = 0;
 	for (auto &c : m_layer_cache) c.frame = ~0ull;   // a new game: nothing drawn is current
@@ -102,36 +104,44 @@ void model1::copro_reset()
 
 void model1::run_frame()
 {
-	const uint8_t inputs_were[3] = { m_inputs[0], m_inputs[1], m_inputs[2] };
-	if (m_gameplay.frame_begin) m_gameplay.frame_begin();
+	do { run_scanline(); } while (m_scanline);
+}
 
-	// the picture on screen was drawn from the state this frame is about to change: keep that
-	if (m_smooth && m_shown && m_shown_frame == m_frame) keep_still();
-	for (int line = 0; line < V_TOTAL; line++) {
-		if (line == VBLANK_LINE) {
-			if (!BIT(m_irq_mask, 1))
-				irq_raise(1);
-			// vblank starts: the display lists are scanned and swapped
-			screen_vblank_model1(1);
-		}
-		m_cpu_owed += CYCLES_PER_LINE * 8.0 / m_profile->cpu_cycles_per_instruction;
-		const int cpu_cycles = int(m_cpu_owed);
-		m_cpu_owed -= cpu_cycles;
-		if (run_cpu)
-			run_cpu(cpu_cycles);
-		else {
-			m_maincpu.on_exec = on_instruction;
-			m_maincpu.run(cpu_cycles);
-		}
-		timer_tick(CYCLES_PER_LINE);
-		io_board_tick(CYCLES_PER_LINE);
-		uart_tick(CYCLES_PER_LINE);
-		if (m_audio)
-			m_audio->run(CYCLES_PER_LINE * 1e6 / CPU_CLOCK, m_audio_out);
-		if (on_line) on_line(line);
+void model1::run_scanline()
+{
+	if (!m_scanline) {
+		std::copy_n(m_inputs, 3, m_frame_inputs.begin());
+		if (m_gameplay.frame_begin) m_gameplay.frame_begin();
+		// the picture on screen was drawn from the state this frame is about to change: keep that
+		if (m_smooth && m_shown && m_shown_frame == m_frame) keep_still();
 	}
+	const int line = m_scanline;
+	if (line == VBLANK_LINE) {
+		if (m_comm && !m_comm_external_clock) m_comm->tick();
+		if (!BIT(m_irq_mask, 1))
+			irq_raise(1);
+		// vblank starts: the display lists are scanned and swapped
+		screen_vblank_model1(1);
+	}
+	m_cpu_owed += CYCLES_PER_LINE * 8.0 / m_profile->cpu_cycles_per_instruction;
+	const int cpu_cycles = int(m_cpu_owed);
+	m_cpu_owed -= cpu_cycles;
+	if (run_cpu)
+		run_cpu(cpu_cycles);
+	else {
+		m_maincpu.on_exec = on_instruction;
+		m_maincpu.run(cpu_cycles);
+	}
+	timer_tick(CYCLES_PER_LINE);
+	io_board_tick(CYCLES_PER_LINE);
+	uart_tick(CYCLES_PER_LINE);
+	if (m_audio)
+		m_audio->run(CYCLES_PER_LINE * 1e6 / CPU_CLOCK, m_audio_out);
+	if (on_line) on_line(line);
+	if (++m_scanline < V_TOTAL) return;
+	m_scanline = 0;
 	if (m_gameplay.frame_end) m_gameplay.frame_end();
-	memcpy(m_inputs, inputs_were, sizeof m_inputs);
+	std::copy(m_frame_inputs.begin(), m_frame_inputs.end(), m_inputs);
 	// MAME draws the screen when vblank ends (VIDEO_UPDATE_AFTER_VBLANK): the 2D layers are
 	// as the vblank handler left them
 	if (m_draw) {
@@ -371,6 +381,11 @@ uint16_t model1::bus_read16(uint32_t a)
 	if (a >= 0x780000 && a < 0x800000) return m_tiles.char_r((a - 0x780000) >> 1);
 	if (a >= 0x900000 && a < 0x904000) return m_paletteram16[(a - 0x900000) >> 1];
 	if (a >= 0x910000 && a < 0x91c000) return m_color_xlat[(a - 0x910000) >> 1];
+	if (m_comm) {
+		if (a >= 0xb00000 && a < 0xb01000) return m_comm->read(a - 0xb00000) | (uint16_t(m_comm->read(a - 0xb00000 + 1)) << 8);
+		if (a == 0xb01000) return 0xff00 | m_comm->cn();
+		if (a == 0xb01002) return 0xff00 | m_comm->fg();
+	}
 	if (a >= 0xc00000 && a < 0xc01000) return 0xff00 | io_board_r(((a - 0xc00000) >> 1) & 0x7ff);
 	if (a >= 0xc40000 && a < 0xc40004) return 0xff00 | ((a & 2) ? uart_status() : uart_read());
 	if (m_lle && a >= 0xd00000 && a < 0xde0000) return lle_v60_r(a);
@@ -420,6 +435,15 @@ void model1::bus_write16(uint32_t a, uint16_t v, uint16_t mask)
 	if (a >= 0x780000 && a < 0x800000) { m_tiles.char_w((a - 0x780000) >> 1, v, mask); return; }
 	if (a >= 0x900000 && a < 0x904000) { model1_paletteram_w((a - 0x900000) >> 1, v, mask); return; }
 	if (a >= 0x910000 && a < 0x91c000) { combine(m_color_xlat[(a - 0x910000) >> 1]); return; }
+	if (m_comm) {
+		if (a >= 0xb00000 && a < 0xb01000) {
+			if (mask & 0xff) m_comm->write(a - 0xb00000, uint8_t(v));
+			if (mask & 0xff00) m_comm->write(a - 0xb00000 + 1, uint8_t(v >> 8));
+			return;
+		}
+		if (a == 0xb01000) { if (mask & 0xff) m_comm->set_cn(uint8_t(v)); return; }
+		if (a == 0xb01002) { if (mask & 0xff) m_comm->set_fg(uint8_t(v)); return; }
+	}
 	if (a >= 0xc00000 && a < 0xc01000) { if (mask & 0xff) io_board_w(((a - 0xc00000) >> 1) & 0x7ff, uint8_t(v)); return; }
 	if (a == 0xc40000) { if (mask & 0xff) uart_write(uint8_t(v)); return; }
 	if (a == 0xc40002) return;                                   // i8251 mode/command
@@ -509,6 +533,7 @@ void model1::resize_frame()
 	                                          // stopped game's too, or a 4:3 screen's painted sides go black)
 	m_tiles.m_ox = 0;
 	v->scale = float(m_scale);
+	v->hd_raster = s_hd_raster;
 	v->ext = float(m_ext);
 	v->set_viewport(v->xc, v->yc, gx1, gx2, v->ly1, v->ly2);
 	// the above-HUD pass's buffers: made when first needed (never in VF; they'd be two frames' worth)

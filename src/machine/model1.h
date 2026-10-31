@@ -21,6 +21,7 @@
 #include "../gpu/gpu3d.h"
 #include "m1audio.h"
 #include "model1io.h"
+#include "m1comm.h"
 #include "../core/v60_device.h"
 
 #include <glm/vec3.hpp>
@@ -57,6 +58,17 @@ public:
 	void reset();
 	// One video frame: CPU time, the vblank IRQ, the display-list scan and the render.
 	void run_frame();
+	static constexpr int FRAME_LINES = 424, FRAME_VBLANK = 384;
+	// One scanline, including begin/end-of-frame work at the boundaries.
+	void run_scanline();
+	int scanline() const { return m_scanline; }
+	void enable_link(m1comm::exchange transfer, bool external_clock = false)
+	{
+		m_comm = std::make_unique<m1comm>(std::move(transfer));
+		m_comm_external_clock = external_clock;
+	}
+	m1comm *link() { return m_comm.get(); }
+	void disable_link() { m_comm.reset(); m_comm_external_clock = false; }
 	const bitmap_rgb32 &frame() const { return m_bitmap; }
 	// Runs the TGP from its own program (315-5724.bin) instead of MAME 0.210's simulation.
 	bool use_tgp_program(const std::vector<uint8_t> &rom);
@@ -261,6 +273,7 @@ public:
 		spoint_t s;
 		float fx = 0, fy = 0;   // s before truncation, for the crack-free filler above 1x
 		bool passes_eye = false;      // (smooth motion, separate parts) crosses the eye's plane near the eye between the lists blended
+		float eye_move = 0;           // (the same) how far it moves between those lists
 	};
 
 	class quad_t
@@ -298,6 +311,10 @@ public:
 	void io_write32(uint32_t a, uint32_t v) override { io_write16(a, v); io_write16(a + 2, v >> 16); }
 
 private:
+	std::unique_ptr<m1comm> m_comm;
+	bool m_comm_external_clock = false;
+	int m_scanline = 0;
+	std::array<uint8_t, 3> m_frame_inputs{};
 	regions m_regions;
 	std::function<void()> m_tgp_hle_reset;
 	game::gameplay_callbacks m_gameplay;
@@ -353,6 +370,8 @@ private:
 	logic_frame m_logic[2];                         // the game frame before, and the last
 	logic_frame m_logic_prev;                       // and the one before those (a cut's older view goes on from it)
 	bool m_replay_extra = false;                    // the older list drawn carried on past its frame (m_blend from the one before)
+	bool m_extra_crossed = false;                   // that picture carried the eye through a face (push_object)
+	bool m_probing = false;                         // a walk of the list for m_extra_crossed alone: nothing drawn
 	bool m_smooth = false, m_replaying = false;
 	float m_alpha = 1;
 	float m_object_fade = 1;                        // the extra object being drawn's render_object::fade
@@ -537,22 +556,22 @@ private:
 	void fill_backdrop_sides(bitmap_rgb32 &pixels, int layer = -1, int flags = 0);
 	bitmap_rgb32 m_wrap_tmp;                 // fill_backdrop_sides: a layer drawn wrapping across the sides
 public:
-	static bool s_moire_blend;
-	static int s_mark_y1, s_mark_y2;   // rows holding shading marks this frame (y1 > y2: none)
-	static bool s_hd_raster;       // crack-free polygon filling (render scale above 1)
+	bool s_moire_blend = false;
+	int s_mark_y1 = 1 << 30, s_mark_y2 = -1;   // rows holding shading marks this frame (y1 > y2: none)
+	bool s_hd_raster = false;       // crack-free polygon filling (render scale above 1)
 	// Above 1x: which polygon painted each pixel (s_owner_base + its draw order + 1; s_owner_base
 	// or less: none). Each pass draws above the last's numbers, so nothing is cleared.
-	static std::vector<int32_t> s_owner;
-	static int32_t s_owner_base;
-	static int s_depth_w;
+	mutable std::vector<int32_t> s_owner;
+	int32_t s_owner_base = 0;
+	int s_depth_w = 0, s_last_count = 0;
 	static thread_local int s_cur_quad;   // per thread: the polygons are drawn in row bands at once
 	static thread_local bool s_cur_mshadow;   // the polygon being drawn is a moving model's shadow
-	static std::vector<uint8_t> s_qscenery;   // each polygon: whether it is part of
+	std::vector<uint8_t> s_qscenery;   // each polygon: whether it is part of
 	// the game's scenery (the shadows' floor; game::video_traits::scenery_polys_end)
 	bool scenery_model(uint32_t poly_adr) const { return (poly_adr & 0x7fffff) < m_video->scenery_polys_end; }
 	// (the scenery's own see-through polygons keep the arcade's order: the floor covers them)
 	bool model_shadow(const quad_t &q) const { return (q.col & 0x01000000) && !scenery_model(q.obj); }   // 0x01000000: MOIRE
-	static int s_depth_pass;       // 1 while painting with the shadow test
+	int s_depth_pass = 0;       // 1 while painting with the shadow test
 
 	// ---- the 3D on the GPU (src/gpu/gpu3d.h; the host's Display > 3D renderer) ----
 	// While on, each picture's polygons are recorded as draw_quads would draw them and drawn by the
@@ -867,6 +886,7 @@ private:
 		int xc = 0, yc = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // x1..y2: clip in render pixels
 		float lx1 = 0, lx2 = 0, ly1 = 0, ly2 = 0;             // the clip as the game set it
 		float scale = 1;                                      // render pixels per arcade pixel
+		bool hd_raster = false;
 		float ext = 0;                                        // widescreen: extra arcade pixels each side
 		float zoomx = 0, zoomy = 0, viewx = 0, viewy = 0;
 		float a_bottom = 0, a_top = 0, a_left = 0, a_right = 0;
@@ -958,11 +978,11 @@ private:
 	void rec_replay(bitmap_rgb32 &bitmap);
 	static void recompute_frustum(view_t *view);
 	static void draw_hline(bitmap_rgb32 &bitmap, int x1, int x2, int y, int color);
-	static void draw_hline_moired(bitmap_rgb32 &bitmap, int x1, int x2, int y, int color);
-	static void fill_slope(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t x1, int32_t x2, int32_t sl1, int32_t sl2, int32_t y1, int32_t y2, int32_t *nx1, int32_t *nx2);
-	static void fill_line(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t y, int32_t x1, int32_t x2);
+	void draw_hline_moired(bitmap_rgb32 &bitmap, int x1, int x2, int y, int color) const;
+	void fill_slope(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t x1, int32_t x2, int32_t sl1, int32_t sl2, int32_t y1, int32_t y2, int32_t *nx1, int32_t *nx2) const;
+	void fill_line(bitmap_rgb32 &bitmap, view_t *view, int color, int32_t y, int32_t x1, int32_t x2) const;
 	void        fill_quad(bitmap_rgb32 &bitmap, view_t *view, const quad_t& q) const;
-	static void fill_quad_hd(bitmap_rgb32 &bitmap, view_t *view, const quad_t& q, int color);
+	void fill_quad_hd(bitmap_rgb32 &bitmap, view_t *view, const quad_t& q, int color) const;
 	void        draw_line(bitmap_rgb32 &bitmap, view_t *view, int color, int x1, int y1, int x2, int y2) const;
 
 	void    fclip_push_quad_next(int level, quad_t& q, point_t *p1, point_t *p2, point_t *p3, point_t *p4);

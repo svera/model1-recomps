@@ -249,14 +249,23 @@ struct video_traits
 	// above 1x has its shadows kept off the models (0: no such split, shadows drawn as the arcade)
 	uint32_t scenery_polys_end = 0;
 	// models (first polygon's ROM address, ranges [first, last)) that never move by themselves:
-	// blended between game frames by the camera's move only (SWA's Death Star surface and trench;
+	// blended between game frames by the camera's move only (SWA's Death Star and destroyer scenery;
 	// { 0, 0 }: none known)
-	uint32_t still_models[2][2] = {};
+	uint32_t still_models[6][2] = {};
 	std::vector<uint32_t> camera_anchors;   // stationary models whose unchanged axes determine the camera's move
 	bool still_model(uint32_t m) const
 	{
 		for (const auto &r : still_models) if (m >= r[0] && m < r[1]) return true;
 		return std::find(camera_anchors.begin(), camera_anchors.end(), m) != camera_anchors.end();
+	}
+	// still models laid as a surface: a step between two of its pieces, opened by blending them
+	// apart, is closed in the pictures between game frames (other still models' gaps are open, the
+	// lists showing what is beyond)
+	uint32_t step_models[2][2] = {};
+	bool step_model(uint32_t m) const
+	{
+		for (const auto &r : step_models) if (m >= r[0] && m < r[1]) return true;
+		return false;
 	}
 	std::vector<sky_record> skies;    // empty: no hi-res skies
 	int sky_tile_map = 0, sky_first_row = 0;   // where the game streams the panoramas

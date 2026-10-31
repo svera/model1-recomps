@@ -169,21 +169,28 @@ public:
 		cameras.update(ctx->machine, pressed);
 	}
 
+	bool can_join_local_cabinet() const override
+	{
+		return in_attract_mode(ctx->machine);
+	}
+
 	bool booted() override
 	{
 		language_before.reset();
 		machine_before.reset();
 		const bool monitor_changed = set_monitor_type(ctx->machine, 0);
+		const bool link_changed = ctx->standalone_cabinet ? set_standalone(ctx->machine) :
+			ctx->link_player && set_link_player(ctx->machine, ctx->link_player);
 		const int now = coin_setting(ctx->machine);
-		if (now < 0) return monitor_changed;
+		if (now < 0) return monitor_changed || link_changed;
 		if (ctx->pc_mode) {
 			if (now != FREE_PLAY && now != arcade_coin) {
 				arcade_coin = now;
 				ctx->settings_changed();
 			}
-			return set_coin_setting(ctx->machine, FREE_PLAY) || monitor_changed;
+			return set_coin_setting(ctx->machine, FREE_PLAY) || monitor_changed || link_changed;
 		}
-		return set_coin_setting(ctx->machine, arcade_coin >= 0 ? arcade_coin : now == FREE_PLAY ? 0 : now) || monitor_changed;
+		return set_coin_setting(ctx->machine, arcade_coin >= 0 ? arcade_coin : now == FREE_PLAY ? 0 : now) || monitor_changed || link_changed;
 	}
 
 	restart menu_closed() override

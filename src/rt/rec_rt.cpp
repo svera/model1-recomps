@@ -17,12 +17,52 @@ v60_device *cpu;
 uint32_t *pc;
 int cycles;
 
-static coro_ctx host_ctx, game_ctx;
-static std::vector<uint8_t> game_stack;
-static bool started;
-static std::string entries_path;
+struct context::state
+{
+	v60_device *cpu = nullptr;
+	int cycles = 0;
+	coro_ctx host_ctx, game_ctx;
+	std::vector<uint8_t> game_stack;
+	std::string entries_path;
+	std::set<uint32_t> logged;
+	std::set<std::pair<uint32_t, uint32_t>> seen;
+	const rec_entry *table = rec_table;
+	size_t table_size = rec_table_size;
+	std::shared_ptr<const void> code;
+	size_t fallbacks = 0;
+	uint32_t first_fallback = 0xffffffff;
+};
 
-static void yield() { coro_switch(&game_ctx, &host_ctx); }
+static context::state default_state;
+static context::state *active = &default_state;
+
+static void select(context::state &next)
+{
+	if (active == &next) return;
+	active->cycles = cycles;
+	if (cpu) cpu->m_cycles = &active->cycles;
+	active = &next;
+	cpu = next.cpu;
+	pc = cpu ? &cpu->pc_ref() : nullptr;
+	cycles = next.cycles;
+	if (cpu) cpu->m_cycles = &cycles;
+}
+
+context::context() : m(std::make_unique<state>()) {}
+context::~context()
+{
+	if (m->cpu) m->cpu->own_cycles();
+	if (active == m.get()) {
+		cpu = nullptr;
+		m->cpu = nullptr;
+		select(default_state);
+	}
+}
+void context::activate() { select(*m); }
+void context::attach(v60_device &c, std::string_view game) { activate(); rec::attach(c, game); }
+void context::run(int n) { activate(); rec::run(n); }
+
+static void yield() { coro_switch(&active->game_ctx, &active->host_ctx); }
 
 void after_insn_slow()
 {
@@ -46,11 +86,10 @@ static bool is_ret_op(uint8_t op) { return op == 0xca || op == 0xe2 || op == 0xe
 
 static void interpret_until_return(uint32_t addr)
 {
-	static std::set<uint32_t> logged;
-	if (logged.insert(addr).second) {
+	if (active->logged.insert(addr).second) {
 		// remembered for the next recompile (the Makefile hands v60recomp build/cov/<game>/)
 		const char *path = getenv("REC_RUNTIME_ENTRIES");
-		if (!path) path = entries_path.c_str();
+		if (!path) path = active->entries_path.c_str();
 		if (FILE *f = fopen(path, "a")) {
 			fprintf(f, "entry %06x\n", addr);
 			fclose(f);
@@ -71,50 +110,46 @@ static void interpret_until_return(uint32_t addr)
 	}
 }
 
-static const rec_entry *g_table = rec_table;
-static size_t g_table_size = rec_table_size;
-static size_t g_fallback_count;
-static uint32_t g_first_fallback = 0xffffffff;
-
-void use_table(const rec_entry *t, size_t n)
+void use_table(const rec_entry *t, size_t n, std::shared_ptr<const void> owner)
 {
-	g_table = t;
-	g_table_size = n;
+	active->table = t;
+	active->table_size = n;
+	active->code = std::move(owner);
 }
 
 size_t fallback_count()
 {
-	return g_fallback_count;
+	return active->fallbacks;
 }
 
 uint32_t first_fallback_address()
 {
-	return g_first_fallback;
+	return active->first_fallback;
 }
 
 void reset_fallbacks()
 {
-	g_fallback_count = 0;
-	g_first_fallback = 0xffffffff;
+	active->fallbacks = 0;
+	active->first_fallback = 0xffffffff;
 }
 
 void call(uint32_t addr)
 {
-	const rec_entry *e = std::lower_bound(g_table, g_table + g_table_size, addr,
+	const rec_entry *table = active->table;
+	const rec_entry *e = std::lower_bound(table, table + active->table_size, addr,
 		[](const rec_entry &a, uint32_t v) { return a.addr < v; });
-	if (e != g_table + g_table_size && e->addr == addr)
+	if (e != table + active->table_size && e->addr == addr)
 		e->fn(*cpu);
 	else {
-		if (!g_fallback_count) g_first_fallback = addr;
-		g_fallback_count++;
+		if (!active->fallbacks) active->first_fallback = addr;
+		active->fallbacks++;
 		interpret_until_return(addr);
 	}
 }
 
 void leave(uint32_t fn, uint32_t to)
 {
-	static std::set<std::pair<uint32_t, uint32_t>> seen;
-	if (getenv("REC_LOG_LEAVE") && seen.insert({fn, to}).second)
+	if (getenv("REC_LOG_LEAVE") && active->seen.insert({fn, to}).second)
 		fprintf(stderr, "rec: f_%06x jumps out to %06x\n", fn, to);
 }
 
@@ -138,29 +173,31 @@ static void game_main(void *)
 
 void attach(v60_device &c, std::string_view game)
 {
-	entries_path = "build/cov/" + std::string(game) + "/runtime_entries.txt";
+	if (cpu && cpu != &c) cpu->own_cycles();
+	active->entries_path = "build/cov/" + std::string(game) + "/runtime_entries.txt";
+	active->cpu = &c;
 	cpu = &c;
 	pc = &c.pc_ref();
 	cycles = 0;
 	c.m_cycles = &cycles;
 	reset_fallbacks();
-	game_stack.assign(256 << 20, 0);   // deep: tail jumps between functions nest C frames
-	coro_init(&game_ctx, game_stack.data(), game_stack.size(), game_main, nullptr);
-	started = true;
+	active->game_stack.assign(256 << 20, 0);   // deep: tail jumps between functions nest C frames
+	coro_init(&active->game_ctx, active->game_stack.data(), active->game_stack.size(), game_main, nullptr);
 }
 
 void detach(v60_device &c)
 {
 	c.own_cycles();
-	std::vector<uint8_t>().swap(game_stack);
-	started = false;
+	std::vector<uint8_t>().swap(active->game_stack);
+	active->cpu = nullptr;
 	cpu = nullptr;
+	pc = nullptr;
 }
 
 void run(int n)
 {
 	cycles += n;   // the last slice's overrun carries, as on MAME's scheduler
-	coro_switch(&host_ctx, &game_ctx);
+	coro_switch(&active->host_ctx, &active->game_ctx);
 }
 
 } // namespace rec

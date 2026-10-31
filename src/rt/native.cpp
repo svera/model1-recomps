@@ -18,8 +18,12 @@ struct native_fn
 	std::unordered_map<uint32_t, sljit_uw> labels;   // V60 address -> native address in the function
 };
 
-std::vector<native_fn> g_fns;
-std::vector<rec_entry> g_table;
+struct native_program
+{
+	std::vector<native_fn> functions;
+	std::vector<rec_entry> table;
+	~native_program() { for (auto &f : functions) if (f.code) sljit_free_code(f.code, nullptr); }
+};
 
 // ---- what the native code calls ----
 
@@ -43,14 +47,14 @@ void SLJIT_FUNC rt_bad(sljit_uw at) { bad(uint32_t(at)); }
 // Where in function `fn` to carry on for the current PC (0: not in it).
 sljit_uw SLJIT_FUNC rt_dispatch(sljit_uw fn)
 {
-	const auto &m = g_fns[fn].labels;
+	const auto &m = reinterpret_cast<const native_fn *>(fn)->labels;
 	auto it = m.find(PC);
 	return it == m.end() ? 0 : it->second;
 }
 
 void SLJIT_FUNC rt_leave(sljit_uw fn)
 {
-	leave(g_fns[fn].entry, PC);
+	leave(uint32_t(fn), PC);
 	call(PC);
 }
 
@@ -61,7 +65,6 @@ struct gen
 	sljit_compiler *c = nullptr;
 	const program &p;
 	const function &fn;
-	size_t index;
 	std::unordered_map<uint32_t, sljit_label *> labels;
 	std::vector<std::pair<sljit_jump *, uint32_t>> to_label;   // jumps to V60 addresses in the body
 	std::vector<sljit_jump *> to_dispatch;
@@ -262,11 +265,11 @@ struct gen
 
 		// dispatch: carry on at PC inside this function if it's here, else leave for it
 		sljit_label *dispatch = sljit_emit_label(c);
-		call1((void *)rt_dispatch, SLJIT_ARGS1(W, W), sljit_sw(index));
+		call1((void *)rt_dispatch, SLJIT_ARGS1(W, W), sljit_sw(&out));
 		sljit_jump *not_here = sljit_emit_cmp(c, SLJIT_EQUAL, SLJIT_R0, 0, SLJIT_IMM, 0);
 		sljit_emit_ijump(c, SLJIT_JUMP, SLJIT_R0, 0);
 		sljit_set_label(not_here, sljit_emit_label(c));
-		call1((void *)rt_leave, SLJIT_ARGS1V(W), sljit_sw(index));
+		call1((void *)rt_leave, SLJIT_ARGS1V(W), sljit_sw(fn.entry));
 		sljit_emit_return_void(c);
 
 		for (sljit_jump *j : to_dispatch) if (j) sljit_set_label(j, dispatch);
@@ -289,23 +292,21 @@ bool build_native(const std::vector<uint8_t> &mem, const hints &map, native_stat
 	const auto t0 = std::chrono::steady_clock::now();
 	native_stats st;
 	program p = analyse(mem, map, true);
-	std::vector<native_fn> fns(p.functions.size());
+	auto code = std::make_shared<native_program>();
+	auto &fns = code->functions;
+	fns.resize(p.functions.size());
 	for (size_t i = 0; i < p.functions.size(); i++) {
-		gen g{ nullptr, p, p.functions[i], i };
+		gen g{ nullptr, p, p.functions[i] };
 		if (!g.build(fns[i], st)) {
 			fprintf(stderr, "rec: couldn't make native code for %06x\n", p.functions[i].entry);
-			for (auto &f : fns) if (f.code) sljit_free_code(f.code, nullptr);
 			return false;
 		}
 		st.functions++;
 	}
-	for (auto &f : g_fns) if (f.code) sljit_free_code(f.code, nullptr);
-	g_fns = std::move(fns);
-	g_table.clear();
-	for (const native_fn &f : g_fns)
-		g_table.push_back({ f.entry, reinterpret_cast<void (*)(v60_device &)>(f.code) });
-	std::sort(g_table.begin(), g_table.end(), [](const rec_entry &a, const rec_entry &b) { return a.addr < b.addr; });
-	use_table(g_table.data(), g_table.size());
+	for (const native_fn &f : fns)
+		code->table.push_back({ f.entry, reinterpret_cast<void (*)(v60_device &)>(f.code) });
+	std::sort(code->table.begin(), code->table.end(), [](const rec_entry &a, const rec_entry &b) { return a.addr < b.addr; });
+	use_table(code->table.data(), code->table.size(), code);
 	st.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 	if (stats) *stats = st;
 	return true;

@@ -38,6 +38,9 @@ private:
 enum class machine_setting { car_color, race_type, course_select, difficulty };
 int machine_setting_value(model1 &machine, machine_setting setting);
 bool set_machine_setting(model1 &machine, machine_setting setting, int value);
+bool set_link_player(model1 &machine, int player);
+bool set_standalone(model1 &machine);
+bool in_attract_mode(model1 &machine);
 extern const video_traits VIDEO;
 
 }

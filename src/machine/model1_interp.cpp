@@ -384,6 +384,22 @@ bool model1::render_smooth(double now, bool shown)
 		const double c = std::min(alpha, 1.0);
 		blend_slots(m_logic_prev, a, 1 + (cut ? c - 0.25 * c * c : 0.5 * (1 - (1 - c) * (1 - c))));
 		m_replay_extra = !m_blend_cut;
+		// (Carried on, the eye can pass where the game never put it: into a cut where the ship hit
+		// a wall in the Super Star Destroyer's tunnels, the eye carried on through the wall, the
+		// wall seen from behind and left out, a hole for a picture. Such a picture is the older list
+		// as it is, as the arcade shows it.)
+		if (m_replay_extra) {
+			const view_t view = *m_view;
+			const auto done = m_render_done;
+			m_extra_crossed = false;
+			m_probing = true;
+			tgp_render(m_bitmap, m_bitmap.cliprect(), RENDER_BELOW_HUD);
+			m_probing = false;
+			m_render_done = done;
+			*m_view = view;
+			if (m_extra_crossed) m_replay_extra = false;
+			m_extra_crossed = false;
+		}
 		if (!cut && m_replay_extra) m_still_carried = b.frame;   // (the list after it catches up from there)
 	}
 	m_blend_cut = cut;
@@ -750,6 +766,52 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		if (!robust() || still_on() <= on0) memcpy(R, R0, sizeof R), memcpy(T, T0, sizeof T), res = res0, use = use0;
 		fits.assign(P.size(), 1), planar = false;
 	}
+	// (SWA: the camera's turn as the still models' own axes give it. The fit above has their places
+	// only, and a few far apart with ships among them steer its turn: at the Super Star Destroyer's
+	// tunnel end, 18-22 parts, it was half a degree off, the red girders' far ends a few pixels from
+	// where either list put them, every picture between the lists, and each list's own picture
+	// jumped. A still model's axes turn exactly as the camera does; the turn that carries most of
+	// them, with the shift they agree on, is kept if it carries as many as the fit did.)
+	bool by_axes = false;
+	if (!anchored) {
+		int on0 = 0;
+		for (size_t i = 0; i < P.size(); i++) on0 += still[i] && res[i] <= 0.02;
+		double bR[3][3], bT[3];
+		int best = 0;
+		for (size_t j = 0; j < P.size() && on0; j++) {
+			if (!still[j] || res[j] > 0.05 || first(a.slots[pair[K[j]]]) != first(b.slots[K[j]])) continue;
+			const glm::dmat3 ra(glm::make_mat3(a.slots[pair[K[j]]].mat)), rb(glm::make_mat3(b.slots[K[j]].mat));
+			if (std::fabs(glm::determinant(ra)) < 1e-12) continue;
+			const glm::dmat3 turn = rb * glm::inverse(ra), check = glm::transpose(turn) * turn;
+			bool proper = std::fabs(glm::determinant(turn) - 1) <= 0.001;
+			for (int c = 0; c < 3 && proper; c++)
+				for (int r = 0; r < 3; r++) proper &= std::fabs(check[c][r] - (c == r ? 1.0 : 0.0)) <= 0.001;
+			if (!proper) continue;
+			double tR[3][3], tT[3] = {};
+			for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) tR[r][c] = turn[c][r];
+			const auto shifted = [&](size_t i, int r) { return (&Q[i].x)[r] - (tR[r][0] * P[i].x + tR[r][1] * P[i].y + tR[r][2] * P[i].z); };
+			for (int r = 0; r < 3; r++) tT[r] = shifted(j, r);
+			int n = 0;
+			double sum[3] = {};
+			for (size_t i = 0; i < P.size(); i++) {
+				if (!still[i]) continue;
+				double o[3];
+				for (int r = 0; r < 3; r++) o[r] = shifted(i, r) - tT[r];
+				const double d = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]) / std::max({ std::fabs(P[i].z), std::fabs(Q[i].z), 1.0 });
+				if (d <= 0.002) { n++; for (int r = 0; r < 3; r++) sum[r] += shifted(i, r); }
+			}
+			if (n > best) {
+				best = n;
+				memcpy(bR, tR, sizeof bR);
+				for (int r = 0; r < 3; r++) bT[r] = sum[r] / n;
+			}
+		}
+		if (best && best >= on0) {
+			memcpy(R, bR, sizeof R), memcpy(T, bT, sizeof T);
+			by_axes = true;
+			for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
+		}
+	}
 	// A cut the parts' moves miss: the camera's own move in a frame, a turn of over 15 degrees or a
 	// shift of over 8.5% of the scenery's depth (a game's fastest swing, a knockdown's, turns it 11
 	// degrees and shifts it 7.7%). The parts mostly stay close (a cut to the same fighters from
@@ -844,6 +906,8 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		// A fit most slots are off isn't the camera's move: the trench's walls, cells of a few
 		// models repeating, fit a move one cell along, and moved by it the walls were blended across
 		// a cell and more, a wall missing or a grey slab across the screen.)
+		// (Not when the still models' own axes gave the move: it carries them exactly, and the
+		// weighted places turned it off them again, the tunnel's girders by half a degree.)
 		auto on_it = [&] { int n = 0; for (double r : res) n += r <= 0.02; return n; };
 		const int kept = on_it();
 		std::vector<double> w(P.size());
@@ -854,7 +918,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		const std::vector<double> first_res = res;
 		double first_R[3][3], first_T[3];
 		memcpy(first_R, R, sizeof R), memcpy(first_T, T, sizeof T);
-		if (!anchored && fit(w)) {
+		if (!anchored && !by_axes && fit(w)) {
 			for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
 			if (on_it() < kept) res = first_res, memcpy(R, first_R, sizeof R), memcpy(T, first_T, sizeof T);
 		}
@@ -1245,7 +1309,14 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 			// the rest are new or gone.)
 			if (m_video->separate_parts && f && (ra > 1 || rb > 1)) {
 				const size_t n = std::min(ra, rb), m = std::max(ra, rb);
-				auto cost = [&](size_t ks, size_t kl) { return std::sqrt(ra <= rb ? dist(i + ks, j + kl) : dist(i + kl, j + ks)); };
+				// (copies at one place, as hyperspace's tunnel pieces in a ring, tie on the move; each
+				// pairs with the one turned least from it, not its neighbour around the ring)
+				auto cost = [&](size_t ks, size_t kl) {
+					const size_t ia = ra <= rb ? i + ks : i + kl, jb = ra <= rb ? j + kl : j + ks;
+					double turn = 0;
+					for (int r = 0; r < 9; r++) turn += std::fabs(double(b.slots[jb].mat[r]) - a.slots[ia].mat[r]);
+					return std::sqrt(dist(ia, jb)) + 1e-3 * turn;
+				};
 				std::vector<int> best(n, -1), cur(n, -1);
 				std::vector<char> used(m, 0);
 				if (m <= 8) {

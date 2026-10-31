@@ -40,11 +40,18 @@
 // one list's far ring leaves the horizon's corners empty, the gaps jumping as the heading steps.
 // Inside the trench (D547F), Full adds the remaining rows of its finite model table only after
 // the entry view reaches its level-flight height (-512); the descent keeps the arcade's grid.
+// The Super Star Destroyer's surface and trench (EB028, its four calls to EB0F8) are a copy of
+// that routine over a finite map (width R8, length R9; cells off it are skipped, nothing wraps),
+// with five cell types (plain, turned, raised, raised and turned, at the 7730[R25] height) and no
+// band lights. Full adds its far layer's cells the same way at EB1EB (destroyer_cells).
 //
 // The coarse layers are the surface's own distant detail: each coarse cell's model is a simpler
 // version of the 2 x 2 fine cells it covers (fine cells 2x, 2x + 1 by 2z, 2z + 1; its centre is half
 // a fine cell past theirs, both maps' models centred on their cell). With LOD off the renderer draws
 // those four fine models at each coarse cell's matrix instead of its own.
+//
+// Hyperspace's streaks (C5775) are a fixed 12 x 10 grid of line clusters spanning the 4:3 view; in a
+// wide frame its side columns get further columns outward (wide_streaks).
 //
 // The asteroid field repeats every 131,072 units (X, and Z while 77C4 bit 15 is set). The game
 // keeps each asteroid and Star Destroyer in the period around the camera and culls those out of
@@ -135,6 +142,18 @@ constexpr uint32_t TRENCH_VIEW_HEIGHT = 0x7424;   // in the game's variables (R2
 constexpr float TRENCH_LEVEL_HEIGHT = -512;
 constexpr float TRENCH_HEIGHT_EPSILON = 1;   // the level view fluctuates by a few thousandths
 constexpr int TRENCH_ENTRY_REG = 1, TRENCH_ROW_REG = 3, TRENCH_COLUMN_REG = 4;
+// the Super Star Destroyer's surface (EB0F8): EAA2D's layers over a finite map
+constexpr uint32_t DESTROYER_SURFACE_MATRIX_WRITE = 0x0eb1eb;   // mov.w #B, [R11+]: a cell's matrix command
+constexpr int WIDTH_REG = 8, LENGTH_REG = 9;
+constexpr uint32_t RAISED_HEIGHT = 0x7730;   // type 4 cells' height, in the game's variables (R25)
+enum : uint16_t { DESTROYER_CELL, DESTROYER_TURNED, DESTROYER_RAISED, DESTROYER_RAISED_TURNED, DESTROYER_AT_HEIGHT };
+// hyperspace's streaks (C5775): one line-cluster model under each of a 12 x 10 grid's cells, 45
+// units apart and out to 247.5 to each side (the 4:3 view), the TGP translated by a table's steps
+constexpr uint32_t STREAK_MATRIX_WRITE = 0x0c191b;   // C18C7's mov.w #B, -44[R11]
+constexpr uint32_t STREAK_CALLER = 0x0c57d6;         // the return address from C18C7 in the streaks' loop
+constexpr int STREAK_COUNT_REG = 3;                  // R3: 120 down to 1, the grid's cells
+constexpr uint32_t STREAK_CELLS = 120, STREAK_EDGE_CELLS = 20;   // the first 20: the side columns, left and right in turn
+constexpr float STREAK_SPACING = 45, STREAK_HALF_WIDTH = 270;   // the grid's edge cells reach 247.5 + 22.5
 // the asteroid field's repeating objects
 constexpr uint32_t MATRIX_WRITES[] = { 0x0c18c1, 0x0c191b, 0x0c1995, 0x0c1a12, 0x0c1ae6 };   // mov.w #B, -44[R11]
 constexpr uint32_t BARE_MATRIX_WRITE = 0x0c1a63;                  // mov.w #B, -34[R11]: no object yet
@@ -461,6 +480,50 @@ void add_coarse_cell(model1 &machine, gameplay_state &state, std::vector<render_
 	state.fine_cells++;
 }
 
+// a heading's side cells and (Full) far ring, from its own four layers' lists and the others' (nearest first)
+gameplay_state::surface_sides surface_sides_of(const std::array<cell_bands, 4> &mine, const std::vector<std::array<cell_bands, 4>> &others,
+	int steps, bool full)
+{
+	gameplay_state::surface_sides sides;
+	// each layer out to its own list's reach; (Full) the far layer to the reach of those
+	// covering the picture's width, past which far_cells continues
+	std::array<float, 4> reach{};
+	const auto extend = [&](int i, const cell_bands &bands) {
+		for (const auto &band : bands)
+			for (auto [x, z] : band) reach[i] = std::max(reach[i], std::hypot(float(x), float(z)));
+	};
+	for (int i = 0; i < 4; i++) extend(i, mine[i]);
+	std::vector<std::pair<int, int>> far;
+	const auto list_reach = [](const cell_bands &bands) {
+		float r = 0;
+		for (const auto &band : bands)
+			for (auto [x, z] : band) r = std::max(r, std::hypot(float(x), float(z)));
+		return r;
+	};
+	float inner = list_reach(mine[3]);
+	for (const auto &band : mine[3]) far.insert(far.end(), band.begin(), band.end());
+	for (int n = 0; n < 2 * steps && n < int(others.size()); n++) {
+		if (full) extend(3, others[n][3]);
+		inner = std::min(inner, list_reach(others[n][3]));
+		for (const auto &band : others[n][3]) far.insert(far.end(), band.begin(), band.end());
+	}
+	sides.cells = side_cells(mine, others, reach);
+	// the coarse cells the lists and side cells draw: the far ring fills the rest
+	std::set<std::pair<int, int>> drawn;
+	for (int i = 2; i < 4; i++) {
+		for (const auto &band : mine[i]) drawn.insert(band.begin(), band.end());
+		for (const auto &lists : others)
+			for (const auto &band : lists[i])
+				for (auto c : band)
+					if (std::hypot(float(c.first), float(c.second)) <= reach[i]) drawn.insert(c);
+	}
+	for (int i = 0; i < 4; i++)
+		for (int b = 0; b < int(mine[i].size()); b++)
+			for (auto c : mine[i][b]) sides.band[i].emplace(c, b);
+	sides.far = far_cells(far, FULL_RADIUS, &drawn, inner);
+	return sides;
+}
+
 // at a coarse layer's cell matrix: with LOD off its fine cells, and (Full) the cells past the far
 // layer's list, attached to its first type-0 cell; in a wide frame (or Full) the cells the
 // neighbouring headings show (side_cells), each band's attached to the first type-0 cell drawn in
@@ -503,49 +566,13 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 				for (int i = 0; i < 4; i++) l[i] = read_list(heading_list(first + SURFACE_TABLE_SIZE * uint32_t(i), h));
 				return l;
 			};
-			gameplay_state::surface_sides sides;
 			const auto mine = lists(heading);
 			std::vector<std::array<cell_bands, 4>> others;   // nearest first
 			for (int d = 1; d <= SURFACE_HEADINGS / 2; d++) {
 				others.push_back(lists(heading + d));
 				if (d < SURFACE_HEADINGS / 2) others.push_back(lists(heading - d));
 			}
-			// each layer out to its own list's reach; (Full) the far layer to the reach of those
-			// covering the picture's width, past which far_cells continues
-			std::array<float, 4> reach{};
-			const auto extend = [&](int i, const cell_bands &bands) {
-				for (const auto &band : bands)
-					for (auto [x, z] : band) reach[i] = std::max(reach[i], std::hypot(float(x), float(z)));
-			};
-			for (int i = 0; i < 4; i++) extend(i, mine[i]);
-			std::vector<std::pair<int, int>> far;
-			const auto list_reach = [](const cell_bands &bands) {
-				float r = 0;
-				for (const auto &band : bands)
-					for (auto [x, z] : band) r = std::max(r, std::hypot(float(x), float(z)));
-				return r;
-			};
-			float inner = list_reach(mine[3]);
-			for (const auto &band : mine[3]) far.insert(far.end(), band.begin(), band.end());
-			for (int n = 0; n < 2 * steps && n < int(others.size()); n++) {
-				if (state.full_distance) extend(3, others[n][3]);
-				inner = std::min(inner, list_reach(others[n][3]));
-				for (const auto &band : others[n][3]) far.insert(far.end(), band.begin(), band.end());
-			}
-			sides.cells = side_cells(mine, others, reach);
-			// the coarse cells the lists and side cells draw: the far ring fills the rest
-			std::set<std::pair<int, int>> drawn;
-			for (int i = 2; i < 4; i++) {
-				for (const auto &band : mine[i]) drawn.insert(band.begin(), band.end());
-				for (const auto &lists : others)
-					for (const auto &band : lists[i])
-						for (auto c : band)
-							if (std::hypot(float(c.first), float(c.second)) <= reach[i]) drawn.insert(c);
-			}
-			for (int i = 0; i < 4; i++)
-				for (int b = 0; b < int(mine[i].size()); b++)
-					for (auto c : mine[i][b]) sides.band[i].emplace(c, b);
-			sides.far = far_cells(far, FULL_RADIUS, &drawn, inner);
+			auto sides = surface_sides_of(mine, others, steps, state.full_distance);
 			entry = state.sides.emplace(key, std::move(sides)).first;
 		}
 		state.side_pass = &entry->second;
@@ -601,6 +628,130 @@ std::vector<render_object> surface_cells(model1 &machine, gameplay_state &state)
 			state.surface_cells++;
 		}
 	}
+	return objects;
+}
+
+// a Super Star Destroyer map cell (EB0F8's types): its model and height; nothing off the map or empty
+std::optional<std::pair<cell_model, float>> destroyer_cell(model1 &machine, uint32_t map, int row_shift, uint32_t width,
+	uint32_t length, int x, int z)
+{
+	if (uint32_t(x) >= width || uint32_t(z) >= length) return std::nullopt;
+	const uint32_t entry = map + 2 * ((uint32_t(z) << row_shift) + uint32_t(x));
+	uint32_t at = entry + machine.read16(entry);
+	const uint16_t type = machine.read16(at);
+	at += 2;
+	float y = 0, angle = 0;
+	const auto turn = [&](uint32_t a) { return machine.read16(a) * (6.2831853f / 65536); };
+	switch (type) {
+	case DESTROYER_CELL: break;
+	case DESTROYER_TURNED: angle = turn(at); at += 2; break;
+	case DESTROYER_RAISED: y = int16_t(machine.read16(at)); at += 2; break;
+	case DESTROYER_RAISED_TURNED: y = int16_t(machine.read16(at)); angle = turn(at + 2); at += 4; break;
+	case DESTROYER_AT_HEIGHT: y = int16_t(machine.read16(machine.cpu().reg(VARIABLES_REG) + RAISED_HEIGHT)); break;
+	default: return std::nullopt;
+	}
+	return std::pair{ cell_model{ machine.read32(at), machine.read32(at + 4), angle }, y };
+}
+
+// At each of the Super Star Destroyer's layers' first cell matrix in a pass: in a wide frame (or
+// Full) the cells the neighbouring headings' lists add (side_cells), and (Full) at the far layer the
+// map's cells past the lists' reach, as the Death Star's surface gets them (surface_cells). EB0F8's
+// four layers each have their own map and offset (TGP 0x12), so each cell is attached in its own
+// layer: a coarse cell's fine cells (the heading draws some of the others) in layer 1's.
+std::vector<render_object> destroyer_cells(model1 &machine, gameplay_state &state)
+{
+	auto reg = [&](int r) { return machine.cpu().reg(r); };
+	const uint32_t lights = reg(LIGHTS_REG);
+	if (lights < BAND_LIGHTS || lights >= BAND_LIGHTS_END) return {};
+	const int layer = int((lights - BAND_LIGHTS) / LAYER_LIGHTS_SIZE);
+	if (layer < state.destroyer_layer || machine.frame_number() != state.destroyer_frame) state.destroyer_attached = 0;
+	state.destroyer_layer = layer;
+	state.destroyer_frame = machine.frame_number();
+	if (state.destroyer_attached & (1u << layer)) return {};
+	const int shift = int(reg(SHIFT_REG)), row_shift = int(reg(ROW_SHIFT_REG));
+	const uint32_t map = reg(MAP_REG), width = reg(WIDTH_REG), length = reg(LENGTH_REG);
+	const int px = int32_t(reg(0)) >> shift, pz = int32_t(reg(1)) >> shift;
+	const auto own = destroyer_cell(machine, map, row_shift, width, length, px, pz);
+	if (!own) return {};
+	state.destroyer_attached |= 1u << layer;
+	const int steps = side_headings(machine.wide_ext()) + (state.full_distance ? 1 : 0);
+	const int heading = machine.read16(reg(OBJECT_REG) + HEADING) & (SURFACE_HEADINGS - 1);
+	const auto read_list = [&](uint32_t at) {
+		cell_bands bands(machine.read8(at++));
+		for (auto &band : bands)
+			for (int n = machine.read8(at++); n > 0; n--, at += 2) band.emplace_back(int8_t(machine.read8(at)), int8_t(machine.read8(at + 1)));
+		return bands;
+	};
+	// (EB245 reads each layer's table from R18 and steps it on)
+	const uint32_t tables = reg(LAYER_REG) - 4 - 4 * uint32_t(layer);
+	const auto heading_list = [&](int i, int h) { return machine.read32(machine.read32(tables + 4 * uint32_t(i)) + 4 * uint32_t(h & (SURFACE_HEADINGS - 1))); };
+	const gameplay_state::surface_sides *sides = nullptr;
+	if (steps > 0) {
+		const uint64_t key = uint64_t(tables) << 16 | uint64_t(heading) << 8 | uint64_t(steps) << 1 | uint64_t(state.full_distance);
+		auto entry = state.sides.find(key);
+		if (entry == state.sides.end()) {
+			const auto lists = [&](int h) {
+				std::array<cell_bands, 4> l;
+				for (int i = 0; i < 4; i++) l[i] = read_list(heading_list(i, h));
+				return l;
+			};
+			const auto mine = lists(heading);
+			std::vector<std::array<cell_bands, 4>> others;   // nearest first
+			for (int d = 1; d <= SURFACE_HEADINGS / 2; d++) {
+				others.push_back(lists(heading + d));
+				if (d < SURFACE_HEADINGS / 2) others.push_back(lists(heading - d));
+			}
+			entry = state.sides.emplace(key, surface_sides_of(mine, others, steps, state.full_distance)).first;
+		}
+		sides = &entry->second;
+	}
+	const int cx = int32_t(reg(CENTER_X_REG)), cz = int32_t(reg(CENTER_Z_REG));
+	std::vector<render_object> objects;
+	const auto add = [&](int x, int z) {
+		const auto cell = destroyer_cell(machine, map, row_shift, width, length, x, z);
+		if (!cell) return false;
+		auto object = placed(cell->first, own->first.angle, float((x - px) << shift), float((z - pz) << shift));
+		(*object.transform)[10] = cell->second - own->second;
+		object.bounds = bounds_for(machine, state, object.polygon);
+		objects.push_back(object);
+		return true;
+	};
+	if (sides)
+		for (const side_cell &c : sides->cells)
+			if ((c.coarse ? c.layer : std::min(c.layer, 1)) == layer && add(cx + c.x, cz + c.z)) state.side_cells_drawn++;
+	if (state.full_distance && layer == 3) {
+		const std::vector<std::pair<int, int>> *far = sides ? &sides->far : nullptr;
+		if (!far) {
+			const uint32_t list = heading_list(layer, heading);
+			auto cached = state.far_cells.find(list);
+			if (cached == state.far_cells.end()) {
+				std::vector<std::pair<int, int>> cells;
+				for (const auto &band : read_list(list)) cells.insert(cells.end(), band.begin(), band.end());
+				cached = state.far_cells.emplace(list, far_cells(cells, FULL_RADIUS)).first;
+			}
+			far = &cached->second;
+		}
+		for (auto [dx, dz] : *far)
+			if (add(cx + dx, cz + dz)) state.destroyer_cells++;
+	}
+	return objects;
+}
+
+// (wide frame) at each of hyperspace's side-column streaks: the same model in further columns
+// outward, as many as the wider view needs (the streaks' reach on screen grows with their x)
+std::vector<render_object> wide_streaks(model1 &machine, gameplay_state &state, uint32_t word)
+{
+	if (word == state.streak_matrix + 1) return {};   // the command's second halfword
+	state.streak_matrix = word;
+	const uint32_t cell = STREAK_CELLS - machine.cpu().reg(STREAK_COUNT_REG);
+	if (cell >= STREAK_EDGE_CELLS) return {};
+	const float half = STREAK_HALF_WIDTH * (VIEW_HALF_WIDTH + float(machine.wide_ext())) / VIEW_HALF_WIDTH;
+	const int columns = int(std::ceil((half - STREAK_HALF_WIDTH) / STREAK_SPACING));
+	const float side = cell % 2 ? STREAK_SPACING : -STREAK_SPACING;
+	const uint32_t texture = machine.cpu().reg(1), polygon = machine.cpu().reg(2);   // as C18C7 wrote them
+	std::vector<render_object> objects;
+	for (int k = 1; k <= columns; k++)
+		objects.push_back({ texture, polygon, 0, 0, std::array<float, 12>{ 1, 0, 0, 0, 1, 0, 0, 0, 1, side * k, 0, 0 } });
 	return objects;
 }
 
@@ -1238,6 +1389,10 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		}
 		if (machine.cpu().pc() == SURFACE_MATRIX_WRITE) return surface_cells(machine, *state);
 		if (machine.cpu().pc() == TRENCH_MATRIX_WRITE) return state->full_distance ? trench_rows(machine, *state) : std::vector<render_object>{};
+		if (machine.cpu().pc() == STREAK_MATRIX_WRITE && machine.wide_ext() && machine.read32(machine.cpu().reg(31)) == STREAK_CALLER)
+			return wide_streaks(machine, *state, word);
+		if (machine.cpu().pc() == DESTROYER_SURFACE_MATRIX_WRITE)
+			return state->full_distance || machine.wide_ext() ? destroyer_cells(machine, *state) : std::vector<render_object>{};
 		return state->full_distance ? wrapped_copies(machine, *state, word) : std::vector<render_object>{};
 	};
 	callbacks.object = [&machine, state](uint32_t, uint32_t, uint32_t polygon, uint32_t, const float *) {
