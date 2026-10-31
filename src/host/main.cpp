@@ -12,6 +12,7 @@
 #include "gpu_compose.h"
 #include "controls.h"
 #include "gamepads.h"
+#include "audio_recovery.h"
 #include "input_replay.h"
 #include "local_link.h"
 #include "cabinet_display.h"
@@ -942,6 +943,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		~sdl_cleanup() { pair.reset(); for (auto &c : cabinets) c.reset(); SDL_Quit(); }
 	} cleanup{cabinets, pair};
 	std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audio(nullptr, SDL_DestroyAudioStream);
+	audio_recovery sound_recovery;
+	const SDL_AudioSpec sound_spec{SDL_AUDIO_S16, 2, m1audio::OUT_RATE};
 	if (SDL_InitSubSystem(SDL_INIT_AUDIO)) {
 		SDL_AudioSpec spec{SDL_AUDIO_S16, 2, m1audio::OUT_RATE};
 		audio.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr));
@@ -1117,6 +1120,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return true;
 	};
 	int passes = 0;
+	audio_wake_clock wake_clock;
 	while (running && (quit_after < 0 || frames < quit_after)) {
 		// The desktop smoke tests use the same event timeline as the single-cabinet host.
 		if (const char *events = getenv("M1_EVENTS_AT"))
@@ -1134,6 +1138,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						fprintf(stderr, "two cabinets: status frame=%d cabinets=%d mode=%u phase=%02x join=%d role=%u\n",
 							frames, cabinet_count, cabinets[0]->machine.game_mode(),
 							cabinets[0]->machine.work_ram()[0x1138], join_pending, cabinets[0]->machine.read8(0x40dc8c));
+					} else if (!strcmp(name, "sleep")) {
+						wake_clock = audio_wake_clock(audio_wake_clock::ticks() - 60000000000ull);
 					} else if (!strcmp(name, "close")) {
 						event.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
 						event.window.windowID = SDL_GetWindowID(cabinets[cabinet_count - 1]->display->window);
@@ -1155,6 +1161,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
 			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) running = false;
+			else if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+				sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks(), true);
+				owed = 0;
+				last = SDL_GetTicksNS();
+			}
 			else if (event.type == SDL_EVENT_GAMEPAD_ADDED || event.type == SDL_EVENT_GAMEPAD_REMOVED ||
 					 event.type == SDL_EVENT_GAMEPAD_REMAPPED) refresh_gamepads(pads, bindings.data(), false);
 			else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
@@ -1208,6 +1219,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			join_start_was = start;
 		}
 		const uint64_t now = SDL_GetTicksNS();
+		if (wake_clock.update()) {
+			fprintf(stderr, "clock: sleep-inclusive clock detected a gap; restarting playback\n");
+			sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks(), true);
+			owed = 0;
+			last = now;
+		} else sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks());
 		const double elapsed = std::min(0.1, double(now - last) / 1e9);
 		last = now;
 		if (paused) owed = 0;
@@ -1260,6 +1277,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			if (audio && !SDL_PutAudioStreamData(audio.get(), mixed.data(), int(mixed.size() * sizeof(int16_t))))
 				{ fprintf(stderr, "two cabinets: audio queue: %s\n", SDL_GetError()); return 1; }
+			if (audio) sound_recovery.submitted(int(mixed.size() * sizeof(int16_t)));
 			for (int p = 0; p < cabinet_count; p++) cabinets[p]->machine.m_audio_out.clear();
 		}
 		std::array<bool, 2> updated{};
@@ -2362,11 +2380,13 @@ int main(int argc, char **argv)
 	};
 
 	SDL_AudioSpec spec{ SDL_AUDIO_S16, 2, m1audio::OUT_RATE };
-	SDL_AudioStream *audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+	std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audio(
+		SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr), SDL_DestroyAudioStream);
+	audio_recovery sound_recovery;
 	if (audio) {
-		SDL_SetAudioStreamGain(audio, getenv("M1_HIDDEN") ? 0.0f : cfg.volume / 100.0f);   // tests: silent
+		SDL_SetAudioStreamGain(audio.get(), getenv("M1_HIDDEN") ? 0.0f : cfg.volume / 100.0f);   // tests: silent
 		m.set_volumes(cfg.music / 100.0f, cfg.effects / 100.0f);
-		SDL_ResumeAudioStreamDevice(audio);
+		SDL_ResumeAudioStreamDevice(audio.get());
 	} else fprintf(stderr, "no audio: %s\n", SDL_GetError());
 	const int frame_bytes = int(m1audio::OUT_RATE / FRAME_HZ) * 4;
 	constexpr int QUEUED = 3;            // frames of sound kept queued: the slack for a slow or late screen
@@ -2594,7 +2614,7 @@ int main(int argc, char **argv)
 			[&] { return std::to_string(cfg.volume) + "%"; },
 			[&](int d) {
 				cfg.volume = std::clamp(cfg.volume + 10 * d, 0, 100); cfg_dirty = true;
-				if (audio && !getenv("M1_HIDDEN")) SDL_SetAudioStreamGain(audio, cfg.volume / 100.0f);
+				if (audio && !getenv("M1_HIDDEN")) SDL_SetAudioStreamGain(audio.get(), cfg.volume / 100.0f);
 			} });
 		p.items.push_back({ "Music", "The music's volume, within the overall volume.",
 			[&] { return std::to_string(cfg.music) + "%"; },
@@ -2853,11 +2873,13 @@ int main(int argc, char **argv)
 		dt_avg = 1.0 / 120;
 		sound_lead = 0;
 	};
-	auto resume_clock = [&] {
+	auto resume_clock = [&](bool recover_sound = false) {
 		restart_clock();
 		picture_budget = 1;
 		queue_avg = QUEUED * frame_bytes;
-		if (audio && !SDL_ClearAudioStream(audio))
+		if (recover_sound) sound_recovery.update(audio, spec, getenv("M1_HIDDEN") ? 0 : cfg.volume / 100.0f,
+			!menu.is_open(), SDL_GetTicks(), true, menu.is_open());
+		if (audio && !SDL_ClearAudioStream(audio.get()))
 			fprintf(stderr, "sound: cannot clear queued audio after resume: %s\n", SDL_GetError());
 	};
 	int shot = 0;
@@ -2982,8 +3004,11 @@ int main(int argc, char **argv)
 					if (older < 0 || uint64_t(older) + 1 < hold_from) m.smooth_cut();
 				}
 				if (audio && !ff) {
-					if (SDL_GetAudioStreamQueued(audio) == 0) perf.starved++;   // the sound ran dry: a crackle
-					SDL_PutAudioStreamData(audio, m.m_audio_out.data(), int(m.m_audio_out.size() * 2));
+					if (SDL_GetAudioStreamQueued(audio.get()) == 0) perf.starved++;   // the sound ran dry: a crackle
+					const int bytes = int(m.m_audio_out.size() * 2);
+					if (!SDL_PutAudioStreamData(audio.get(), m.m_audio_out.data(), bytes))
+						fprintf(stderr, "sound: cannot queue audio: %s\n", SDL_GetError());
+					else sound_recovery.submitted(bytes);
 				}
 				m.m_audio_out.clear();
 				return true;
@@ -3052,6 +3077,7 @@ int main(int argc, char **argv)
 		};
 		if (!replay_to_handoff()) return 1;
 	}
+	audio_wake_clock wake_clock;
 	while (running) {
 		if (link.failed()) break;
 		if (!started_at) { started_at = SDL_GetTicksNS(); log_state("the start"); }
@@ -3091,14 +3117,14 @@ int main(int argc, char **argv)
 		// fast as it comes (as macOS's does after waking)
 		static const char *events_at = getenv("M1_EVENTS_AT");
 		static uint64_t gulp_until = 0;
-		if (audio && SDL_GetTicksNS() < gulp_until) SDL_ClearAudioStream(audio);
+		if (audio && SDL_GetTicksNS() < gulp_until) SDL_ClearAudioStream(audio.get());
 		for (const char *c = events_at; c && *c; c = strchr(c, ',') ? strchr(c, ',') + 1 : "") {
 			char what[32] = "";
 			long at = -1;
 			if (sscanf(c, "%ld:%31[^,]", &at, what) != 2 || at != pass) continue;
 			fprintf(stderr, "test: pass %ld: %s\n", at, what);
 			if (!strcmp(what, "sleep")) {
-				clock_t -= 60000000000ull;
+				wake_clock = audio_wake_clock(audio_wake_clock::ticks() - 60000000000ull);
 				continue;
 			}
 			if (!strcmp(what, "gulp")) {
@@ -3106,7 +3132,7 @@ int main(int argc, char **argv)
 				continue;
 			}
 			if (!strcmp(what, "stall") || !strcmp(what, "unstall")) {   // the sound device stops taking data
-				if (audio) { if (what[0] == 's') SDL_PauseAudioStreamDevice(audio); else SDL_ResumeAudioStreamDevice(audio); }
+				if (audio) { if (what[0] == 's') SDL_PauseAudioStreamDevice(audio.get()); else SDL_ResumeAudioStreamDevice(audio.get()); }
 				continue;
 			}
 			SDL_Event t{};
@@ -3124,7 +3150,7 @@ int main(int argc, char **argv)
 		bool pads_changed = false;
 		while (SDL_PollEvent(&e)) {
 			if (e.type == SDL_EVENT_QUIT) running = false;
-			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) { fprintf(stderr, "clock: back in the foreground, restarted\n"); resume_clock(); }
+			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) { fprintf(stderr, "clock: back in the foreground, restarted\n"); resume_clock(true); }
 			else if (e.type == SDL_EVENT_RENDER_TARGETS_RESET || e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
 				// Direct3D lost what render targets held (a device reset: every texture). The GPU's
 				// parts are made again whatever is on show (their old textures can't be used), and
@@ -3190,8 +3216,8 @@ int main(int argc, char **argv)
 		}
 		// the menu pauses the game and its sound
 		if (menu.is_open() != menu_was_open && audio) {
-			if (menu.is_open()) SDL_PauseAudioStreamDevice(audio);
-			else SDL_ResumeAudioStreamDevice(audio);
+			if (menu.is_open()) SDL_PauseAudioStreamDevice(audio.get());
+			else SDL_ResumeAudioStreamDevice(audio.get());
 		}
 		if (menu.is_open() != menu_was_open && !menu.is_open()) {
 			// settings changed in the menu are saved as it closes (not only at quit: a crash or a
@@ -3211,6 +3237,12 @@ int main(int argc, char **argv)
 			for (pad_state &s : pstate) s.menu_was = s.touch_was = s.sticks_was = true;
 		}
 		if (paused || menu.is_open()) { restart_clock(); picture_budget = 1; }   // (no catching up afterwards)
+		if (wake_clock.update()) {
+			fprintf(stderr, "clock: sleep-inclusive clock detected a gap; restarting playback\n");
+			resume_clock(true);
+		} else if (sound_recovery.update(audio, spec, hidden ? 0 : cfg.volume / 100.0f,
+			!paused && !menu.is_open() && !SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_TAB], SDL_GetTicks(), false, menu.is_open()))
+			resume_clock();
 		if (!paused && !menu.is_open()) {
 			// Run the game by its clock (frame_clock): the frames it has passed, however often the
 			// screen comes round (a 30 or 15 fps limit runs 2 or 4 frames a pass), and more at once if
@@ -3228,7 +3260,7 @@ int main(int argc, char **argv)
 			if (fixed_dt == 0 && dt > 0.5) {
 				static int told = 0;
 				if (told++ < 5) fprintf(stderr, "clock: a %.1f s gap (sleep or a stall) not run as game time\n", dt);
-				resume_clock();
+				resume_clock(true);
 				pass_avg = screen_hz_now > 0 ? 1.0 / screen_hz_now : 0;
 				dt = 1.0 / FRAME_HZ;
 			}
@@ -3256,7 +3288,7 @@ int main(int argc, char **argv)
 			int low = 0;                         // frames the sound needs at once (it's nearly run dry)
 			bool sound_full = false;             // over 300 ms queued: no frames run this pass
 			if (audio && !ff) {
-				const int q = SDL_GetAudioStreamQueued(audio);
+				const int q = SDL_GetAudioStreamQueued(audio.get());
 				// a sound device that stopped taking data without going away, or takes it slower than
 				// the 1% trim can follow (Wine's on a Mac: 5%): the queue would grow without end, the
 				// sound ever further behind the picture. Over 300 ms queued, the game waits for the
@@ -3525,7 +3557,7 @@ int main(int argc, char **argv)
 		uint64_t ahead_t = 0;
 		if (!no_game_thread && running && m.smooth() && !paused && !menu.is_open() && !sync.holding() &&
 			!SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_TAB] && frame_clock - double(game_run) >= 0.5 &&
-			!(audio && SDL_GetAudioStreamQueued(audio) > frame_bytes * int(FRAME_HZ * 0.3)) &&   // (the game waiting for the sound: none ahead either)
+			!(audio && SDL_GetAudioStreamQueued(audio.get()) > frame_bytes * int(FRAME_HZ * 0.3)) &&   // (the game waiting for the sound: none ahead either)
 			frame_inputs()) {
 			ahead = true;
 			ahead_t = SDL_GetTicksNS();
@@ -3566,7 +3598,7 @@ int main(int argc, char **argv)
 					w.layers, w.layers_ns / 1e6, w.sky_build, w.sky_build_ns / 1e6, w.sky_scale, w.sky_scale_ns / 1e6, w.padded, gc.made,
 					(unsigned long long)(gc.uploaded / 1000), int(stopped), gf[0], gf[1], gf[2], gf[3],
 					gf[4], gf[5], int(m.frame_quads()), unsigned(m.game_mode()), sa, s0, s1, place[0], place[1], place[2], w.edge_ns / 1e6,
-					audio ? SDL_GetAudioStreamQueued(audio) * 1000.0 / (frame_bytes * FRAME_HZ) : 0.0);
+					audio ? SDL_GetAudioStreamQueued(audio.get()) * 1000.0 / (frame_bytes * FRAME_HZ) : 0.0);
 			w = model1::work_trace{};
 			gc.made = 0; gc.uploaded = 0;
 		}
@@ -3636,6 +3668,7 @@ int main(int argc, char **argv)
 	if (gpu_check) fprintf(stderr, "gpu check: %d pictures put together on the GPU checked, %d differ\n", gpu_checked, gpu_differ);
 	gc.release();                          // (its textures go before the renderer)
 	save_recording("quit");
+	audio.reset();
 	if (link.failed()) { SDL_Quit(); return 1; }
 	if (replay_mode || (quit_after >= 0 && !getenv("M1_SAVE"))) { SDL_Quit(); return 0; }   // replay and test runs leave saves and settings alone
 	game_part.keep_arcade_settings();

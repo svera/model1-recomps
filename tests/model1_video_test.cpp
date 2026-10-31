@@ -389,6 +389,48 @@ struct model1_video_test
 			aspect, lod ? "on" : "off", pictures, cuts, unblended, parts, worst);
 		assert(pictures > 2000 && parts > 10000 && cuts == 0 && unblended == 0 && worst < 0.1f);
 	}
+	// R2-D2 lowered into the X-wing (attract mode, before the hangar exit) rides with the camera:
+	// each pair must start his parts where the older list has them, not where world scenery would be.
+	static void swa_hangar_r2(const char *dir, float aspect)
+	{
+		model1 m(load_regions(dir, game::id{ "swa" }));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		m.set_edge_aa(false);
+		while (m.frame_number() < 11970) m.run_frame();
+		m.set_drawing(true);
+		int pictures = 0, unblended = 0, parts = 0;
+		float worst = 0;
+		const std::set<uint32_t> r2{ 0x116284d, 0x1162a16, 0x1162fd1 };
+		while (m.frame_number() < 12515) {
+			m.run_frame();
+			const int f = int(m.frame_number());
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				if (m.m_blend_cut) continue;
+				pictures++;
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &s = b.slots[i];
+					if (s.polys.empty() || !r2.count(s.polys[0])) continue;
+					parts++;
+					if (i >= m.m_blend_ok.size() || !m.m_blend_ok[i]) { unblended++; continue; }
+					float best = INFINITY;
+					for (const auto &older : a.slots) {
+						if (older.polys.empty() || older.polys[0] != s.polys[0]) continue;
+						float error = 0;
+						for (int k = 0; k < 12; k++) error = std::max(error, std::fabs(m.m_blend_from[i][k] - older.mat[k]));
+						best = std::min(best, error);
+					}
+					if (best < INFINITY) worst = std::max(worst, best);
+				}
+			}
+		}
+		printf("SWA hangar R2-D2 (aspect %.3f): %d pictures, %d unblended of %d parts, older matrix error %.3f\n", aspect, pictures, unblended, parts, worst);
+		assert(pictures > 500 && parts > 1000 && unblended * 20 < parts && worst < 0.05f);
+	}
 	static void swa_wrap_smooth(const char *dir, bool native, bool lod)
 	{
 		model1 m(load_regions(dir, game::id{ "swa" }));
@@ -3221,6 +3263,7 @@ int main(int argc, char **argv)
 	if (argc > 2 && std::string(argv[2]) == "--swa-hangar") {
 		for (bool lod : { false, true })
 			for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_motion(argv[1], aspect, lod);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_r2(argv[1], aspect);
 		return 0;
 	}
 	model1_video_test::copy_bounds_and_sort();
@@ -3250,6 +3293,7 @@ int main(int argc, char **argv)
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_flashes(argv[1], aspect);
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_launch_motion(argv[1], aspect, false);
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_motion(argv[1], aspect, false);
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_hangar_r2(argv[1], aspect);
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_globe_motion(argv[1], aspect);
 		model1_video_test::swa_passing_tie(argv[1]);
 		model1_video_test::swa_surface_slab(argv[1]);

@@ -111,6 +111,16 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   and queued audio, so waking from sleep does not fast-forward through missed time.
   `M1_HIDDEN=1 M1_QUIT_AFTER=240 M1_EVENTS_AT=80:sleep,160:sleep M1_TRACE=/tmp/resume.log build/bin/vr`
   exercises two simulated one-minute gaps without displaying a window.
+  Wake recovery also closes and reopens the default playback device, restoring volume and the
+  menu's pause state. Both desktop hosts watch queued samples: two seconds without consumption
+  while playing reopens a stalled device, and a failed open is retried every two seconds.
+  `make test-host-audio` checks stalled playback, consumption, volume, pause and retry with SDL's
+  dummy device. `M1_EVENTS_AT=80:stall` checks recovery in the single-cabinet host without an unstall event.
+  macOS wake detection uses `mach_continuous_time`, which advances during sleep even when SDL's
+  game clock does not. A gap over half a second restarts playback in both desktop hosts, including
+  while the menu is open, without depending on a mobile foreground event or a stalled queue.
+  The `sleep` test event advances only this wake detector, leaving the game clock and audio queue
+  alone, so it also covers silent playback that still consumes samples.
   A real Mac sleep barely shows up in that clock: a SWA trace saw a 30-second sleep as a 2-second gap. After
   waking, the sound device stalled for about 7 seconds, and the game waited for it. Then, for about 2 seconds,
   it took sound faster than it played it. Each frame run to keep it fed also moved the game clock on, so the
@@ -500,7 +510,9 @@ The AI wrote nearly all the code. A person decided what was right.
     every picture between lists. At 120 fps a wall showed in one picture in four. A census over the whole game found
     the 272 models at 0x1100004–0x116482E only in the tunnel, and always carried by the camera's move. The traits now
     name that range in `still_models`, which the rule skips. (A first fix named only part of it, 0x1123b6a onwards,
-    which missed the largest side wall.)
+    which missed the largest side wall. The range was later ended at 0x116284D: the tunnel's last model is 0x11627EF,
+    and the models just after it are R2-D2 in the attract mode's hangar. He rides with the camera, so treating him as
+    still began each pair where world scenery would have been and made him move in jerks.)
   - **Wall pieces at the screen's edges popping in.** Naming the tunnel as still also turned on the surface's step
     closing above, which is meant for the Death Star's blocks. The tunnel's pieces have open gaps where the lists show
     the black beyond. The step closing filled them in pictures between lists only, so a grey face flashed in at the
