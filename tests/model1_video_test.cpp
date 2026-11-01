@@ -15,6 +15,131 @@
 
 struct model1_video_test
 {
+	static void cockpit_coverage()
+	{
+		constexpr uint32_t soft = 0x80ffffff, blue = 0x000000ff;
+		assert(model1::blend_layer_pixel(soft, blue) == 0x007f7fff);
+		assert(model1::blend_layer_pixel(soft, model1::KEY) == soft);
+		assert(model1::blend_layer_pixel(soft, soft) == 0x40ffffff);
+		assert(model1::blend_layer_pixel(model1::KEY, blue) == blue);
+		assert(model1::blend_layer_pixel(0, blue) == 0);
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		for (int scale : { 1, 2 }) {
+			m.set_render_scale(scale);
+			m.m_tiles.update(m.m_pens);
+			auto &c = m.cached_layer(3, 0);
+			c.px.fill(model1::KEY);
+			c.px.pix(100, 10) = soft;
+			c.x0[100] = 10;
+			c.x1[100] = 11;
+			c.sides = true;
+			m.m_bitmap.fill(blue);
+			m.draw_tiles(m.m_bitmap, m.m_bitmap.cliprect(), 3, 0);
+			for (int dy = 0; dy < scale; dy++)
+				for (int dx = 0; dx < scale; dx++) assert(m.m_bitmap.pix(100 * scale + dy, 10 * scale + dx) == 0x007f7fff);
+			bitmap_rgb32 combined;
+			uint64_t key = 0, gen = 0;
+			m.parts_composite(combined, key, gen, { 3 });
+			assert(combined.pix(100, 10) == soft);
+			model1::gpu_parts parts;
+			// Compare the CPU's parts compositor with the whole-picture tile path.
+			parts.img[model1::TEX_TOP].px = combined.data();
+			parts.img[model1::TEX_TOP].w = combined.width();
+			parts.img[model1::TEX_TOP].h = combined.height();
+			parts.img[model1::TEX_TOP].stride = combined.width();
+			model1::gpu_op base{}, top{};
+			base.tex = -1;
+			base.colour = blue;
+			base.dw = top.dw = combined.width() * scale;
+			base.dh = top.dh = combined.height() * scale;
+			base.clip_x1 = top.clip_x1 = base.dw;
+			top.tex = model1::TEX_TOP;
+			top.sw = combined.width();
+			top.sh = combined.height();
+			parts.ops = { base, top };
+			assert(model1::compose_pixel(parts, 10 * scale, 100 * scale) == 0x007f7fff);
+		}
+		puts("Cockpit coverage: transparent edges blend identically in whole-picture and parts composition at 1x/2x");
+	}
+
+	static size_t swa_ending_settings(const char *dir, bool native, bool lod, bool full)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_edge_aa(false);
+		auto script = game::make_auto_play(title, "complete", 12345, false);
+		assert(script);
+		if (native) {
+			rec::hints hints;
+			assert(hints.read("assets/games/swa/swa_map.txt"));
+			rec::attach(m.cpu(), "swa");
+			assert(rec::build_native(m.program_rom(), hints));
+			m.run_cpu = [](int n) { rec::run(n); };
+		}
+		size_t near = 0, far = 0, limited = 0, extended = 0, pictures = 0;
+		const auto result = m.m_gameplay.copro_result;
+		m.m_gameplay.copro_result = [&](uint32_t pc, uint32_t value) {
+			const uint32_t out = result(pc, value);
+			if (m.frame_number() >= 57549) {
+				if (pc == 0xdded0) {
+					if (value >= 0x14000) {
+						limited++;
+						assert(full ? out < 0x14000 : out == value);
+					}
+					if (!lod && out < 0x14000) assert(out == 0);
+					if (lod && value < 0x14000) assert(out == value);
+				}
+				for (uint32_t read : { 0xdde54u, 0xddf87u, 0xde017u, 0xde0a7u })
+					if (pc == read && std::bit_cast<float>(value) >= 0) {
+						extended++;
+						assert(full ? std::bit_cast<float>(out) < 0 : out == value);
+					}
+			}
+			return out;
+		};
+		const auto object = m.m_gameplay.object;
+		m.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+			if (m.frame_number() >= 57549) {
+				if (polygon == (m.read32(0x23c156) & 0x7fffff)) {
+					assert(texture == 0x4dbf3);
+					near++;
+				}
+				if (polygon == (m.read32(0x23c15e) & 0x7fffff)) {
+					assert(texture == 0x4de96 && lod);
+					far++;
+				}
+			}
+			return object(owner, texture, polygon, size, data);
+		};
+		for (int f = 1; f <= 61000; f++) {
+			if (f == 57550) {
+				assert(m.read8(0x40f008) == 13 && m.read8(0x40f009) == 9);
+				game::swa::set_lod(m, lod);
+				game::swa::set_full_draw_distance(m, full);
+			}
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.run_frame();
+			if (f == 57549) assert(script->check(f, m).empty());
+			if (f >= 57560 && f % 60 == 0) {
+				m.redraw();
+				pictures++;
+				assert(m.read8(0x40f008) == 13 && m.read8(0x40f009) == 9);
+			}
+		}
+		printf("SWA ending (%s, LOD %s, distance %s): %zu pictures, near/far %zu/%zu, size/depth cutoffs %zu/%zu\n",
+			native ? "native" : "interpreter", lod ? "on" : "off", full ? "Full" : "Arcade", pictures, near, far, limited, extended);
+		assert(pictures > 50 && near > 0 && (lod ? far > 0 : far == 0) && limited > 0 && extended > 0);
+		return near + far;
+	}
+
 	// The Super Star Destroyer's scenery must survive the moving-object eye-crossing guard.
 	// Compare the same smoothed pose with that guard disabled only during rasterization;
 	// hide moving effects so their intentional suppression cannot mask a missing wall.
@@ -874,6 +999,7 @@ struct model1_video_test
 				m.m_inputs[c] = uint8_t(~in.pressed[c]);
 			m.run_frame();
 		}
+
 		for (int scale : { 1, 2 }) {
 			m.set_render_scale(scale);
 			m.screen_update(m.m_bitmap, m.m_bitmap.cliprect());
@@ -892,6 +1018,63 @@ struct model1_video_test
 			assert(yellow > size_t(1000 * scale * scale));
 			printf("SWA name entry (%dx): %zu yellow letter pixels, no masking by the photograph\n", scale, yellow);
 		}
+	}
+
+	static void swa_name_fall(const char *dir, float aspect)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(aspect);
+		auto play = game::make_auto_play(title, "", 12345, false);
+		assert(play);
+		int last = -1;
+		int samples = 0, moving = 0, wrong = 0;
+		for (int f = 1; f <= 16300; f++) {
+			const auto in = play->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t c = 0; c < in.pressed.size(); c++) m.m_inputs[c] = uint8_t(~in.pressed[c]);
+			m.set_drawing(f >= 15000);
+			m.run_frame();
+			if (f < 15002) continue;
+			m.render_smooth(f - 0.5);
+			const auto &a = m.m_logic[0], &b = m.m_logic[1];
+			if (!b.above_hud || b.frame == last) continue;
+			last = b.frame;
+			if (f < 16030) continue;
+			for (double phase : { 0.25, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				assert(!m.m_blend_cut && m.m_last_alpha > 0 && m.m_last_alpha < 1);
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					const auto &s = b.slots[i];
+					if (!s.above_hud || s.polys.empty()) continue;
+					if (!m.m_blend_ok[i]) continue;
+					bool own = false;
+					for (const auto &old : a.slots)
+						if (old.above_hud && old.polys == s.polys) {
+							float error = 0;
+							for (int k = 0; k < 12; k++) error = std::max(error, std::fabs(old.mat[k] - m.m_blend_from[i][k]));
+							own |= error < 0.001f;
+						}
+					wrong += !own;
+					const bool falls = std::fabs(s.mat[10] - m.m_blend_from[i][10]) > 1;
+					moving += falls;
+					float from_distance = 0, to_distance = 0;
+					for (int k = 9; k < 12; k++) {
+						assert(std::isfinite(m.m_blend[i][k]));
+						from_distance += std::pow(m.m_blend[i][k] - m.m_blend_from[i][k], 2);
+						to_distance += std::pow(m.m_blend[i][k] - s.mat[k], 2);
+					}
+					if (falls) assert(from_distance > 0.01f && to_distance > 0.01f);
+					samples++;
+				}
+			}
+		}
+		printf("SWA name fall (aspect %.3f): %d foreground samples, %d moving, %d invented older poses\n", aspect, samples, moving, wrong);
+		assert(samples > 1000 && moving > 100 && wrong == 0);
 	}
 
 	static void trackside_collisions()
@@ -3354,6 +3537,20 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	model1_video_test::cockpit_coverage();
+	if (argc > 2 && std::string(argv[2]) == "--swa-name-fall") {
+		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_name_fall(argv[1], aspect);
+		return 0;
+	}
+	if (argc > 2 && std::string(argv[2]) == "--swa-ending") {
+		for (bool native : { false, true })
+			for (bool lod : { false, true }) {
+				const auto arcade = model1_video_test::swa_ending_settings(argv[1], native, lod, false);
+				const auto full = model1_video_test::swa_ending_settings(argv[1], native, lod, true);
+				assert(full > arcade);
+			}
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--swa-destroyer-distance") {
 		model1_video_test::swa_destroyer_distance(argv[1]);
 		return 0;

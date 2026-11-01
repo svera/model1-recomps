@@ -173,7 +173,7 @@ public:
 	// nearest texel, KEY left out (TEX_SKY: copied whole), columns outside [clip_x0, clip_x1) left.
 	// Every op is a copy of whole texels (a scale by the render scale, or 1:1) except the widescreen
 	// stretch of a 4:3 backdrop, whose texel boundaries the GPU works out in float as the CPU does.
-	static constexpr uint32_t KEY = 0xff000000;     // drawn pixels are 0x00rrggbb: never this
+	static constexpr uint32_t KEY = 0xff000000;     // transparent; tile edges may carry fractional inverse alpha
 	// a shadow over KEY (| half its colour): blended with the 2D beneath when the 3D is done, as
 	// the CPU blends it with what's drawn (parts_below), if no polygon has covered it by then
 	static constexpr uint32_t SHADOW_KEY = 0xfd000000;
@@ -216,6 +216,21 @@ public:
 	// out is w x h, 0x00rrggbb. `upto`: stop at the first op with that image (-1: all of them).
 	static void compose_cpu(const gpu_parts &p, int w, int h, std::vector<uint32_t> &out);
 	static uint32_t compose_pixel(const gpu_parts &p, int x, int y, int upto = -1);
+	// Tile pixels use inverse alpha: 0 is opaque, 255 transparent (KEY).
+	static uint32_t blend_layer_pixel(uint32_t source, uint32_t destination)
+	{
+		const uint32_t transparency = source >> 24;
+		if (!transparency) return source;
+		if (transparency == 255) return destination;
+		if (destination == KEY) return source;
+		const uint32_t foreground = (255 - transparency) * 255;
+		const uint32_t background = (255 - (destination >> 24)) * transparency;
+		const uint32_t opacity = foreground + background;
+		uint32_t out = (255 - (opacity + 127) / 255) << 24;
+		for (int shift : { 0, 8, 16 })
+			out |= ((((source >> shift) & 255) * foreground + ((destination >> shift) & 255) * background + opacity / 2) / opacity) << shift;
+		return out;
+	}
 
 	// Polygons drawn in the last frame, and the camera the game last sent (0 between scenes).
 	int frame_quads() const { return m_last_quads; }
@@ -336,6 +351,7 @@ private:
 		bool retained = false;
 		float light[3] = { 0, 0, 0 };                // the list's light vector (command 0xa) where this slot is
 		bool has_light = false;
+		bool above_hud = false;
 		uint32_t owner = 0;                          // (video_traits::records) 0: not known, 1: the still world, else its record
 	};
 	struct logic_frame {

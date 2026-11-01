@@ -80,6 +80,9 @@ namespace {
 // the `in.w [FP], R0` reading each routine's measure
 constexpr uint32_t LOD_READS[] = { 0x0cdfd8, 0x0d1d38, 0x0e7fd3 };
 constexpr uint32_t CULLED_ABOVE = 0x6fff;
+// The ending's scripted flypast has its own two-model choice and distance-only cutoffs.
+constexpr uint32_t ENDING_LOD_READ = 0x0dded0, ENDING_CULLED_FROM = 0x14000;
+constexpr uint32_t ENDING_DISTANCE_READS[] = { 0x0dde54, 0x0ddf87, 0x0de017, 0x0de0a7 };
 constexpr uint32_t DESTROYER_DETAIL_READ = 0x0dc336;   // movz.bw 3A[R20], R17
 constexpr uint32_t ALL_FAR_READ = 0x0dc341;            // cmp.b #2, 7009[R25]
 constexpr uint32_t TURRET_MASK_READ = 0x0dce68;        // and.h 44[R20], R0
@@ -294,7 +297,9 @@ int side_headings(int ext)
 
 uint32_t lod_result(bool enabled, uint32_t pc, uint32_t value)
 {
-	if (enabled || value > CULLED_ABOVE) return value;
+	if (enabled) return value;
+	if (pc == ENDING_LOD_READ) return value < ENDING_CULLED_FROM ? 0 : value;
+	if (value > CULLED_ABOVE) return value;
 	for (uint32_t read : LOD_READS)
 		if (pc == read) return 0;
 	return value;
@@ -360,7 +365,8 @@ bool continue_sides(uint32_t *pixels, int width, int height, int ext)
 	if (ext <= 0 || width != SCREEN + 2 * ext || height <= 0) return false;
 	bool any = false;
 	std::vector<float> slope(static_cast<size_t>(height)), y_at(static_cast<size_t>(height));
-	std::vector<uint32_t> edge(static_cast<size_t>(height)), column(static_cast<size_t>(height));
+	std::vector<uint32_t> edge(static_cast<size_t>(height));
+	std::vector<std::array<float, 4>> coverage(static_cast<size_t>(height));
 	for (int dir : { -1, +1 }) {
 		// column j in from this side's edge (0: the edge)
 		const int x_edge = dir < 0 ? ext : ext + SCREEN - 1;
@@ -400,17 +406,34 @@ bool continue_sides(uint32_t *pixels, int width, int height, int ext)
 				slope[i] = s0 + (s1 - s0) * float(y - y0) / float(y1 - y0);
 			}
 		}
-		// d columns out, the edge's row r is at r - slope * d: each row painted down to where the next is
+		// A quarter-pixel horizontal footprint keeps the extension close to the original art's sharpness.
 		for (int d = 1; d <= ext; d++) {
-			std::fill(column.begin(), column.end(), NOTHING);
-			for (int r = 0; r < height; r++) y_at[r] = float(r) - slope[r] * float(d);
-			for (int r = 0; r < height; r++) {
-				const float a = y_at[r], b = r + 1 < height ? y_at[r + 1] : y_at[r] + 1;
-				const int lo = int(std::floor(std::min(a, b) + 0.5f)), hi = int(std::floor(std::max(a, b) + 0.5f));
-				for (int y = std::max(lo, 0); y < std::min(std::max(hi, lo + 1), height); y++) column[y] = edge[r];
+			std::fill(coverage.begin(), coverage.end(), std::array<float, 4>{});
+			for (float offset : { -0.09375f, -0.03125f, 0.03125f, 0.09375f }) {
+				for (int r = 0; r < height; r++) y_at[r] = float(r) - 0.5f - slope[r] * (float(d) + offset);
+				for (int r = 0; r < height; r++) {
+					if (edge[r] == NOTHING) continue;
+					const float a = y_at[r], b = r + 1 < height ? y_at[r + 1] : y_at[r] + 1;
+					const float lo = std::min(a, b), hi = std::max(a, b);
+					for (int y = std::max(int(std::floor(lo + 0.5f)), 0); y < std::min(int(std::ceil(hi + 0.5f)), height); y++) {
+						const float weight = std::max(0.0f, std::min(hi, y + 0.5f) - std::max(lo, y - 0.5f)) * 0.25f;
+						auto &c = coverage[y];
+						c[3] += weight;
+						for (int k = 0; k < 3; k++) c[k] += float((edge[r] >> (8 * k)) & 255) * weight;
+					}
+				}
 			}
 			const int x = x_edge + dir * d;
-			for (int y = 0; y < height; y++) pixels[size_t(y) * width + x] = column[y];
+			for (int y = 0; y < height; y++) {
+				const auto &c = coverage[y];
+				const int opacity = int(std::lround(std::min(c[3], 1.0f) * 255));
+				uint32_t pixel = NOTHING;
+				if (opacity) {
+					pixel = uint32_t(255 - opacity) << 24;
+					for (int k = 0; k < 3; k++) pixel |= uint32_t(std::clamp(std::lround(c[k] / c[3]), 0l, 255l)) << (8 * k);
+				}
+				pixels[size_t(y) * width + x] = pixel;
+			}
 		}
 		any = true;
 	}
@@ -1362,6 +1385,12 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		return value;
 	};
 	callbacks.copro_result = [&machine, state](uint32_t pc, uint32_t value) {
+		if (state->full_distance) {
+			if (pc == ENDING_LOD_READ) value = std::min(value, ENDING_CULLED_FROM - 1);
+			else if (std::find(std::begin(ENDING_DISTANCE_READS), std::end(ENDING_DISTANCE_READS), pc) != std::end(ENDING_DISTANCE_READS) &&
+				std::bit_cast<float>(value) >= 0)
+				return std::bit_cast<uint32_t>(-1.0f);
+		}
 		if (state->full_distance && int32_t(value) < 0) {
 			if (std::find(std::begin(ASTEROID_CULL_READS), std::end(ASTEROID_CULL_READS), pc) != std::end(ASTEROID_CULL_READS) ||
 				pc == CLUSTER_CULL_READ)

@@ -38,4 +38,7 @@ release_assets()
 	mkdir -p "$2/games"
 	cp -R assets/ui assets/fonts "$2/"
 	[ ! -d assets/games/$1 ] || cp -R assets/games/$1 "$2/games/"
+	if [ "$1" = swa ]; then
+		cp tests/games/swa/recordings/manual-complete-game.inputs "$2/games/swa/"
+	fi
 }

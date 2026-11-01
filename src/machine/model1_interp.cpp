@@ -133,7 +133,7 @@ void model1::index_objects(logic_frame &lf)
 		switch (rdi(off)) {
 		case 0: off += 2; break;
 		case 1: case 0x41:
-			if (rdi(off) == 0x41) lf.above_hud = true;
+			if (rdi(off) == 0x41) lf.above_hud = lf.slots.back().above_hud = true;
 			lf.slots.back().polys.push_back(rdi(off + 4));
 			if (rdi(off) == 1 && lf.slots.back().visibility)
 				lf.slots.back().objects.push_back({ rdi(off + 2), rdi(off + 4), rdi(off + 6) });
@@ -530,6 +530,10 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 {
 	struct pt { double x, y, z; };
 	auto first = [](const slot &sl) { return sl.polys.empty() ? 0u : sl.polys[0]; };
+	// Foreground graphics move independently of the scene camera (the name-entry letters fall).
+	const auto foreground = [&](size_t k) {
+		return b.slots[k].above_hud || (pair[k] >= 0 && a.slots[pair[k]].above_hud);
+	};
 	// (SWA) Paired again first by the camera's last move, carried on: the Death Star's surface list
 	// changes order as the camera crosses into the next cell, and pairing in order paired most of
 	// it with other cells, a fit to those a move matching none (a cut that wasn't, or the cells
@@ -552,9 +556,9 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 			};
 			std::unordered_multimap<uint32_t, int> models;
 			for (size_t o = 0; o < a.slots.size(); o++)
-				if (!a.slots[o].polys.empty()) models.emplace(first(a.slots[o]), int(o));
+				if (!a.slots[o].polys.empty() && !a.slots[o].above_hud) models.emplace(first(a.slots[o]), int(o));
 			for (size_t k = 0; k < pair.size(); k++) {
-				if (b.slots[k].polys.empty()) continue;
+				if (b.slots[k].polys.empty() || foreground(k)) continue;
 				const float *pb = b.slots[k].mat;
 				double best_r = pair[k] >= 0 ? predicted(a.slots[pair[k]].mat, pb) : INFINITY;
 				if (best_r <= 0.03) continue;
@@ -591,7 +595,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 	}
 	for (size_t k = 0; k < pair.size(); k++) {
 		const int q = pair[k];
-		if (q < 0 || b.slots[k].polys.empty() || held[k]) continue;
+		if (q < 0 || b.slots[k].polys.empty() || held[k] || foreground(k)) continue;
 		const float *pa = a.slots[q].mat, *pb = b.slots[k].mat;
 		P.push_back({ pa[9], pa[10], pa[11] });
 		Q.push_back({ pb[9], pb[10], pb[11] });
@@ -1072,7 +1076,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		std::vector<char> claimed;      // (older slots paired, made when a ship's copy is looked for)
 		std::vector<size_t> ship;       // (ships moved with the camera all the same: none of their model near)
 		for (size_t k = 0; k < b.slots.size(); k++) {
-			if (b.slots[k].polys.empty() || held[k]) continue;
+			if (b.slots[k].polys.empty() || held[k] || foreground(k)) continue;
 			const uint32_t f = first(b.slots[k]);
 			// With an exact stationary reference, a paired ship keeps its own motion, however
 			// close it is to the camera's. The launch X-wing otherwise slid back each list.
@@ -1087,7 +1091,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 			int best = -1;
 			double bres = pair[k] >= 0 ? std::min(m_cam_res[k] * 0.25, 0.01) : 0.01;
 			for (size_t o = 0; o < a.slots.size(); o++)
-				if (first(a.slots[o]) == f && int(o) != pair[k]) {
+				if (first(a.slots[o]) == f && int(o) != pair[k] && !a.slots[o].above_hud) {
 					const float *pa = a.slots[o].mat;
 					const double r = residual({ pa[9], pa[10], pa[11] }, q);
 					if (r < bres) bres = r, best = int(o);
@@ -1143,7 +1147,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 				int near = -1;
 				double nd = 0;
 				for (size_t o = 0; o < a.slots.size(); o++) {
-					if ((claimed[o] && int(o) != pair[k]) || first(a.slots[o]) != f) continue;
+					if ((claimed[o] && int(o) != pair[k]) || first(a.slots[o]) != f || a.slots[o].above_hud) continue;
 					if (on_move && !(o < before->size() && (*before)[o] > 0.05f)) continue;
 					const float *pa = a.slots[o].mat;
 					// (nor one the camera's move carried the pair before that's far off it now: scenery

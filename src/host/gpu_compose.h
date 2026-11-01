@@ -2,7 +2,7 @@
 // target texture the size of the picture, which is then shown as the picture drawn whole was.
 // Each part is uploaded only when it changed: the 2D once a game frame at most (at the arcade's
 // resolution), the 3D's changed rows for each picture. Nearest texels and a blend that keeps a
-// source pixel whole or leaves it out (KEY's top byte: 0xff) make the target the CPU's picture.
+// inverse-alpha source pixels (KEY's top byte: 0xff) make the target the CPU's picture.
 #pragma once
 #include "../machine/model1.h"
 #include "../gpu/gpu3d_shaders.h"
@@ -316,6 +316,8 @@ public:
 		image(model1::TEX_L4, aw + 2 * model1::PAD, ah + 2 * model1::PAD, 40);
 		image(model1::TEX_MID, aw, ah, 50);
 		image(model1::TEX_TOP, aw, ah, 80);
+		for (auto &c : px[model1::TEX_TOP])
+			if (c != model1::KEY) c |= (rnd() % 255) << 24;   // cockpit edges' fractional coverage
 		image(model1::TEX_SKY, 300, 20, 0);
 		image(model1::TEX_3D, w, h, 100);
 		auto boxes = [&](int n) {   // the 3D: boxes of colour on KEY

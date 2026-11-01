@@ -169,7 +169,7 @@ void model1::parts_composite(bitmap_rgb32 &out, uint64_t &key, uint64_t &gen, st
 			const uint32_t *src = &c.px.pix(y);
 			uint32_t *d = &made.pix(y);
 			for (int x = c.x0[y]; x < c.x1[y]; x++)
-				if (src[x] != KEY) d[x] = src[x];
+				if (src[x] != KEY) d[x] = blend_layer_pixel(src[x], d[x]);
 			const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
 			if (m_ext && m_wide_frame && !c.sides && el != KEY && er != KEY) {
 				int covered = 0;
@@ -221,7 +221,7 @@ uint32_t model1::compose_pixel(const gpu_parts &p, int x, int y, int upto)
 		const int v = int(std::floor(o.sy + (y + 0.5f - o.dy) * (o.sh / o.dh)));
 		if (u < 0 || v < 0 || u >= im.w || v >= im.h) continue;
 		const uint32_t t = im.px[size_t(v) * im.stride + u];
-		if (t != KEY) c = t & 0xffffff;
+		if (t != KEY) c = blend_layer_pixel(t, c) & 0xffffff;
 	}
 	return c;
 }

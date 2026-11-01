@@ -1936,7 +1936,13 @@ hold cockpit codes, `continue_sides` fills the extra columns. For each edge row 
 the edge column against the column 12 pixels inwards to find the slope of the line crossing
 there. Rows of even colour take the slope interpolated between the nearest measured rows. Each
 column further out is then the edge column skewed along those slopes, so the diagonal canopy
-struts and the steeper console lines carry on instead of stretching. Layers filled this way skip
+struts and the steeper console lines carry on instead of stretching. The generated sides use
+vertical area coverage at four horizontal subpixel positions over a quarter-pixel footprint,
+keeping the filtering light to match the original cockpit's sharpness while smoothing sloped colour boundaries
+and transparent edges without changing the original 496 columns. Coverage uses the compositor's
+inverse alpha, so transparent edges blend over the scene instead of acquiring black fringes;
+the CPU's whole-picture and parts paths preserve the same coverage as GPU composition.
+Layers filled this way skip
 the edge-colour "curtain" that otherwise fills the sides of wide opaque rows. The profile test
 continues a synthetic diagonal band.
 
@@ -2321,11 +2327,23 @@ inputs, which are recorded, so recordings made with it replay without it.
 **Esc → Display → LOD** defaults to Off (`lod = off`): ships, scenery, the Death Star's
 surface and every Star Destroyer keep their most detailed models at every distance. On
 restores the arcade's simpler distant models. The game plays the same either way.
+The post-game credits' scripted flypast uses a separate two-model switch at `0DDED0`;
+LOD Off keeps its detailed model too, without admitting objects beyond Arcade's distance limit.
 
 **Esc → Display → Draw distance** defaults to Full (`draw_distance = extended`): the
 Death Star's surface reaches further, and in the asteroid field asteroids, clusters of
 small rocks and Star Destroyers no longer pop in. Arcade draws what the cabinet does. Only the picture
 changes, so replays keep the choice.
+The ending's flypast also honours Full: its model-size cutoff and four explicit depth cutoffs
+are removed, while its view-frustum tests remain unchanged. Arcade retains all five limits.
+`make test-swa-ending` replays the complete-game recording into the credits on both CPU
+backends and checks the submitted models and cutoff results with all four setting combinations.
+
+`build/bin/swa build/swa --preview-credits` opens a credits preview. It fast-forwards the
+complete-game input recording from a cold boot, verifies its RAM checksum, then restores
+the current display settings (including LOD) and pauses at the ending. Press **P** to watch
+the credits or **Esc** to adjust the display. Preview sessions never write saves, rankings
+or settings. Packaged builds include the input recording; no ROM-derived state is bundled.
 
 Replay mode ignores existing battery/EEPROM saves and never writes saves or
 settings, including after manual play. It uses arcade mode, 4:3, 1x and whole-frame
@@ -2362,6 +2380,11 @@ features, not by the background picture or the regular 3D scene. This keeps the 
 in front of the photograph while preserving cockpit/radar features. `test-model1-video` checks
 this separation at 1x/2x and 4:3/16:9; `test-swa-video` also reaches the real name-entry screen
 and checks that the photograph does not cut holes in the letters. It also reproduces the
+falling initials at 4:3 and 16:9: above-HUD matrix slots are excluded from camera fitting and
+camera-based re-pairing, so the letters blend from their actual older poses instead of poses
+invented from the turning letter ring's motion. The test checks both interpolation phases,
+including the falling motion, without changing the game's animation.
+It also reproduces the
 destroyer-stage malformed object through real cabinet controls and verifies execution continues
 past the former crash. Object decoding bounds-checks texture and polygon accesses and reports
 invalid requests explicitly; it does not patch ROM execution or claim second-objective completion.
