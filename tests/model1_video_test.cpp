@@ -1304,13 +1304,13 @@ struct model1_video_test
 		if (native) assert(rec::fallback_count() == 0);
 	}
 
-	static void scenery_distance(const char *dir, bool smooth, bool lod)
+	static void scenery_distance(const char *dir, bool smooth, bool lod, const char *scenario = "alternate")
 	{
 		model1 m(load_regions(dir, game::id{ "vr" }));
 		m.set_smooth(smooth);
 		game::vr::set_lod(m, lod);
 		m.reset();
-		auto play = game::make_auto_play(game::id{ "vr" }, "alternate", 12345, true);
+		auto play = game::make_auto_play(game::id{ "vr" }, scenario, 12345, true);
 		assert(play);
 		using object_key = std::pair<uint32_t, uint32_t>;
 		std::set<object_key> drawn;
@@ -1362,13 +1362,21 @@ struct model1_video_test
 			for (size_t c = 0; c < inputs.pressed.size(); c++)
 				m.m_inputs[c] = uint8_t(~inputs.pressed[c]);
 			if (f == 3300) m.on_instruction = trace;
+			if (!*scenario && (f == 4000 || f == 4200 || f == 4400)) {
+				assert(m.work_ram()[0x1138] == 0x14);
+				const uint32_t player = m.read32(0x501320);
+				m.write16(player + 0x191, 1);
+				const uint32_t flags = f == 4000 ? 8 : f == 4200 ? 16 : 24;
+				m.write32(player, (m.read32(player) & ~24u) | flags);
+			}
 			m.run_frame();
+			if (smooth && f >= 3300) m.render_smooth(f - 0.5);
 			const auto error = play->check(f, m);
 			if (!error.empty()) fprintf(stderr, "%s\n", error.c_str());
 			assert(error.empty());
 		}
-		printf("Acropolis scenery (smooth %s, LOD %s): %d lists, %d incomplete, %d budget skips\n",
-			smooth ? "on" : "off", lod ? "on" : "off", checked, incomplete, budget_skips);
+		printf("VR %s scenery (smooth %s, LOD %s): %d lists, %d incomplete, %d budget skips\n",
+			scenario, smooth ? "on" : "off", lod ? "on" : "off", checked, incomplete, budget_skips);
 		assert(checked > 100 && incomplete == 0);
 		if (lod) assert(budget_skips > 0);
 		else assert(budget_skips == 0);
@@ -3462,7 +3470,9 @@ int main(int argc, char **argv)
 	}
 	if (argc > 2 && std::string(argv[2]) == "--scenery-distance") {
 		for (bool lod : { false, true })
-			for (bool smooth : { false, true }) model1_video_test::scenery_distance(argv[1], smooth, lod);
+			for (bool smooth : { false, true })
+				for (const char *scenario : { "", "alternate" })
+					model1_video_test::scenery_distance(argv[1], smooth, lod, scenario);
 		return 0;
 	}
 	if (argc > 2 && std::string(argv[2]) == "--logo-shading") {
@@ -3524,6 +3534,7 @@ int main(int argc, char **argv)
 		for (bool smooth : { false, true }) model1_video_test::crash_livery(argv[1], smooth);
 		for (bool lod : { false, true })
 			for (bool smooth : { false, true }) model1_video_test::scenery_distance(argv[1], smooth, lod);
+		for (bool smooth : { false, true }) model1_video_test::scenery_distance(argv[1], smooth, true, "");
 		model1_video_test::logo_shading(argv[1]);
 		model1_video_test::race_grid_hud(argv[1]);
 		model1_video_test::logo_handoff(argv[1]);

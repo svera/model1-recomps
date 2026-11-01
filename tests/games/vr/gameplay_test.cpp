@@ -236,7 +236,7 @@ static void scenery_lists()
 	state->lod = true;
 	assert(machine.program_rom() == original_rom);
 	for (bool lod : { false, true })
-	for (int budget : { 0, 10, 5000 })
+	for (int budget : { -10, 0, 10, 5000 })
 	for (int center = 0; center < 256; center++) {
 		state->lod = lod;
 		std::fill(ram.begin(), ram.end(), 0xcd);
@@ -265,7 +265,7 @@ static void scenery_lists()
 		assert(callbacks.matrix_objects(word).empty());
 		machine.cpu().pc_ref() = 0xff8500;
 		const auto objects = callbacks.matrix_objects(word);
-		const int submitted = lod ? std::min(n, budget / 10 + 1) : n;
+		const int submitted = lod ? std::clamp(budget / 10 + 1, 1, n) : n;
 		assert(objects.size() == size_t(256 - submitted));
 		std::array<bool, 256> seen{};
 		for (int i = 0; i < submitted; i++) seen[ram[0x1cc1 + i]] = true;
@@ -401,6 +401,7 @@ static void animated_scenery_settings()
 			assert(machine.read8(0x501a35) == 0);
 		}
 		machine.write32(0x5011b0, 1234);
+		for (bool pending : { false, true })
 		for (uint32_t caller : { 0xffd809u, 0xffd85au, 0xffd9e8u, 0xffda21u, 0xffda67u,
 			0xffdb49u, 0xffdb9au, 0xffdbd5u, 0xffb254u, 0xffb81cu, 0xffb859u, 0xffc235u, 0xffc251u,
 			0xffab97u, 0xffb72cu, 0xffddd4u, 0xffddebu, 0xffde6eu, 0xffdedcu, 0xffdf42u,
@@ -408,14 +409,16 @@ static void animated_scenery_settings()
 			machine.write32(0x500100, caller);
 			for (uint32_t pc : { 0xff84a2u, 0xff848au, 0xff8571u }) {
 				machine.cpu().pc_ref() = pc;
+				std::static_pointer_cast<game::vr::gameplay_state>(machine.game_state())->scenery_pending = pending;
 				const bool animated = (caller >= 0xffd809 && caller <= 0xffdbd5) ||
 					caller == 0xffb254 || caller == 0xffb81c || caller == 0xffb859 || caller == 0xffc235 ||
 					caller == 0xffc251 || caller == 0xffab97 || caller == 0xffb72c ||
 					caller == 0xffddd4 || caller == 0xffddeb || caller == 0xffde6e ||
 					caller == 0xffdedc || caller == 0xffdf42 || caller == 0xffd19c;
 				assert(machine.read32(0x5011b0) ==
-					(full && animated && pc != 0xff8571 ? 0x7fffffffu : 1234u));
-			}
+					(full && ((animated && pc != 0xff8571) ||
+						(pending && caller == 0xff846f && pc == 0xff84a2)) ? 0x7fffffffu : 1234u));
+		}
 		}
 	}
 }
