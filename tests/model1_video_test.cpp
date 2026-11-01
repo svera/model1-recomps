@@ -389,6 +389,116 @@ struct model1_video_test
 			aspect, lod ? "on" : "off", pictures, cuts, unblended, parts, worst);
 		assert(pictures > 2000 && parts > 10000 && cuts == 0 && unblended == 0 && worst < 0.1f);
 	}
+	// The final stage's tunnel mouth seen from the trench's end and on into the tunnel (TIME 140-129,
+	// 2:1): every part lies on the tunnel's axis, and the game re-turns its symmetric cross-sections a
+	// quarter turn now and then. Places on one line leave the camera's roll about it free: fitted half
+	// a turn or a quarter round, the parts were blended from there, the tunnel spun into a black,
+	// garbled screen; fitted with no roll, the camera's own roll was dropped and the tunnel stepped
+	// round at each list. Each part the camera's move carries must start its pair where the older
+	// list has a copy of its model, and no picture between may be far blacker than the list's own.
+	static void swa_tunnel_mouth(const char *dir)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(4.0f / 3);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		auto script = game::make_auto_play(title, "complete", 12345, false);
+		assert(script);
+		int pictures = 0, garbled = 0, pairs = 0, parts = 0, off = 0;
+		int last_pair = -1;
+		for (int f = 1; f <= 50900; f++) {
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			if (f == 49570) m.set_aspect(2.0f);
+			m.set_drawing(f >= 50566);
+			m.run_frame();
+			if (f < 50572) continue;
+			const int w = m.frame_w(), h = m.frame_h();
+			auto black = [&] {
+				int n = 0;
+				for (int y = h / 6; y < h / 2; y++)
+					for (int x = 0; x < w; x++) n += (m.frame().data()[size_t(y) * w + x] & 0xffffff) == 0;
+				return n * 100 / (w * h / 3);
+			};
+			const int shown = black();
+			for (double phase : { 0.25, 0.5, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				if (f < 50640) garbled += black() > shown + 25;
+				pictures++;
+				const auto &a = m.m_logic[0], &b = m.m_logic[1];
+				if (m.m_blend_cut || int(b.frame) == last_pair) continue;
+				last_pair = int(b.frame);
+				pairs++;
+				for (size_t i = 0; i < b.slots.size() && i < m.m_blend_ok.size(); i++) {
+					if (!m.m_blend_ok[i] || b.slots[i].polys.empty() || !(m.m_cam_res[i] >= 0 && m.m_cam_res[i] <= 0.02f)) continue;
+					const float *from = m.m_blend_from[i].data();
+					double best = INFINITY;
+					for (const auto &sa : a.slots) {
+						if (sa.polys.empty() || sa.polys[0] != b.slots[i].polys[0]) continue;
+						double d = 0, t = 0, la = 0, lf = 0;
+						for (int r = 9; r < 12; r++) d += (sa.mat[r] - from[r]) * (sa.mat[r] - from[r]);
+						for (int k = 0; k < 9; k++) t += sa.mat[k] * from[k], la += sa.mat[k] * sa.mat[k], lf += from[k] * from[k];
+						const double turn = std::acos(std::clamp((t / std::sqrt(la * lf / 9) - 1) / 2, -1.0, 1.0)) * 180 / M_PI;
+						best = std::min(best, 100 * std::sqrt(d) / std::max(std::fabs(double(sa.mat[11])), 200.0) + turn);
+					}
+					if (!std::isfinite(best)) continue;
+					parts++;
+					off += best > 3;   // (over 3 degrees, or 3% of its depth, from the older list's copy)
+				}
+			}
+		}
+		printf("SWA tunnel mouth: %d of %d pictures garbled; %d of %d carried parts over %d pairs started off the older list\n",
+			garbled, pictures, off, parts, pairs);
+		assert(pictures > 900 && garbled == 0 && pairs > 150 && parts > 3000 && off * 100 < parts);
+	}
+	// The Super Star Destroyer's core approach: the red scaffold overhead is the one still part,
+	// with the cockpit, its sights and the player's shots (chains of segments flying off from the
+	// eye) outnumbering it. Every 4th list lacks the flickering beams that otherwise outvote them:
+	// fitted to those parts, or voted a cut by them, each such pair was taken for a cut, the
+	// scaffold carried on past the list, then held a frame and leapt. No picture between the
+	// approach's two camera cuts and the core may be a cut, the scaffold blended in every one.
+	static void swa_core_scaffold(const char *dir)
+	{
+		const game::id title{ "swa" };
+		model1 m(load_regions(dir, title));
+		m.reset();
+		m.set_drawing(false);
+		m.set_smooth(true);
+		m.set_aspect(4.0f / 3);
+		m.set_edge_aa(false);
+		game::swa::set_lod(m, false);
+		game::swa::set_full_draw_distance(m, true);
+		auto script = game::make_auto_play(title, "recording", 12345, false);
+		assert(script);
+		int pictures = 0, cuts = 0, scaffold = 0, held = 0;
+		for (int f = 1; f <= 18200; f++) {
+			if (f == 14400) m.set_aspect(64.0f / 27);
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.set_drawing(f >= 18006);
+			m.run_frame();
+			if (f < 18012) continue;
+			for (double phase : { 0.25, 0.5, 0.75 }) {
+				m.render_smooth(f - 1 + phase);
+				pictures++;
+				cuts += m.m_blend_cut;
+				const auto &b = m.m_logic[1];
+				for (size_t i = 0; i < b.slots.size() && i < m.m_blend_ok.size(); i++)
+					if (!b.slots[i].polys.empty() && b.slots[i].polys[0] == 0x1095895) scaffold++, held += !m.m_blend_ok[i];
+			}
+		}
+		printf("SWA core scaffold: %d of %d pictures cut; scaffold unblended in %d of %d\n", cuts, pictures, held, scaffold);
+		assert(pictures > 500 && cuts == 0 && scaffold > 500 && held == 0);
+	}
 	// R2-D2 lowered into the X-wing (attract mode, before the hangar exit) rides with the camera:
 	// each pair must start his parts where the older list has them, not where world scenery would be.
 	static void swa_hangar_r2(const char *dir, float aspect)
@@ -3247,6 +3357,8 @@ int main(int argc, char **argv)
 	if (argc > 2 && std::string(argv[2]) == "--swa-tunnel") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_tunnel(argv[1], aspect);
 		model1_video_test::swa_tunnel_girders(argv[1]);
+		model1_video_test::swa_tunnel_mouth(argv[1]);
+		model1_video_test::swa_core_scaffold(argv[1]);
 		model1_video_test::swa_destroyer_distance(argv[1]);
 		return 0;
 	}
