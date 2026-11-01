@@ -852,6 +852,62 @@ MAME's V60 charges 8 cycles to every instruction, "just an average"; the 16 MHz 
 3.5 MIPS. The game profile now has `cpu_cycles_per_instruction`, applied to the per-line instruction
 budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and runs exactly as before.
 
+## VR's local multiplayer entry and disconnect handling
+
+Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.
+Player 2's Start on the second configured controller queues a join, which
+starts the linked cabinet at the next safe attract-mode point. The controller's device ID
+is retained with that request; if it disconnects while queued, the join is cancelled, and
+if it disconnects after joining, the second cabinet is saved and released and the first
+returns to standalone play. This avoids continuing to spend emulation and rendering time
+on an absent player. Keyboard-initiated joins remain available and are not tied to a
+controller's connection lifetime. `--split-screen` remains available to explicitly select
+split-screen layout behavior.
+
+The ROM-backed split-screen regression exercises both disconnect cases as well as a
+successful controller join, solo boot, deferred joins and reset/rejoin. It opens the local
+settings menu, changes antialiasing and verifies the setting is saved in the usual VR
+settings file. The menu exposes shared render scale, antialiasing, aspect ratio, frame rate,
+background filtering, scanline/CRT screen filters, CPU/GPU/Auto 3D rendering, fullscreen and
+sound levels. GPU rendering is attached to each cabinet separately and its test picture is checked
+against the CPU before use; unavailable or incorrect GPU rendering falls back to the CPU. The
+regression changes the screen filter and 3D renderer and checks both saved settings. Its Controls pages configure each player's
+controller assignment, keyboard keys, pad buttons and analog axes independently; Player 2's
+bindings persist in the second cabinet's settings file even before that cabinet is started, and
+the regression verifies that a saved Player 2 Start key is loaded on the next launch. It also
+checks that the removed `--two-cabinets` option is rejected.
+
+## VR's split-screen frame pacing
+
+The split-screen host originally polled with a fixed 1 ms delay, even though its work is scheduled
+against the game's 57.52 Hz frame rate and each cabinet's picture deadline. It now sleeps toward the
+earlier of those deadlines, in waits capped at 8 ms so input and window events remain responsive.
+Pausing removes the game-frame deadline but continues to schedule pictures. The opt-in `M1_PERF=1`
+report separates emulation, per-view rendering and composition/presentation costs, and records frame
+interval percentiles, late frames and time spent idle.
+
+To check the change, hidden-window runs used local VR ROMs, `--split-screen --scale 1` and
+`M1_QUIT_AFTER=600`, both with one cabinet and with a second cabinet joining at frame 10. Statistics
+reset on join so the second result reflects linked play rather than its boot pause. Repeated steady
+windows stayed near 57.5 fps: frame-interval p95 was about 17.5-18.2 ms solo and 17.8-18.0 ms
+joined, with no interval over 26 ms. Emulation p95 was about 1.8-2.2 ms solo and 3.6-3.8 ms joined,
+well below the 17.38 ms game-frame budget. Aggregate CPU time was similar to the previous polling
+loop, so the change improves deadline-based pacing without evidence of a CPU-time reduction.
+Hidden-window measurements are useful for comparing scheduling, but do not predict every
+display/GPU combination.
+
+The picture scheduler had a separate drift bug: assigning each new deadline from the current
+wake-up time accumulated scheduling delays. At 1x with antialiasing off, hidden-window runs
+presented about 57.4 pictures/s for a 60 FPS selection and 112-113 pictures/s for 120 FPS, even
+though game logic correctly remained near 57.52 Hz. Picture deadlines now advance from their
+previous scheduled time, skipping expired slots after overload instead of issuing catch-up
+renders. Both cabinets use the same picture-time snapshot after emulation. Deterministic
+regressions cover repeated late wakes at 30/60/120 FPS, early forced redraws and missed slots.
+Repeating the solo and joined runs produced steady-window rates of 59.9-60.0 and 120.0-120.1
+presentations/s respectively; the first joined window includes transition overhead and is
+excluded from that comparison. Performance reports now show presentations/s explicitly,
+separately from game-frame throughput.
+
 ## The TGP's rounding
 
 VR's attract race differed from a cabinet video: at the tunnel exit the green car (car 0) drove

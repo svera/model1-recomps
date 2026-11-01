@@ -43,10 +43,9 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 - Original arcade motion or smoother 60 / 120 FPS.
 - Full-detail models by default, with an optional LOD toggle for simpler distant models.
 - Keyboard and gamepad support, with customizable controls.
+- Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Saved settings and high scores.
 - Car color, language, difficulty, and course settings.
-
-**Single-player only.** Split screen, linked cabinets, and online multiplayer are not supported.
 
 ### Getting started
 
@@ -84,13 +83,24 @@ Pad buttons**. Coins are only needed in Arcade play style.
 
 Open the menu with **Esc** or **View / Select**:
 
-- **Display:** change sharpness, screen shape, fullscreen, and frame rate.
+- **Display:** change render scale, antialiasing, screen shape, background filtering, fullscreen, and frame rate.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** choose your car color, language, course, and difficulty.
 - **Sound:** adjust the audio levels.
 
 Higher graphics settings need a faster computer. If play feels slow, lower the render scale
 or frame rate.
+
+### Local multiplayer
+
+Virtua Racing starts in solo play and automatically supports a second local player. Connect
+a second controller and press its Start button to join split screen. If Player 2's controller
+disconnects, the game returns to solo play. The local session's **Esc / View** menu provides
+Display settings for render scale, antialiasing, CPU/GPU 3D rendering, aspect ratio, frame rate,
+background and CRT/scanline screen filters, and fullscreen, plus shared Sound settings. The GPU
+renderer is picture-checked and falls back to the CPU if unavailable or incorrect. These preferences
+are saved in the usual VR settings file and shared by both players. The Controls menu configures each player's controller,
+keyboard, pad buttons and analog axes separately; those bindings are saved for the next session.
 
 ### Screenshots
 

@@ -51,6 +51,21 @@ static void compose_checks(SDL_Renderer *renderer)
 
 static void split_screen_checks()
 {
+	for (int fps : {30, 60, 120}) {
+		const Uint64 period = 1000000000ull / fps;
+		const Uint64 start = 1000000000ull;
+		Uint64 deadline = next_cabinet_picture(0, start, fps);
+		assert(deadline == start + period);
+		assert(next_cabinet_picture(deadline, start + 1, fps) == deadline);
+		for (int frame = 1; frame <= fps * 10; frame++) {
+			deadline = next_cabinet_picture(deadline, deadline + 700000, fps);
+			assert(deadline == start + Uint64(frame + 1) * period);
+		}
+		const Uint64 late = deadline + 5 * period + period / 2;
+		const Uint64 next = next_cabinet_picture(deadline, late, fps);
+		assert(next == deadline + 6 * period);
+		assert(next > late && next - late <= period);
+	}
 	for (const auto size : {SDL_Point{120, 80}, SDL_Point{101, 81}, SDL_Point{1, 1}}) {
 		auto *surface = SDL_CreateSurface(size.x, size.y, SDL_PIXELFORMAT_XRGB8888);
 		assert(surface);
@@ -203,10 +218,8 @@ static void menu_checks(SDL_Window *window, SDL_Renderer *renderer)
 	auto *notice = overlay->GetElementById("notice");
 	assert(notice);
 	for (const char *text : {
-		"Player 2: press 2 or your controller's Start binding to join",
-		"Player 2 queued - waiting for player 1 to return to attract mode",
-		"Starting player 2 - linking cabinets, please wait...",
-		"Player 2: press < & > to join",
+		"Persistent gameplay notice",
+		"Layout-aware notice with symbols < & >",
 	}) {
 		assert(menu.set_notice(text));
 		assert(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
@@ -246,7 +259,7 @@ static void menu_checks(SDL_Window *window, SDL_Renderer *renderer)
 	for (const auto size : {SDL_Point{480, 720}, SDL_Point{1920, 540}}) {
 		assert(SDL_SetWindowSize(window, size.x, size.y));
 		assert(SDL_SyncWindow(window));
-		assert(menu.set_notice("Player 2 queued - waiting for player 1 to return to attract mode"));
+		assert(menu.set_notice("Persistent gameplay notice"));
 		menu.render();
 		int width = 0, height = 0;
 		assert(SDL_GetRenderOutputSize(renderer, &width, &height));
@@ -273,5 +286,5 @@ int main()
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
-	printf("Host graphics: split-screen pixels/layouts/letterboxing, persistent join notices, compose rounding boundaries, notice timing, menu pause and FPS coexistence passed\n");
+	printf("Host graphics: split-screen pixels/layouts/letterboxing, persistent notice overlay, compose rounding boundaries, notice timing, menu pause and FPS coexistence passed\n");
 }
