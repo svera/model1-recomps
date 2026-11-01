@@ -109,7 +109,8 @@ void set_lod(model1 &machine, bool enabled);
 void set_full_draw_distance(model1 &machine, bool full);
 void set_wide_cockpit(model1 &machine, bool wide);
 // Widescreen: continues the art at each edge of a layer's middle 496 columns out across its `ext`
-// columns each side, every line along its own slope at the edge (pixels as gameplay layer_sides).
+// columns each side, every line along its own slope at the edge, with subpixel coverage.
+// Pixels use inverse alpha (0 opaque, 255 transparent), as gameplay layer_sides.
 // False when there is nothing to continue.
 bool continue_sides(uint32_t *pixels, int width, int height, int ext);
 // The cells the far layer adds with Full, nearest first: past the reach of its heading's list

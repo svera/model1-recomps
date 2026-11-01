@@ -167,6 +167,7 @@ struct gameplay_callbacks
 	// Widescreen: a tile layer (non-opaque) as drawn this game frame, `ext` columns each side of the
 	// arcade's 496 (`width` = 496 + 2 * ext, pixels 0x00rrggbb, 0xff000000 for nothing). The game may
 	// fill the sides, which are otherwise empty; true when it did.
+	// Side pixels may use inverse alpha (0 opaque, 255 transparent) for edge coverage.
 	std::function<bool(int layer, uint32_t *pixels, int width, int height, int ext)> layer_sides;
 };
 

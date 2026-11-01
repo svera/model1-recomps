@@ -746,6 +746,15 @@ std::string find_assets()
 	return "assets";
 }
 
+std::string credits_recording_path()
+{
+	const std::filesystem::path assets = find_assets();
+	const auto packaged = assets / "games/swa/manual-complete-game.inputs";
+	std::error_code ec;
+	if (std::filesystem::exists(packaged, ec)) return packaged.string();
+	return (assets / "../tests/games/swa/recordings/manual-complete-game.inputs").string();
+}
+
 void set_window_icon(SDL_Window *win)
 {
 	int w = 0, h = 0, comp = 0;
@@ -1391,7 +1400,7 @@ int main(int argc, char **argv)
 #else
 	bool interp = rec_table_size == 0;   // (a build without the game's recompiled C++ has only the interpreter)
 #endif
-	bool arg_arcade = false;
+	bool arg_arcade = false, preview_credits = false;
 	bool two_cabinets = false;
 	bool split_screen = false, split_layout_set = false;
 	cabinet_layout layout = cabinet_layout::side_by_side;
@@ -1430,6 +1439,7 @@ int main(int argc, char **argv)
 		else if (a.rfind("--roms=", 0) == 0) arg_roms = a.substr(7);
 		else if (a == "--interp") interp = true;      // MAME's V60 interpreter instead of the recompiled code
 		else if (a == "--arcade") arg_arcade = true;  // boot screen, credits and coins as on the cabinet
+		else if (a == "--preview-credits") preview_credits = true;
 		else if (a == "--replay-inputs" && i + 1 < argc) replay_path = argv[++i];
 		else if (a == "--record-inputs" && i + 1 < argc) record_path = argv[++i];
 		else if (a == "--replay-until" && i + 1 < argc) {
@@ -1451,6 +1461,13 @@ int main(int argc, char **argv)
 			if (!std::filesystem::is_directory(a, ec)) { fprintf(stderr, "%s: no such folder (options start with --)\n", a.c_str()); return 2; }
 			dir = a;
 		}
+	}
+	if (preview_credits) {
+		if (host_game().name != "swa" || !replay_path.empty() || !record_path.empty() || replay_until > 0) {
+			fprintf(stderr, "--preview-credits requires SWA without input replay or recording options\n");
+			return 2;
+		}
+		replay_path = credits_recording_path();
 	}
 	const bool replay_mode = !replay_path.empty();
 	if ((split_screen && two_cabinets) || (split_layout_set && !split_screen)) {
@@ -1497,7 +1514,9 @@ int main(int argc, char **argv)
 			return 2;
 		}
 		if (const auto error = input_replay::load(replay_path, host_game(), replay); !error.empty()) {
-			fprintf(stderr, "input replay: %s\n", error.c_str()); return 2;
+			fprintf(stderr, "input replay: %s\n", error.c_str());
+			if (preview_credits) message_box(SDL_MESSAGEBOX_ERROR, host_title(), error);
+			return 2;
 		}
 		if (replay_until > 0) {
 			if (size_t(replay_until) >= replay.frames.size()) {
@@ -1601,7 +1620,7 @@ int main(int argc, char **argv)
 	if (arg_aspect >= 0) cfg.aspect = arg_aspect;
 	if (arg_full >= 0) cfg.fullscreen = arg_full;
 	if (arg_arcade) cfg.arcade = true;
-	if (replay_mode) {
+	if (replay_mode && !preview_credits) {
 		cfg.arcade = true;
 		cfg.aspect = 1;
 		cfg.scale = 1;
@@ -1610,6 +1629,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "input replay: cold boot, arcade 4:3 at 1x; saves isolated; manual handoff after %zu frames\n", replay.frames.size());
 	}
 	g_pc_mode = !cfg.arcade;
+	if (preview_credits) g_pc_mode = false;
 	// the 3D's renderer: M1_3D=cpu|gpu|auto (tests) over the setting
 	if (const char *r = getenv("M1_3D")) cfg.renderer3d = !strcmp(r, "cpu") ? 0 : !strcmp(r, "gpu") ? 1 : 2;
 #if M1_GPU3D_METAL
@@ -1724,7 +1744,7 @@ int main(int argc, char **argv)
 	game_part.play_style_changed();
 	boot();
 	if (link.failed()) return 1;
-	if (game_part.booted()) boot();   // (a setting the game reads at boot was put back)
+	if (!replay_mode && game_part.booted()) boot();   // replays must start at frame zero, without operator-setting changes
 	if (link.failed()) return 1;
 
 	// Video is a must (with a message if it fails: a player's build has no console); sound and
@@ -3023,6 +3043,12 @@ int main(int argc, char **argv)
 		return true;
 	};
 	if (replay_mode) {
+		const float preview_aspect = m.aspect();
+		const bool preview_smooth = m.smooth();
+		if (preview_credits) {
+			m.set_aspect(4.0f / 3);
+			m.set_smooth(false);
+		}
 		auto replay_to_handoff = [&] {
 			SDL_SetWindowTitle(win, "SWA: replaying inputs to manual handoff...");
 			const uint64_t replay_start = SDL_GetTicksNS();
@@ -3055,6 +3081,17 @@ int main(int argc, char **argv)
 				message_box(SDL_MESSAGEBOX_ERROR, host_title(), error);
 				return false;
 			}
+			if (preview_credits) {
+				if (m.read8(0x40f008) != 13 || m.read8(0x40f009) != 9) {
+					message_box(SDL_MESSAGEBOX_ERROR, host_title(), "Credits preview: the verified recording did not reach the ending.");
+					fprintf(stderr, "credits preview: ending sequence missing\n");
+					return false;
+				}
+				game_ctx.replay = false;
+				game_part.start(game_ctx);
+				m.set_aspect(preview_aspect);
+				m.set_smooth(preview_smooth);
+			}
 			m.set_drawing(true);
 			m.redraw();
 			m.smooth_cut();
@@ -3064,7 +3101,8 @@ int main(int argc, char **argv)
 			for (auto &port : m.m_inputs) port = 0xff;
 			pstate[0] = pstate[1] = pad_state{};
 			resume_clock();
-			SDL_SetWindowTitle(win, "SWA: manual handoff paused - P to play");
+			SDL_SetWindowTitle(win, preview_credits ? "SWA: credits preview - P to play, Esc for display settings" :
+				"SWA: manual handoff paused - P to play");
 			fprintf(stderr, "input replay: %s %zu frames, RAM hash %016llx in %.1f s; paused for manual control (P to play)\n",
 				replay_until < 0 ? "verified" : "replayed the first", replay.frames.size(), (unsigned long long)actual,
 				double(SDL_GetTicksNS() - replay_start) / 1e9);

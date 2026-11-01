@@ -863,7 +863,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			if (c == KEY) continue;
 			for (int dy = 0; dy < s; dy++) {
 				uint32_t *d = &bitmap.pix(y * s + dy, x * s);
-				for (int dx = 0; dx < s; dx++) d[dx] = c;
+				for (int dx = 0; dx < s; dx++) d[dx] = blend_layer_pixel(c, d[dx]);
 			}
 		}
 		// Widescreen: a row this layer covers from edge to edge is a curtain (the black that hides

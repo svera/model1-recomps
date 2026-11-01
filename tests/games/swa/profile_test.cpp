@@ -118,6 +118,25 @@ int main()
 	assert(gameplay.wide_scene(0, false));
 	m.nvram()[0xf783] = 0;
 	auto state = std::static_pointer_cast<gameplay_state>(gameplay.state);
+	for (bool lod : { false, true })
+		for (bool full : { false, true }) {
+			state->lod = lod;
+			state->full_distance = full;
+			for (uint32_t measure : { 0u, 0x6fffu, 0x7000u, 0xc7ffu, 0xc800u, 0x13fffu, 0x14000u, 0x14001u }) {
+				const uint32_t distance = full ? std::min(measure, 0x13fffu) : measure;
+				assert(gameplay.copro_result(0xdded0, measure) == (!lod && distance < 0x14000 ? 0 : distance));
+				assert(gameplay.copro_result(0xdded1, measure) == measure);
+			}
+			for (uint32_t pc : { 0xdde54u, 0xddf87u, 0xde017u, 0xde0a7u })
+				for (float distance : { -32768.0f, -1.0f, 0.0f, 1.0f, 32768.0f }) {
+					const uint32_t value = std::bit_cast<uint32_t>(distance);
+					assert(gameplay.copro_result(pc, value) == (full && distance >= 0 ? std::bit_cast<uint32_t>(-1.0f) : value));
+					assert(gameplay.copro_result(pc + 1, value) == value);
+				}
+			for (uint32_t pc : { 0xdde24u, 0xddea6u, 0xddf57u, 0xddfe7u, 0xde077u })
+				assert(gameplay.copro_result(pc, 0xffffffff) == 0xffffffff);   // out of view stays culled
+		}
+	state->full_distance = false;
 	m.cpu().set_reg(25, 0x408000);
 	const auto prepare_frame = [&] { gameplay.frame_begin(); };
 	m.nvram()[0xf008] = 2;
@@ -250,12 +269,13 @@ int main()
 	}
 	{
 		// widescreen cockpit: a diagonal band at the left edge carries on outwards along its slope
-		constexpr uint32_t KEY = 0xff000000, WHITE = 0xffffffff;
+		constexpr uint32_t KEY = 0xff000000, WHITE = 0x00ffffff;
 		constexpr int EXT = 83, W = 496 + 2 * EXT, H = 384;
 		std::vector<uint32_t> px(size_t(W) * H, KEY);
 		auto band = [](float x) { return 150.0f + 0.5f * x; };   // rows down going inwards
 		for (int x = EXT; x < EXT + 200; x++)
 			for (int y = int(band(float(x - EXT))); y < int(band(float(x - EXT))) + 4; y++) px[size_t(y) * W + x] = WHITE;
+		const auto original = px;
 		assert(game::swa::continue_sides(px.data(), W, H, EXT));
 		for (int d : { 1, 40, EXT }) {
 			const int x = EXT - d, mid = int(band(float(-d))) + 2;
@@ -263,7 +283,43 @@ int main()
 			assert(px[size_t(mid + 10) * W + x] != WHITE && px[size_t(mid - 10) * W + x] != WHITE);
 		}
 		for (int y = 0; y < H; y++)
+			for (int x = EXT; x < EXT + 496; x++) assert(px[size_t(y) * W + x] == original[size_t(y) * W + x]);
+		int softened = 0;
+		for (int x = 0; x < EXT; x++) {
+			int opacity = 0;
+			for (int y = 0; y < H; y++) {
+				const uint32_t c = px[size_t(y) * W + x];
+				opacity += 255 - (c >> 24);
+				if (c == KEY) continue;
+				assert((c & 0xffffff) == WHITE);   // coverage, not black fringes
+				softened += (c >> 24) > 0;
+			}
+			assert(std::abs(opacity - 4 * 255) <= 2);
+		}
+		assert(softened > EXT);
+		// The narrower filter leaves only a faint fringe beside an aligned diagonal edge.
+		assert((px[size_t(129) * W + EXT - 40] >> 24) == 251);
+		for (int y = 0; y < H; y++)
 			for (int x = EXT + 496; x < W; x++) assert(px[size_t(y) * W + x] == KEY);
+		std::vector<uint32_t> mirrored(size_t(W) * H, KEY);
+		for (int y = 0; y < H; y++)
+			for (int x = EXT; x < EXT + 496; x++) mirrored[size_t(y) * W + W - 1 - x] = original[size_t(y) * W + x];
+		assert(game::swa::continue_sides(mirrored.data(), W, H, EXT));
+		for (int y = 0; y < H; y++)
+			for (int x = 0; x < EXT; x++) assert(px[size_t(y) * W + x] == mirrored[size_t(y) * W + W - 1 - x]);
+		std::vector<uint32_t> opaque(size_t(W) * H, 0x000000ff);
+		for (int y = 0; y < H; y++)
+			for (int x = EXT; x < EXT + 496; x++)
+				if (original[size_t(y) * W + x] == WHITE) opaque[size_t(y) * W + x] = WHITE;
+		assert(game::swa::continue_sides(opaque.data(), W, H, EXT));
+		int mixed = 0;
+		for (int x = 0; x < EXT; x++)
+			for (int y = 100; y < 200; y++) {
+				const uint32_t c = opaque[size_t(y) * W + x];
+				assert((c >> 24) == 0 && (c & 255) == 255);
+				mixed += c != WHITE && c != 0x000000ff;
+			}
+		assert(mixed > EXT);
 		std::vector<uint32_t> empty(size_t(W) * H, KEY);
 		assert(!game::swa::continue_sides(empty.data(), W, H, EXT));
 		assert(!game::swa::continue_sides(px.data(), 496, H, 0));

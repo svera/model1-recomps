@@ -52,11 +52,15 @@ test-swa-recording: $(BIN)/swa_recording_test swa-regions
 
 test-swa-video: $(BIN)/model1_video_test swa-regions
 	$(BIN)/model1_video_test build/swa --swa-priority
+	$(BIN)/model1_video_test build/swa --swa-name-fall
 	$(BIN)/model1_video_test build/swa --swa-object-bounds
 	$(BIN)/model1_video_test build/swa --swa-tunnel
 	$(BIN)/model1_video_test build/swa --swa-ships
 
+test-swa-ending: $(BIN)/model1_video_test swa-regions
+	$(BIN)/model1_video_test build/swa --swa-ending
+
 test-swa-wrap: $(BIN)/model1_video_test swa-regions
 	$(BIN)/model1_video_test build/swa --swa-wrap
 
-.PHONY: test-swa-profile test-swa-romset test-swa-boot test-swa-controls test-swa-dsb test-swa-gameplay test-swa-recording test-swa-video test-swa-wrap
+.PHONY: test-swa-profile test-swa-romset test-swa-boot test-swa-controls test-swa-dsb test-swa-gameplay test-swa-recording test-swa-video test-swa-wrap test-swa-ending
