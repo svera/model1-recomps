@@ -78,8 +78,8 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 			visit(record, polygon);
 		}
 	};
-	// FF84A2 tests the cumulative budget before each cell, not each object.
-	// Selected cells after the budget is exhausted still need host-only geometry.
+	// FF84A2 tests the cumulative budget before each cell, not each object. Full distance
+	// always admits the first cell to supply this matrix, even if cars exhausted the budget.
 	std::array<bool, 256> submitted{};
 	uint32_t consumed = bus.read32(0x5011a0);
 	const uint32_t budget = bus.read32(0x5011b0);
@@ -87,7 +87,7 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 	const auto &ram = machine.work_ram();
 	for (int i = 0; i < ram[SCENERY_COUNT]; i++) {
 		const int cell = ram[SCENERY_COUNT + 1 + i];
-		if (!unlimited && int32_t(consumed) > int32_t(budget)) continue;
+		if (i && !unlimited && int32_t(consumed) > int32_t(budget)) continue;
 		submitted[cell] = true;
 		visit_cell(cell, [&](uint32_t record, uint32_t) { consumed += bus.read32(record + 8); });
 	}
@@ -208,6 +208,10 @@ gameplay_callbacks create_gameplay(model1 &machine)
 			if (!state->lod) return 0x7fffffffu;
 			if (state->extended_draw_distance) {
 				const uint32_t caller = machine.read32(machine.cpu().reg(31));
+				// Without one static matrix, no renderer-only track can be attached. Admit
+				// only the first cell; later cells still use the arcade's remaining budget.
+				if (pc == 0xff84a2 && caller == 0xff846f && state->scenery_pending)
+					return 0x7fffffffu;
 				if (caller == 0xffd809 || caller == 0xffd85a || caller == 0xffd9e8 ||
 					caller == 0xffda21 || caller == 0xffda67 || caller == 0xffdb49 ||
 					caller == 0xffdb9a || caller == 0xffdbd5 || caller == 0xffb254 ||

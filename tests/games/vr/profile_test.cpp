@@ -6,7 +6,10 @@
 #include <string>
 #include <cassert>
 
-static void keyboard_medium(const char *dir)
+using screen = game::vr::menu_steering::screen;
+
+// Taps on course selection: the game's own wheel reading is the host's formula, and each tap is one course.
+static void pad_courses(const char *dir)
 {
 	model1 m(load_regions(dir, game::vr::ID));
 	m.set_smooth(false);
@@ -14,57 +17,140 @@ static void keyboard_medium(const char *dir)
 	game::vr::menu_steering wheel;
 	auto play = game::make_auto_play(game::vr::ID, "intermediate", 12345, true);
 	assert(play);
-	int held = 0, released = 0;
+	int selecting_frames = 0, checks = 0;
 	bool raced = false;
 	for (int f = 1; f <= 4500; f++) {
 		const auto input = play->frame(f);
 		const bool selecting = m.work_ram()[0x1138] == 0x10 && m.camera() == 0x502150;
-		const bool right = selecting && held < 48;
-		const uint8_t value = wheel.update(selecting, false, right, 0x80);
-		if (right) held++;
-		else if (selecting && held == 48) {
-			assert(value == 0xb0);
-			released++;
-		}
+		const int s = selecting ? selecting_frames++ : -1;
+		// right, right (Expert), then left (Medium), which the script confirms
+		const bool right = s == 2 || s == 4, left = s == 14;
+		const uint8_t value = wheel.update(selecting ? screen::course : screen::none, left, right, 0x80);
 		assert(m.set_analog_input(0, value));
 		for (size_t c = 1; c < input.analog.size(); c++)
+			if (input.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(input.analog[c])));
+		for (int c = 0; c < 3; c++) m.m_inputs[c] = uint8_t(~input.pressed[c]);
+		m.run_frame();
+		if (s == 0 || s == 12 || s == 30) {
+			assert(int32_t(m.read32(0x501060)) == game::vr::menu_steering::calibrated(value));
+			assert(int(m.read32(0x501940) & 0xffff) == (s == 0 ? 0 : s == 12 ? 2 : 1));
+			checks++;
+		}
+		const auto error = play->check(f, m);
+		if (!error.empty()) fprintf(stderr, "%s\n", error.c_str());
+		assert(error.empty());
+		if (m.work_ram()[0x1138] == 0x14) raced = true;
+	}
+	assert(checks == 3 && raced);
+	printf("VR pad: one tap per course on course selection, Medium confirmed into race\n");
+}
+
+// Initials typed with taps: qualifying's race, then SDK entered with the cursor (its own checks).
+static void pad_initials(const char *dir)
+{
+	model1 m(load_regions(dir, game::vr::ID));
+	m.set_smooth(false);
+	m.reset();
+	game::vr::menu_steering wheel;
+	auto play = game::make_auto_play(game::vr::ID, "qualifying", 12345, true);
+	assert(play);
+	constexpr int target[3]{ 'S' - 'A', 'D' - 'A', 'K' - 'A' };
+	int taps = 0;
+	bool tapped = false;
+	uint8_t last = 0x80;
+	for (int f = 1; f <= play->min_frames(); f++) {
+		auto input = play->frame(f, m);
+		const bool initials = m.work_ram()[0x1138] == 0x1e && m.read32(0x5018fc) != 0;
+		if (initials) {
+			const int letter = game::vr::menu_steering::letter(last);
+			const uint32_t confirmed = m.read32(0x501910);
+			const int want = target[std::min(confirmed, 2u)];
+			const bool tap = !tapped && letter != want;
+			tapped = tap;
+			taps += tap;
+			input.analog[0] = last = wheel.update(screen::initials, tap && want < letter, tap && want > letter, 0x80);
+		}
+		for (size_t c = 0; c < input.analog.size(); c++)
 			if (input.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(input.analog[c])));
 		for (int c = 0; c < 3; c++) m.m_inputs[c] = uint8_t(~input.pressed[c]);
 		m.run_frame();
 		const auto error = play->check(f, m);
 		if (!error.empty()) fprintf(stderr, "%s\n", error.c_str());
 		assert(error.empty());
-		if (m.work_ram()[0x1138] == 0x14) raced = true;
 	}
-	assert(held == 48 && released > 10 && raced);
-	printf("VR keyboard: Medium selected with Right, retained on release, and confirmed into race\n");
+	const auto error = play->finish();
+	if (!error.empty()) fprintf(stderr, "%s\n", error.c_str());
+	assert(error.empty());
+	assert(taps == 3 + 15 + 7);   // P (the stick's center) to S, D, K
+	printf("VR pad: SDK entered one letter per tap and saved in the rankings\n");
 }
 
 int main(int argc, char **argv)
 {
+	using wheel_t = game::vr::menu_steering;
 	game::vr::menu_steering wheel;
-	assert(wheel.update(false, true, false, 128) == 0);
-	assert(wheel.update(false, false, true, 128) == 255);
-	assert(wheel.update(false, false, false, 128) == 128);
-	assert(wheel.update(true, false, true, 128) == 129);
-	assert(wheel.update(true, false, false, 128) == 129);
-	assert(wheel.update(true, true, true, 128) == 129);
-	assert(wheel.update(true, true, false, 128) == 128);
-	for (int value = 127; value >= 0; value--)
-		assert(wheel.update(true, true, false, 128) == value);
-	assert(wheel.update(true, true, false, 128) == 0);
-	assert(wheel.update(true, false, false, 128) == 0);
-	for (int value = 1; value <= 255; value++)
-		assert(wheel.update(true, false, true, 128) == value);
-	assert(wheel.update(true, false, true, 128) == 255);
-	assert(wheel.update(true, false, false, 128) == 255);
-	assert(wheel.update(true, false, false, 100) == 100);
-	assert(wheel.update(true, false, false, 128) == 128);
-	assert(wheel.update(true, true, false, 100) == 99);
-	assert(wheel.update(false, false, false, 128) == 128);
-	assert(wheel.update(true, false, false, 128) == 128);
-	assert(wheel.update(true, true, false, 128) == 127);
-	if (argc > 1) keyboard_medium(argv[1]);
+	// racing: the keys steer fully, the stick passes through
+	assert(wheel.update(screen::none, true, false, 128) == 0);
+	assert(wheel.update(screen::none, false, true, 128) == 255);
+	for (int analog = 0; analog <= 255; analog++)
+		assert(wheel.update(screen::none, false, false, uint8_t(analog)) == analog);
+	// the ROM's mapping (FE6776, FC26C8, FC488A); SDK as the qualifying script enters it
+	assert(wheel_t::calibrated(0x80) == 0 && wheel_t::calibrated(0x85) == 0 && wheel_t::calibrated(0x86) == 1);
+	assert(wheel_t::calibrated(0) == -127 && wheel_t::calibrated(255) == 127);
+	assert(wheel_t::letter(148) == 'S' - 'A' && wheel_t::letter(68) == 'D' - 'A' && wheel_t::letter(100) == 'K' - 'A');
+	assert(wheel_t::course(0x80) == 0 && wheel_t::course(0xb0) == 1 && wheel_t::course(0xe0) == 2);
+	for (auto s : { screen::course, screen::initials })
+		for (int i = 0; i < wheel_t::choices(s); i++) {
+			const uint8_t w = wheel_t::wheel_for(s, i);
+			assert(wheel_t::choice(s, w) == i);
+			// the middle of the choice (the center for the centered stick's): a step either way keeps it
+			assert(w == 0x80 || wheel_t::choice(s, 0x80) != i);
+			assert(wheel_t::choice(s, w - 1) == i && wheel_t::choice(s, w + 1) == i);
+		}
+
+	// courses: from Beginner (the centered stick's), one tap a course, no further than the last
+	auto course = [&](bool left, bool right, uint8_t analog = 128) {
+		return wheel_t::course(wheel.update(screen::course, left, right, analog));
+	};
+	assert(course(false, false) == 0);
+	assert(course(false, true) == 1);
+	assert(course(false, true) == 1);   // held: no repeat yet
+	assert(course(false, false) == 1);  // released: kept
+	assert(course(false, true) == 2);
+	assert(course(false, false) == 2);
+	assert(course(false, true) == 2);   // the last
+	assert(course(false, false) == 2);
+	assert(course(true, false) == 1);   // straight back: no waiting out a wheel position
+	assert(course(false, false) == 1);
+	assert(course(true, true) == 1);    // both: nothing
+	// the stick: directions past a quarter, drift ignored
+	for (int analog = 0x60; analog <= 0xa0; analog++) assert(course(false, false, uint8_t(analog)) == 1);
+	assert(course(false, false, 0xa1) == 2);
+	assert(course(false, false, 0x80) == 2);
+	assert(course(false, false, 0x5f) == 1);
+	assert(course(false, true, 0x00) == 2);   // a new direction is a new tap; the D-pad wins
+	assert(course(false, false) == 2);
+
+	// initials: a new screen starts at the centered stick's letter (P); holding repeats
+	auto letter = [&](bool left, bool right) { return wheel_t::letter(wheel.update(screen::initials, left, right, 128)); };
+	assert(wheel.update(screen::none, false, false, 128) == 128);
+	assert(letter(false, false) == 'P' - 'A');
+	assert(letter(false, true) == 'Q' - 'A');
+	for (int f = 1; f < wheel_t::REPEAT_DELAY; f++) assert(letter(false, true) == 'Q' - 'A');
+	assert(letter(false, true) == 'R' - 'A');
+	for (int f = 1; f < wheel_t::REPEAT_EVERY; f++) assert(letter(false, true) == 'R' - 'A');
+	assert(letter(false, true) == 'S' - 'A');
+	assert(letter(false, false) == 'S' - 'A');
+	for (int i = 0; i < 40; i++) letter(i % 2 == 0, false);   // tapped past the start
+	assert(letter(false, false) == 0);
+	for (int i = 0; i < 80; i++) letter(false, i % 2 == 0);   // and past the end
+	assert(letter(false, false) == 28);
+	// back on a course, its own choice again
+	assert(course(false, false) == 0);
+	if (argc > 1) {
+		pad_courses(argv[1]);
+		pad_initials(argv[1]);
+	}
 
 	const auto &vr = game::get(game::vr::ID);
 	assert(vr.title.name == "vr");

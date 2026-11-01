@@ -653,6 +653,12 @@ per-cell budget check, including each object's cost in the third record word, an
 selected cells too. Otherwise nearby buildings disappear when they enter the arcade's selection,
 then pop back in when the budget permits them.
 
+With Full distance and LOD enabled, cars and impact models can exhaust the budget before the
+first scenery cell (notably on the Beginner countdown). Skipping every cell also removes the matrix
+needed for the host-only track, so Full admits the first cell at `FF84A2` while scenery is pending.
+The host accounts for that cell as submitted and fills in the rest. Later cells retain their normal
+budget checks; Arcade distance, collision masks, and the stored budget are unchanged.
+
 The shared renderer draws these objects with that matrix and its material/light state. Interpolated
 frames snapshot the extra objects with their matrix slot, so they use the same camera interpolation
 as the world. Additional geometry has its own depth-sort accumulator, leaving the original objects'
@@ -664,9 +670,11 @@ The desktop's Display > Draw distance choice defaults to Full, saves the choice 
 the next list without restarting. Updated regression assertions cover all 256 camera cells,
 nearest-first additional objects, unchanged ROM/RAM and Arcade budgets, and CPU/register equality
 between distance modes during real-ROM runs. The ROM-free test checks budgets that stop after the
-first cell, exactly at a cell boundary, and beyond the whole selected list. With local ROMs,
-`build/bin/model1_video_test build/vr --scenery-distance` checks the Acropolis grid and race start
-with smooth motion on and off: every course-table object must be submitted exactly once, including
+first cell, exactly at a cell boundary, beyond the whole selected list, and a budget already exhausted
+before scenery begins. With local ROMs,
+`build/bin/model1_video_test build/vr --scenery-distance` checks the Beginner and Acropolis grids and
+race starts, including the Beginner impact models, with LOD and smooth motion on and off:
+every course-table object must be submitted exactly once, including
 objects from cells skipped by the arcade's budget. This is an automated coverage check, not visual
 verification.
 
