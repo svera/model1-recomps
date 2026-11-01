@@ -530,6 +530,27 @@ The AI wrote nearly all the code. A person decided what was right.
     turn from the still models' own *axes* (a still model's axes turn exactly as the camera does), with the shift
     they agree on. It is kept when it carries at least as many still models as the fitted one did, and the
     depth-weighted refit is skipped then.
+  - **The final stage's tunnel mouth garbled (TIME 140–136, after the Death Star trench).** Flying out of the
+    trench, the view is the tunnel's entrance in black space, every part on the tunnel's axis. Places on one line
+    leave the camera's roll about that line free, so the fitted move came out rolled half a turn (or with the line
+    flipped) while the camera turned under 2 degrees. Each part was blended from there, and the tunnel spun into a
+    black, garbled screen in the pictures between lists. For places on a line the move is now built directly: the
+    least turn taking the line's older direction onto its newer one, then the roll about it that the parts' own
+    axes make (they turn exactly as the camera does). The game also re-turns the tunnel's symmetric cross-sections a
+    quarter turn now and then, every part at once; when the axes' roll is over 10 degrees off the camera's last
+    move, that move's roll is taken instead. (A first fix took the least roll, which dropped the camera's real roll:
+    whole pairs of parts started about 6 degrees off the older list, and the tunnel stepped round at each list.)
+  - **The red scaffold juddered in the Super Star Destroyer's core approach.** Overhead is one huge still part,
+    the scaffold. Near the eye are two dozen parts that ride with the camera (the cockpit, its sights) and the
+    player's shots, chains of 8 segments flying off from the cannon. Every fourth list lacks the flickering yellow
+    beams, which otherwise outnumber them. Then the fit was the shots' or the cockpit's, every part was off it,
+    and the pair was a cut: the scaffold carried on past the list, then stood a frame and leapt, every 8 frames.
+    Three changes fix it. A part the camera's last move would carry over 30% of its distance from the eye, but
+    that moved under a quarter of that, rides with the camera: it's left out of the fit and blends by its own
+    places, and it never votes for a cut. The still models' axes (above) now also give the move when the fit kept
+    no still model on it, if most of them agree, and any still model's axes may give the turn (the pulsing beams'
+    matrices aren't pure turns). When those axes alone give the move, its size is measured by the scaffold's
+    distance from the eye, not its depth: its origin crosses the camera's plane 19,500 units overhead.
 
   The harness's recorded run leaves the tunnel at 21:9, because the wide view culls differently and the flight
   diverges. So the checks fly it at 4:3 and switch to 21:9 at frame 14400, keeping the recorded inputs. Every
@@ -539,7 +560,13 @@ The AI wrote nearly all the code. A person decided what was right.
   eye-crossing rule off (4,731,490 pixels lost over 693 pictures with the first fix's range, 0 now). It also checks
   that no tunnel model is passed to the step closing (23,142 were with the tunnel among the step models). A third
   check flies on to the girders at 21:9 and asserts that every blended pair starts the girder exactly where the
-  older list has it (48 of 161 pairs were off before, by up to 2.4% of its distance; none now).
+  older list has it (48 of 161 pairs were off before, by up to 2.4% of its distance; none now). A fourth replays
+  the complete game through the final stage's tunnel mouth into the tunnel at 2:1. It counts pictures between
+  lists far blacker than the list's own (36 of 987 before, none now) and parts on the camera's move that start a
+  pair over 3 degrees or 3% of their depth from the older list's copy (3,870 of 4,326 before, 441 of 4,300 with
+  the least-roll fix, 14 of 4,550 now). A fifth replays the recorded run to the Super Star Destroyer's core and
+  asserts that no picture of the approach is a cut and that the scaffold is blended in every one (114 of 567
+  pictures were cuts before; none now).
 - **A crash at exit on Linux** → a widescreen write ran past the end of each line in the tile chip → found with ASan
   and fixed. ASan now runs clean at several scales and shapes.
 

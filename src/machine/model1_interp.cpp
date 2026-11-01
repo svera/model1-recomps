@@ -11,6 +11,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/matrix.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
@@ -569,9 +570,28 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 	}
 	std::vector<pt> P, Q;
 	std::vector<int> K;
+	// (SWA: a part held in view where the camera's last move would have carried it far rides with
+	// the camera: the cockpit, its radar's blips and sights, two dozen parts near the eye in the
+	// Super Star Destroyer's core approach. Fitted with the scaffold the camera flew under, the
+	// one big still part there, they outnumbered it whenever the list lacked its flickering
+	// beams: the fit was neither's, every part off it, a cut, the picture carried on past the
+	// list, then stood a frame and leapt, every 4 lists. They blend by their own places.)
+	std::vector<char> held(pair.size(), 0);
+	for (size_t k = 0; k < pair.size() && pv; k++) {
+		const int q = pair[k];
+		if (q < 0 || b.slots[k].polys.empty() || first(a.slots[q]) != first(b.slots[k])) continue;
+		const float *pa = a.slots[q].mat, *pb = b.slots[k].mat;
+		double off = 0, stay = 0;
+		for (int r = 0; r < 3; r++) {
+			const double o = pv->R[r][0] * pa[9] + pv->R[r][1] * pa[10] + pv->R[r][2] * pa[11] + pv->T[r] * pv_scale - pa[9 + r];
+			off += o * o, stay += (pb[9 + r] - pa[9 + r]) * (pb[9 + r] - pa[9 + r]);
+		}
+		const double depth = std::max(std::sqrt(double(pa[9]) * pa[9] + double(pa[10]) * pa[10] + double(pa[11]) * pa[11]), 1.0);
+		held[k] = off > 0.09 * depth * depth && stay < 0.0625 * off;
+	}
 	for (size_t k = 0; k < pair.size(); k++) {
 		const int q = pair[k];
-		if (q < 0 || b.slots[k].polys.empty()) continue;
+		if (q < 0 || b.slots[k].polys.empty() || held[k]) continue;
 		const float *pa = a.slots[q].mat, *pb = b.slots[k].mat;
 		P.push_back({ pa[9], pa[10], pa[11] });
 		Q.push_back({ pb[9], pb[10], pb[11] });
@@ -599,7 +619,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 	// the best turn for the slots weighted: the orthonormal part of their covariance (Newton's
 	// iteration for the polar decomposition), then the shift between the centres
 	auto fit = [&](const std::vector<double> &w) {
-		double cp[3] = {}, cq[3] = {}, H[3][3] = {}, n = 0;
+		double cp[3] = {}, cq[3] = {}, H[3][3] = {}, C[3][3] = {}, n = 0;
 		int used = 0;
 		for (size_t i = 0; i < P.size(); i++)
 			if (w[i] > 0) { cp[0] += w[i] * P[i].x; cp[1] += w[i] * P[i].y; cp[2] += w[i] * P[i].z; cq[0] += w[i] * Q[i].x; cq[1] += w[i] * Q[i].y; cq[2] += w[i] * Q[i].z; n += w[i]; used++; }
@@ -608,8 +628,96 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		for (size_t i = 0; i < P.size(); i++)
 			if (w[i] > 0) {
 				const double p[3] = { P[i].x - cp[0], P[i].y - cp[1], P[i].z - cp[2] }, q[3] = { Q[i].x - cq[0], Q[i].y - cq[1], Q[i].z - cq[2] };
-				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) H[r][c] += w[i] * q[r] * p[c];
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) H[r][c] += w[i] * q[r] * p[c], C[r][c] += w[i] * p[r] * p[c];
 			}
+		// (SWA's tunnel mouth: every part on the tunnel's axis, one line, and a turn about it fits
+		// their places as well as any. The fit came out rolled half a turn, the camera's turn 2
+		// degrees: each part blended from there, the tunnel spun, garbled, between the lists. The
+		// roll about a line is the one the parts' own axes turn by, as a still model's do. The game
+		// also re-turns the tunnel's symmetric cross-sections a quarter turn now and then, every part
+		// at once: then the axes' roll is far off the camera's last move, and that move's roll is
+		// taken. (The least turn, taken alone, dropped the camera's real roll: the tunnel stepped
+		// round at each list.))
+		auto settle = [&] {
+			const double tr = C[0][0] + C[1][1] + C[2][2];
+			if (!(tr > 0)) return;
+			double u[3] = { 1, 1, 1 }, l = 0;
+			for (int it = 0; it < 50; it++) {
+				double v[3];
+				for (int r = 0; r < 3; r++) v[r] = C[r][0] * u[0] + C[r][1] * u[1] + C[r][2] * u[2];
+				l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+				if (!(l > 0)) return;
+				for (int r = 0; r < 3; r++) u[r] = v[r] / l;
+			}
+			if (tr - l > 1e-4 * l) return;
+			double v[3], hv = 0;   // (the line as the newer list has it: H u, its sign the places' order)
+			for (int r = 0; r < 3; r++) v[r] = H[r][0] * u[0] + H[r][1] * u[1] + H[r][2] * u[2], hv += v[r] * v[r];
+			hv = std::sqrt(hv);
+			if (!(hv > 0)) return;
+			for (double &x : v) x /= hv;
+			{   // the least turn taking u onto v, the roll set below
+				const double ax[3] = { u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
+				const double s = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]), c = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+				if (c < 0) return;
+				const double k[3] = { s > 1e-12 ? ax[0] / s : 0, s > 1e-12 ? ax[1] / s : 0, s > 1e-12 ? ax[2] / s : 0 };
+				const double Kk[3][3] = { { 0, -k[2], k[1] }, { k[2], 0, -k[0] }, { -k[1], k[0], 0 } };
+				for (int r = 0; r < 3; r++) for (int cc = 0; cc < 3; cc++) R[r][cc] = (r == cc ? c : 0) + s * Kk[r][cc] + (1 - c) * k[r] * k[cc];
+			}
+			const double Kx[3][3] = { { 0, -v[2], v[1] }, { v[2], 0, -v[0] }, { -v[1], v[0], 0 } };
+			// the roll about v that takes R nearest to M: trace(M^T Rot(v, t) R) = A cos t + B sin t + const
+			auto toward = [&](const double (&M)[3][3], double (&out)[3][3]) {
+				double X[3][3], vXv = 0, B = 0;   // X = R M^T
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) X[r][c] = R[r][0] * M[c][0] + R[r][1] * M[c][1] + R[r][2] * M[c][2];
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) vXv += v[r] * X[r][c] * v[c], B += Kx[r][c] * X[c][r];
+				const double t = std::atan2(B, X[0][0] + X[1][1] + X[2][2] - vXv), ct = std::cos(t), st = std::sin(t);
+				double turn[3][3];
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) turn[r][c] = (r == c ? ct : 0) + st * Kx[r][c] + (1 - ct) * v[r] * v[c];
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) out[r][c] = turn[r][0] * R[0][c] + turn[r][1] * R[1][c] + turn[r][2] * R[2][c];
+			};
+			auto angle = [](const double (&X)[3][3], const double (&Y)[3][3]) {   // degrees between two turns
+				double t = 0;
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) t += X[r][c] * Y[r][c];
+				return std::acos(std::clamp((t - 1) / 2, -1.0, 1.0)) * 180 / M_PI;
+			};
+			// the turn most of the parts' own axes agree on
+			std::vector<std::array<double, 9>> turns;
+			for (size_t i = 0; i < P.size(); i++) {
+				if (!(w[i] > 0) || first(a.slots[pair[K[i]]]) != first(b.slots[K[i]])) continue;
+				const glm::dmat3 ra(glm::make_mat3(a.slots[pair[K[i]]].mat)), rb(glm::make_mat3(b.slots[K[i]].mat));
+				if (std::fabs(glm::determinant(ra)) < 1e-12) continue;
+				const glm::dmat3 t = rb * glm::inverse(ra), check = glm::transpose(t) * t;
+				bool proper = std::fabs(glm::determinant(t) - 1) <= 0.001;
+				for (int c = 0; c < 3 && proper; c++)
+					for (int r = 0; r < 3; r++) proper &= std::fabs(check[c][r] - (c == r ? 1.0 : 0.0)) <= 0.001;
+				if (!proper) continue;
+				std::array<double, 9> m;
+				for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) m[3 * r + c] = t[c][r];
+				turns.push_back(m);
+			}
+			auto as = [](const std::array<double, 9> &m, double (&X)[3][3]) { for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) X[r][c] = m[3 * r + c]; };
+			int best = -1, most = 0;
+			for (size_t j = 0; j < turns.size(); j++) {
+				double X[3][3], Y[3][3];
+				as(turns[j], X);
+				int n = 0;
+				for (const auto &o : turns) as(o, Y), n += angle(X, Y) <= 1;
+				if (n > most) most = n, best = int(j);
+			}
+			double out[3][3];
+			const double I[3][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+			bool done = false;
+			if (best >= 0 && most * 2 > int(turns.size())) {
+				double X[3][3];
+				as(turns[best], X);
+				toward(X, out);
+				// (only a roll the axes make about the line, near the camera's last move)
+				const double off = pv ? angle(out, pv->R) : angle(out, I);
+				done = angle(out, X) <= 1 && off <= (pv ? 10 : 15);
+			}
+			if (!done) toward(pv ? pv->R : I, out);
+			memcpy(R, out, sizeof R);
+			for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
+		};
 		// (scaled to about 1 first: each step only halves a large singular value, and SWA's places,
 		// tens of thousands of units, left it 13 after 30 steps, a "turn" that matched nothing: every
 		// part off it by many times its depth, each list a cut, its attract unblended)
@@ -637,6 +745,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 			if (det > 0) {
 				memcpy(R, Mn, sizeof R);
 				for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
+				settle();
 				return true;
 			}
 		}
@@ -680,6 +789,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 				{ 2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) } };
 			memcpy(R, R_, sizeof R);
 			for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
+			settle();
 			return true;
 		}
 	};
@@ -772,14 +882,19 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 	// where either list put them, every picture between the lists, and each list's own picture
 	// jumped. A still model's axes turn exactly as the camera does; the turn that carries most of
 	// them, with the shift they agree on, is kept if it carries as many as the fit did.)
-	bool by_axes = false;
+	bool by_axes = false, axes_alone = false;
 	if (!anchored) {
-		int on0 = 0;
+		int on0 = 0, n_axes = 0;
 		for (size_t i = 0; i < P.size(); i++) on0 += still[i] && res[i] <= 0.02;
+		for (size_t i = 0; i < P.size(); i++) n_axes += still[i] && first(a.slots[pair[K[i]]]) == first(b.slots[K[i]]);
+		// (and when the fit kept none: in the core approach the scaffold is the one still part, and
+		// the player's shots, chains of 8 segments flying off at 500 a list, outnumbered it: the fit
+		// was theirs, a shift of a third of the scaffold's depth, a cut every other pair)
+		const bool none_on = on0 == 0;
 		double bR[3][3], bT[3];
 		int best = 0;
-		for (size_t j = 0; j < P.size() && on0; j++) {
-			if (!still[j] || res[j] > 0.05 || first(a.slots[pair[K[j]]]) != first(b.slots[K[j]])) continue;
+		for (size_t j = 0; j < P.size() && n_axes; j++) {
+			if (!still[j] || first(a.slots[pair[K[j]]]) != first(b.slots[K[j]])) continue;
 			const glm::dmat3 ra(glm::make_mat3(a.slots[pair[K[j]]].mat)), rb(glm::make_mat3(b.slots[K[j]].mat));
 			if (std::fabs(glm::determinant(ra)) < 1e-12) continue;
 			const glm::dmat3 turn = rb * glm::inverse(ra), check = glm::transpose(turn) * turn;
@@ -806,10 +921,14 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 				for (int r = 0; r < 3; r++) bT[r] = sum[r] / n;
 			}
 		}
-		if (best && best >= on0) {
+		if (best && best >= on0 && (!none_on || best * 2 > n_axes)) {
 			memcpy(R, bR, sizeof R), memcpy(T, bT, sizeof T);
 			by_axes = true;
 			for (size_t i = 0; i < P.size(); i++) res[i] = residual(P[i], Q[i]);
+			if (none_on) {
+				axes_alone = true;
+				for (size_t i = 0; i < P.size(); i++) use[i] = still[i] && res[i] <= 0.002;
+			}
 		}
 	}
 	// A cut the parts' moves miss: the camera's own move in a frame, a turn of over 15 degrees or a
@@ -831,7 +950,9 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		for (size_t i = 0; i < P.size(); i++)
 			if (use[i]) {
 				mv += std::sqrt((Q[i].x - P[i].x) * (Q[i].x - P[i].x) + (Q[i].y - P[i].y) * (Q[i].y - P[i].y) + (Q[i].z - P[i].z) * (Q[i].z - P[i].z));
-				dp += anchored ? std::max(std::sqrt(P[i].x * P[i].x + P[i].y * P[i].y + P[i].z * P[i].z), 1.0)
+				// (by its distance when a few stationary parts alone give the move: the scaffold's
+				// origin crossed the camera's plane 19500 units overhead, its z a few hundred)
+				dp += anchored || axes_alone ? std::max(std::sqrt(P[i].x * P[i].x + P[i].y * P[i].y + P[i].z * P[i].z), 1.0)
 					: std::max(std::fabs(P[i].z), 1.0);
 				d[0] += Q[i].x - P[i].x; d[1] += Q[i].y - P[i].y; d[2] += Q[i].z - P[i].z; n++;
 			}
@@ -951,7 +1072,7 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 		std::vector<char> claimed;      // (older slots paired, made when a ship's copy is looked for)
 		std::vector<size_t> ship;       // (ships moved with the camera all the same: none of their model near)
 		for (size_t k = 0; k < b.slots.size(); k++) {
-			if (b.slots[k].polys.empty()) continue;
+			if (b.slots[k].polys.empty() || held[k]) continue;
 			const uint32_t f = first(b.slots[k]);
 			// With an exact stationary reference, a paired ship keeps its own motion, however
 			// close it is to the camera's. The launch X-wing otherwise slid back each list.
@@ -1458,7 +1579,20 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	int cut_jumps = jumps;
 	if (m_camera_sure) {
 		cut_jumps = 0;
-		for (size_t i = 0; i < b.slots.size(); i++) cut_jumps += m_blend_ok[i] && m_cam_res[i] > 0.3f;
+		// (A part held in view, where the camera's move would have carried it far, rides with the
+		// camera: SWA's cockpit, its radar's blips and sights, two dozen parts in the core's
+		// approach. They outvoted the scaffold the camera flew under whenever the list lacked its
+		// flickering beams: the picture carried on past the list, then stood a frame and leapt.)
+		for (size_t i = 0; i < b.slots.size(); i++) {
+			if (!m_blend_ok[i] || !(m_cam_res[i] > 0.3f)) continue;
+			if (pair[i] >= 0) {
+				const float *pa = a.slots[pair[i]].mat, *pb = b.slots[i].mat;
+				const float dx = pb[9] - pa[9], dy = pb[10] - pa[10], dz = pb[11] - pa[11];
+				const float off = m_cam_res[i] * std::max({ std::fabs(pa[11]), std::fabs(pb[11]), 1.0f });
+				if (dx * dx + dy * dy + dz * dz < 0.0625f * off * off) continue;
+			}
+			cut_jumps++;
+		}
 		// Moving ships can outnumber the globe and disagree with its camera. Stationary geometry
 		// following the known move cannot vote for a cut just because the ships do.
 		int stationary = 0, following = 0;
