@@ -6,6 +6,8 @@
 #include "../../../src/host/input_replay.h"
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <thread>
 #include <deque>
@@ -172,17 +174,75 @@ static void in_process(const std::string &dir)
 	std::array<bool, 2> audible{};
 	std::array<std::deque<std::array<uint32_t, 3>>, 2> positions;
 	std::array<std::array<uint32_t, 3>, 2> previous{};
-	for (int frame = 0; frame < 6500 && machines[0]->link()->ticks() < 5000; frame++) {
+	std::array<int, 2> previous_phase{-1, -1};
+	std::array<uint32_t, 2> previous_camera{};
+	bool returned_to_attract = false;
+	std::array<bool, 16> attract_car_differed{};
+	std::array<double, 16> initial_attract_car_max_distance{};
+	std::array<double, 16> attract_car_max_distance{};
+	constexpr int attract_ticks = 10000;
+	constexpr int target_ticks = 22000;
+	for (int frame = 0; frame < target_ticks + 1500 && machines[0]->link()->ticks() < unsigned(target_ticks); frame++) {
 		const auto tick = machines[0]->link()->ticks();
 		for (int p = 0; p < 2; p++) {
 			auto &machine = *machines[p];
-			const bool start = (tick >= 2400 && tick < 2406) || (tick >= 2520 && tick < 2526);
+			const bool start = (tick >= attract_ticks && tick < attract_ticks + 6) ||
+				(tick >= attract_ticks + 120 && tick < attract_ticks + 126);
 			machine.m_inputs[0] = uint8_t(~(start ? 0x10 : 0));
 			assert(machine.set_analog_input(0, 0x80));
 			assert(machine.set_analog_input(1, p ? 0x90 : 0xff));
 			assert(machine.set_analog_input(2, 0x30));
 		}
 		pair.run_frame();
+		if (machines[0]->work_ram()[0x1138] == 0x03 &&
+			machines[1]->work_ram()[0x1138] == 0x03)
+			for (int car = 0; car < 16; car++) {
+				const uint32_t address = 0x400d00 + car * 0x280;
+				bool differs = false;
+				double distance_squared = 0;
+				for (int axis = 0; axis < 3; axis++) {
+					const uint32_t a = machines[0]->read32(address + 0x1e + axis * 4);
+					const uint32_t b = machines[1]->read32(address + 0x1e + axis * 4);
+					differs |= a != b;
+					float x, y;
+					memcpy(&x, &a, sizeof x);
+					memcpy(&y, &b, sizeof y);
+					assert(std::isfinite(x) && std::isfinite(y));
+					distance_squared += (double(x) - y) * (double(x) - y);
+				}
+				if (tick < attract_ticks) {
+					initial_attract_car_max_distance[car] = std::max(
+						initial_attract_car_max_distance[car], std::sqrt(distance_squared));
+					if (car < 8) assert(!differs);
+				}
+				if (returned_to_attract)
+					attract_car_max_distance[car] = std::max(attract_car_max_distance[car], std::sqrt(distance_squared));
+				if (getenv("M1_ATTRACT_TRACE") && differs && !attract_car_differed[car])
+					fprintf(stderr, "attract car mismatch: tick=%llu car=%d positions=%08x,%08x / %08x,%08x ranks=%u/%u\n",
+						(unsigned long long)machines[0]->link()->ticks(), car,
+						machines[0]->read32(address + 0x1e), machines[0]->read32(address + 0x26),
+						machines[1]->read32(address + 0x1e), machines[1]->read32(address + 0x26),
+						machines[0]->read8(address + 0x123), machines[1]->read8(address + 0x123));
+				attract_car_differed[car] = attract_car_differed[car] || differs;
+			}
+		if (racing[0] && racing[1] &&
+			machines[0]->work_ram()[0x1138] == 0x07 && machines[1]->work_ram()[0x1138] == 0x07)
+			returned_to_attract = true;
+		if (tick < attract_ticks || returned_to_attract) {
+			assert(machines[0]->work_ram()[0x1138] == machines[1]->work_ram()[0x1138]);
+			assert(machines[0]->camera() == machines[1]->camera());
+		}
+		if (getenv("M1_ATTRACT_TRACE"))
+			for (int p = 0; p < 2; p++) {
+				auto &m = *machines[p];
+				const int phase = m.work_ram()[0x1138];
+				if (phase != previous_phase[p] || m.camera() != previous_camera[p]) {
+					fprintf(stderr, "attract trace: frame=%d tick=%llu cabinet=%d phase=%02x mode=%u camera=%08x\n",
+						frame, (unsigned long long)m.link()->ticks(), p + 1, phase, m.game_mode(), m.camera());
+					previous_phase[p] = phase;
+					previous_camera[p] = m.camera();
+				}
+			}
 		for (int p = 0; p < 2; p++) {
 			for (int16_t sample : machines[p]->m_audio_out) audible[p] |= sample != 0;
 			machines[p]->m_audio_out.clear();
@@ -209,10 +269,18 @@ static void in_process(const std::string &dir)
 		}
 	}
 	std::array<size_t, 2> fallbacks{};
+	assert(returned_to_attract);
+	puts("Linked attract: phases and camera targets match across demo cycles before play and after results");
+	puts("Linked attract: first eight car positions match frame-for-frame before player racing");
+	if (getenv("M1_ATTRACT_TRACE"))
+		for (int car = 0; car < 16; car++)
+			fprintf(stderr, "attract car distance: car=%d initial=%g after-results=%g world units\n",
+				car, initial_attract_car_max_distance[car], attract_car_max_distance[car]);
 	for (int p = 0; p < 2; p++) {
 		fprintf(stderr, "in-process cabinet %d: %llu exchanges, %d race frames, %d exact peer positions, %d moving\n",
 			p + 1, (unsigned long long)machines[p]->link()->ticks(), racing[p], replicated[p], moving[p]);
-		assert(machines[p]->link()->ticks() == 5000 && racing[p] >= 120 && replicated[p] >= 100 && moving[p] >= 100);
+		assert(machines[p]->link()->ticks() == unsigned(target_ticks));
+		assert(racing[p] >= 120 && replicated[p] >= 100 && moving[p] >= 100);
 		assert(audible[p]);
 		runtimes[p].activate();
 		fallbacks[p] = rec::fallback_count();

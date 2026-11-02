@@ -16,7 +16,8 @@ public:
 	const romset::definition &romset() const override { return ROMSET; }
 	const control_profile &controls() const override { return CONTROLS; }
 
-	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value) override
+	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value,
+		bool exponential_steering = false) override
 	{
 		value = game_host::analog_key_input(machine, channel, low, high, value);
 		return invert_y && (channel == 1 || channel == 5) ? uint8_t(255 - value) : value;

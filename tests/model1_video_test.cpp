@@ -1697,6 +1697,85 @@ struct model1_video_test
 				race_grid_hud(dir, scenario, aspect);
 	}
 
+	static void results_banner(const char *dir)
+	{
+		model1 m(load_regions(dir, game::id{ "vr" }));
+		m.set_aspect(16.0f / 9);
+		m.reset();
+		m.set_drawing(false);
+		auto play = game::make_auto_play(game::id{ "vr" }, "qualifying", 12345, false);
+		assert(play);
+		int result_frame = 0;
+		size_t checked = 0, side_pixels = 0, settled_pixels = 0;
+		for (int f = 1; f <= 20700; f++) {
+			const auto in = play->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t c = 0; c < in.pressed.size(); c++) m.m_inputs[c] = uint8_t(~in.pressed[c]);
+			m.set_drawing(f >= 20350);
+			m.run_frame();
+			if (m.work_ram()[0x1138] != 0x1c) continue;
+			if (result_frame++ >= 90) break;
+			if ((result_frame - 1) % 5) continue;
+			assert(m.m_tiles.tile_r(0x5000) == 0x8000 && m.m_tiles.tile_r(0x5004) == 0x4000);
+			// Read the complete, stationary artwork independently of the animated clipping.
+			std::array<uint16_t, model1::SCREEN_H> scroll;
+			for (int y = 0; y < model1::SCREEN_H; y++) {
+				scroll[y] = m.m_tiles.tile_r(0x4000 + y);
+				m.m_tiles.tile_w(0x4000 + y, 0, 0xffff);
+			}
+			bitmap_rgb32 artwork;
+			artwork.allocate(model1::SCREEN_W + 512, model1::SCREEN_H);
+			artwork.fill(model1::KEY);
+			m.m_tiles.m_ox = 256;
+			m.m_tiles.draw_wide(artwork, 1, 0, 256);
+			m.m_tiles.m_ox = 0;
+			for (int y = 0; y < model1::SCREEN_H; y++) m.m_tiles.tile_w(0x4000 + y, scroll[y], 0xffff);
+			for (float aspect : { 4.0f / 3, 16.0f / 10, 16.0f / 9, 21.0f / 9, 32.0f / 9 }) {
+				m.set_aspect(aspect);
+				const auto &cached = m.cached_layer(1, 0).px;
+				bitmap_rgb32 original;
+				original.allocate(cached.width(), cached.height());
+				original.fill(model1::KEY);
+				m.m_tiles.m_ox = m.m_ext;
+				m.m_tiles.draw(original, original.cliprect(), 1, 0, 0);
+				m.m_tiles.m_ox = 0;
+				for (int y = 0; y < model1::SCREEN_H; y++) {
+					const int shift = scroll[y] + (scroll[y] * m.m_ext + 240) / 480;
+					for (int x = 0; x < cached.width(); x++) {
+						const int source = x - m.m_ext - shift;
+						const uint32_t expected = source >= 0 && source < 512
+							? artwork.pix(y, 256 + source) : model1::KEY;
+						assert(cached.pix(y, x) == expected);
+						if (!m.m_ext || !scroll[y]) assert(cached.pix(y, x) == original.pix(y, x));
+						if (expected == model1::KEY) continue;
+						side_pixels += scroll[y] && x >= m.m_ext + model1::SCREEN_W;
+						settled_pixels += !scroll[y];
+						assert(scroll[y] != 480);   // The first picture is entirely off-screen.
+					}
+				}
+				bitmap_rgb32 combined;
+				uint64_t key = 0, gen = 0;
+				m.parts_composite(combined, key, gen, { 1 });
+				assert(std::equal(cached.data(), cached.data() + size_t(cached.width()) * cached.height(), combined.data()));
+				for (int scale : { 1, 2 }) {
+					m.set_render_scale(scale);
+					bitmap_rgb32 whole;
+					whole.allocate(cached.width() * scale, cached.height() * scale);
+					whole.fill(model1::KEY);
+					m.draw_tiles(whole, whole.cliprect(), 1, 0);
+					for (int y = 0; y < whole.height(); y++)
+						for (int x = 0; x < whole.width(); x++)
+							assert(whole.pix(y, x) == cached.pix(y / scale, x / scale));
+					checked++;
+				}
+			}
+		}
+		assert(checked >= 180 && side_pixels > 10000 && settled_pixels > 10000);
+		printf("VR results: %zu pictures checked at 4:3, 16:10, 16:9, 21:9 and 32:9, 1x/2x; "
+			"wide-edge entry, no wrapping, unchanged settled artwork and matching whole/parts layers\n", checked);
+	}
+
 	static void car_visibility(const char *dir, bool extended, bool native = false)
 	{
 		model1 m(load_regions(dir, game::id{ "vr" })), reference(load_regions(dir, game::id{ "vr" }));
@@ -3680,6 +3759,10 @@ int main(int argc, char **argv)
 		model1_video_test::race_grid_hud(argv[1]);
 		return 0;
 	}
+	if (argc > 2 && std::string(argv[2]) == "--results-banner") {
+		model1_video_test::results_banner(argv[1]);
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--pit") {
 		model1_video_test::logo_handoff(argv[1]);
 		return 0;
@@ -3734,6 +3817,7 @@ int main(int argc, char **argv)
 		for (bool smooth : { false, true }) model1_video_test::scenery_distance(argv[1], smooth, true, "");
 		model1_video_test::logo_shading(argv[1]);
 		model1_video_test::race_grid_hud(argv[1]);
+		model1_video_test::results_banner(argv[1]);
 		model1_video_test::logo_handoff(argv[1]);
 		model1_video_test::goal_fly_in(argv[1]);
 		model1_video_test::logo(argv[1], true, true, 2, 16.0f / 9);

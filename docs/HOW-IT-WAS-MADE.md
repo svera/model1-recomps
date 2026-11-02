@@ -5,8 +5,9 @@ much of it comes from MAME, and how AI coding tools were used. The commit histor
 
 ## Pull request checks
 
-The **Tests** GitHub Actions workflow runs all nine ROM-free test targets on macOS when a pull request
-is opened, updated with new commits, or reopened. It can also be run manually from the Actions tab.
+The **Tests** GitHub Actions workflow runs ten ROM-free test targets on Ubuntu 24.04 (x86-64) when a pull
+request is opened, updated with new commits, or reopened. It builds SDL3 from the same version and
+SHA-256-verified source as release packages. It can also be run manually from the Actions tab.
 New updates cancel an older run for the same pull request. ROM-backed checks remain local: CI does
 not download game ROMs or require secrets.
 
@@ -851,6 +852,171 @@ until, from 1.5x, every car kept a steady phase over 6,000 frames apart from sce
 MAME's V60 charges 8 cycles to every instruction, "just an average"; the 16 MHz V60 is rated at about
 3.5 MIPS. The game profile now has `cpu_cycles_per_instruction`, applied to the per-line instruction
 budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and runs exactly as before.
+
+## VR's local multiplayer entry and disconnect handling
+
+Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.
+The first controller to press Start claims Player 1 and starts solo play, regardless of
+connection order. Instance-ID claims keep that assignment stable across periodic scans,
+including when both controllers have identical GUIDs, without changing saved pad choices.
+The Controls menu can explicitly reassign pads; returning to solo with a reset clears the
+first-Start latch. Keyboard Player 1 Start also establishes solo play, while the separate
+Player 2 Start key remains an explicit join shortcut.
+Start on the other controller queues a join, which
+starts the linked cabinet at the next safe attract-mode or course-selection point.
+Joining during course selection restarts both cabinets into linked course selection; an
+active race is not interrupted. The controller's device ID
+is retained with that request; if it disconnects while queued, the join is cancelled, and
+if it disconnects after joining, the second cabinet is saved and released and the first
+returns to standalone play. This avoids continuing to spend emulation and rendering time
+on an absent player. Keyboard-initiated joins remain available and are not tied to a
+controller's connection lifetime. `--split-screen` remains available to explicitly select
+split-screen layout behavior.
+
+Like the single-cabinet host, the local host listens for joystick as well as gamepad
+connection events and reconciles controller assignments once per second. This retries
+staged Bluetooth opens and recovers missed hotplug events without reopening active pads.
+Button-down events from an unassigned controller also trigger reconciliation before the
+button is handled, so a short Start tap is retained even before the next periodic scan.
+The regression attaches two identical SDL virtual gamepads, discards their connection events,
+and checks both a held Start button and a tap released before event polling to verify
+discovery and joining through the real input path.
+For physical-controller diagnosis, `M1_INPUT_TRACE=1` logs gamepad button-down/up events,
+both controller assignments and Start bindings, menu state, and whether joining is pending
+or currently allowed. It does not change input handling.
+
+The ROM-backed split-screen regression exercises both disconnect cases as well as a
+successful controller join, solo boot, deferred joins and reset/rejoin. It opens the local
+settings menu, changes antialiasing and verifies the setting is saved in the usual VR
+settings file. The menu exposes shared render scale, antialiasing, aspect ratio, frame rate,
+background filtering, scanline/CRT screen filters, CPU/GPU/Auto 3D rendering, fullscreen and
+sound levels. GPU rendering is attached to each cabinet separately and its test picture is checked
+against the CPU before use; unavailable or incorrect GPU rendering falls back to the CPU. The
+regression changes the screen filter and 3D renderer and checks both saved settings. Its Controls pages configure each player's
+controller assignment, keyboard keys, pad buttons and analog axes independently; Player 2's
+bindings persist in the second cabinet's settings file even before that cabinet is started, and
+the regression verifies that a saved Player 2 Start key is loaded on the next launch. It also
+checks that the removed `--two-cabinets` option is rejected.
+
+The local session also exposes VR's existing Game settings through per-cabinet Player 1 and
+Player 2 pages: language, car color, difficulty and the arcade service menu. Race type
+(Normal or Grand Prix) and course selection are shared options directly on the Game page.
+Closing the menu applies each game's pending
+EEPROM changes through `menu_closed()`, then synchronizes the primary cabinet's course
+selection and race type to the other cabinet. A cabinet joining later inherits both before boot. A
+settings restart, the Game page's reset, and leaving the service menu reboot the active linked
+pair without dropping Player 2; F3 retains its explicit return-to-solo behavior. The ROM-backed
+regression changes Player 2's language and color, checks the EEPROM is saved and verifies both
+cabinets remain linked after the settings restart. It also checks all four shared course choices,
+saving during menu edits, both race types, the per-player menu layout and shared-setting
+synchronization on a later join.
+Player 1 reads and writes the original single-player save files in the game's data folder, so
+enabling on-demand local multiplayer does not reset language, rankings or other saved settings.
+If an original save file is absent, its interim `two-cabinets/1` counterpart is loaded and
+migrated on the next save; an existing original file takes precedence. Player 2's saves remain
+separate under `two-cabinets/2`. The regression verifies migration and original-save precedence
+using an English save alongside a stale Japanese cabinet-1 save.
+While two players are active, the main menu also offers Remove Player 2. It closes the menu,
+applies pending settings, saves both cabinets and uses the same return-to-solo reset as F3.
+The controller remains available for a later Start-to-join request. The regression verifies
+removal, saved Player 2 color, rejoining and absence of the action in solo mode.
+The local-session renderer enables VSync, matching the original single-player host. With
+separate cabinet windows only the primary renderer waits for refresh, avoiding two waits in
+one loop. The desktop regression checks the renderer's reported VSync state and uses explicit
+close events so its event timelines do not depend on the refresh rate.
+
+### Checking linked attract timing
+
+Different attract pictures do not by themselves establish clock drift. The ROM-backed linked
+regression now runs 10,000 link exchanges without Start, checking both cabinets' phase and camera
+target every simulation frame, then runs a complete linked race and watches the return to attract.
+Several initial demo/rankings cycles stay aligned. After the test race, the cabinets enter the
+first demo four frames apart, but finish it together; subsequent demo/rankings phases and camera
+targets match again. The test checks that alignment after the first post-race rankings screen,
+while retaining the moving-peer-position and independent-runtime checks.
+
+A separate hidden-window desktop check joins Player 2, uses Game > Reset game to remove the
+automatic Start pulses, and observes a full attract cycle. Phase changes coincide despite different
+absolute cabinet frame counters, which include standalone initialization before linking.
+`M1_ATTRACT_TRACE=1` logs phase and camera-target changes in the local host and link regression
+for diagnosing a reported mismatch. These checks cover phase/camera selection, not pixel equality,
+all saved-settings histories, or every camera script's internal timer.
+
+A hardware-owner report describes Virtua Racing's linked attracts as synchronized
+([Arcade Museum discussion](https://forums.arcade-museum.com/threads/attract-sync-between-linked-cabinets.528798/)),
+but does not establish exact frame timing or identical camera views. No forced RAM or screen
+mirroring was added: the tested lifecycle does not reproduce a persistent attract-phase offset.
+
+The reported mismatch was subsequently narrowed to **rival-car positions after a player race**,
+not the demo's phase or camera target. Comparing XYZ positions in all 16 car records reproduces
+that distinction: after results, several rivals diverge even once phases and camera targets match.
+In the deterministic test (different accelerator inputs for each player), the maximum separation
+for cars 1-7 over the observed subsequent demos ranges from zero to about 4.4 world units;
+car 0 reaches about 39.4. This is not a measurement of screen pixels or a hardware tolerance.
+The trace now reports per-car maximum separation before play and after resynchronization.
+The first eight cars are bit-identical throughout the initial 10,000-exchange attract period,
+which is also asserted. Other car records are measured rather than assumed identical.
+
+#### Tracing the retained rival state
+
+The reported case occurs after playing a two-player race and returning to attract. Comparing
+rival records at each cabinet's own attract-entry boundary separates inherited state from the
+four-frame difference in entering that first demo. The ROM's car initializer at `FE8A91` resets
+positions and many handling fields, but does not unconditionally reset each car's rank index
+at record offset `+0x123`. The racing ranking loop at `FEA743` writes those indices. After the
+test race, car 0's index is 14/15 across the cabinets, and car 1's is 15/14.
+
+A temporary, test-only experiment set the rank indices to `15 - car_index` for all 16 records
+while each cabinet was in attract setup (phase `02`), without changing clocks, cameras or copying
+positions. Repeating the same race then produced **zero XYZ separation for cars 0-7** throughout
+the observed demos after the first post-race rankings screen. The unmodified run had reached
+about 39.4 world units for car 0 and up to 4.4 for other cars in that group. This demonstrates
+that retained rank state contributes to the later position differences, including rivals;
+it does not establish that each rival's own rank is the direct cause rather than interactions
+with other cars.
+
+The experiment was not a complete all-car fix: records 9 and 10 still differed by up to about
+2.1 and 2.2 world units, respectively, and already differed by about 1.0 and 2.3 before player
+racing. At matching phase-03 entry points, rival record 2 also retained a differing halfword at
+`+0xB4` (which the ROM updates independently of rank). Its causal role was not established.
+These are separate limits to the experiment, not evidence that the game clocks drift.
+
+The temporary rank writes and detailed memory dumps were removed. Gameplay remains unchanged,
+as requested: phase/camera synchronization is not treated as identical rival positions, and no
+new attract-state normalization, cross-cabinet RAM copying or physics reset is applied.
+Exact linked arcade-hardware behavior remains unverified. The existing standalone first-demo
+car-0 rank adjustment described below is unchanged.
+
+## VR's split-screen frame pacing
+
+The split-screen host originally polled with a fixed 1 ms delay, even though its work is scheduled
+against the game's 57.52 Hz frame rate and each cabinet's picture deadline. It now sleeps toward the
+earlier of those deadlines, in waits capped at 8 ms so input and window events remain responsive.
+Pausing removes the game-frame deadline but continues to schedule pictures. The opt-in `M1_PERF=1`
+report separates emulation, per-view rendering and composition/presentation costs, and records frame
+interval percentiles, late frames and time spent idle.
+
+To check the change, hidden-window runs used local VR ROMs, `--split-screen --scale 1` and
+`M1_QUIT_AFTER=600`, both with one cabinet and with a second cabinet joining at frame 10. Statistics
+reset on join so the second result reflects linked play rather than its boot pause. Repeated steady
+windows stayed near 57.5 fps: frame-interval p95 was about 17.5-18.2 ms solo and 17.8-18.0 ms
+joined, with no interval over 26 ms. Emulation p95 was about 1.8-2.2 ms solo and 3.6-3.8 ms joined,
+well below the 17.38 ms game-frame budget. Aggregate CPU time was similar to the previous polling
+loop, so the change improves deadline-based pacing without evidence of a CPU-time reduction.
+Hidden-window measurements are useful for comparing scheduling, but do not predict every
+display/GPU combination.
+
+The picture scheduler had a separate drift bug: assigning each new deadline from the current
+wake-up time accumulated scheduling delays. At 1x with antialiasing off, hidden-window runs
+presented about 57.4 pictures/s for a 60 FPS selection and 112-113 pictures/s for 120 FPS, even
+though game logic correctly remained near 57.52 Hz. Picture deadlines now advance from their
+previous scheduled time, skipping expired slots after overload instead of issuing catch-up
+renders. Both cabinets use the same picture-time snapshot after emulation. Deterministic
+regressions cover repeated late wakes at 30/60/120 FPS, early forced redraws and missed slots.
+Repeating the solo and joined runs produced steady-window rates of 59.9-60.0 and 120.0-120.1
+presentations/s respectively; the first joined window includes transition overhead and is
+excluded from that comparison. Performance reports now show presentations/s explicitly,
+separately from game-frame throughput.
 
 ## The TGP's rounding
 

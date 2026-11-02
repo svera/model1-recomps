@@ -43,14 +43,17 @@ public:
 	virtual const control_profile &controls() const = 0;
 
 	// Digital bindings for an analog channel, after reading the pad's analog axis.
-	virtual uint8_t analog_key_input(model1 &, int channel, bool low, bool high, uint8_t value)
+	virtual uint8_t analog_key_input(model1 &, int channel, bool low, bool high, uint8_t value,
+		bool exponential_steering = false)
 	{
 		return low != high ? (low ? 0 : 255) : value;
 	}
 
-	// settings.ini's own keys (read before start)
+	// settings.ini's own keys (read before start, or shared display choices applied during play).
 	virtual void load_settings(const settings_map &) {}
 	virtual void save_settings(FILE *) const {}
+	// Only renderer settings shared by local cabinets; excludes each player's game preferences.
+	virtual settings_map shared_display_settings() const { return {}; }
 
 	// The machine is made, its code not yet recompiled (an instruction the game changes goes in it).
 	virtual void start(host_context &) {}
@@ -79,6 +82,10 @@ public:
 	// Game-specific choices in Display and Game, and main-menu pages after Game and Controls.
 	virtual std::vector<menu_item> display_menu_items() { return {}; }
 	virtual std::vector<menu_item> game_menu_items() { return {}; }
+	virtual std::vector<menu_item> cabinet_game_menu_items() { return game_menu_items(); }
+	virtual std::vector<menu_item> shared_game_menu_items() { return {}; }
+	// Copy session-wide settings from the primary cabinet; true if a restart is needed.
+	virtual bool sync_shared_settings(model1 &) { return false; }
 	virtual std::vector<menu_item> menu_items() { return {}; }
 	virtual std::vector<menu_item> menu_items_after_controls() { return {}; }
 	// The menu closed: whether the game restarts, and with its code changed (recompiled first).
@@ -89,7 +96,7 @@ public:
 	virtual void before_frame() {}
 	virtual void after_frame() {}
 	virtual bool hide_frame() const { return false; }
-	// A queued local multiplayer join may reboot only from an idle attract screen.
+	// Whether a queued local multiplayer join can safely restart into linked play.
 	virtual bool can_join_local_cabinet() const { return false; }
 
 	// Optional text accompanying the battery-backed save (games without one return an empty name).

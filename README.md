@@ -43,10 +43,9 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 - Original arcade motion or smoother 60 / 120 FPS.
 - Full-detail models by default, with an optional LOD toggle for simpler distant models.
 - Keyboard and gamepad support, with customizable controls.
+- Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Saved settings and high scores.
 - Car color, language, difficulty, and course settings.
-
-**Single-player only.** Split screen, linked cabinets, and online multiplayer are not supported.
 
 ### Getting started
 
@@ -84,13 +83,24 @@ Pad buttons**. Coins are only needed in Arcade play style.
 
 Open the menu with **Esc** or **View / Select**:
 
-- **Display:** change sharpness, screen shape, fullscreen, and frame rate.
+- **Display:** change render scale, antialiasing, screen shape (Fit window, 4:3, 16:10, 16:9, 21:9, or 32:9), background filtering, fullscreen, and frame rate.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** choose your car color, language, course, and difficulty.
 - **Sound:** adjust the audio levels.
 
 Higher graphics settings need a faster computer. If play feels slow, lower the render scale
 or frame rate.
+
+### Local multiplayer
+
+Virtua Racing starts in solo play and automatically supports a second local player.
+The first controller to press Start becomes Player 1 and starts solo play, regardless of
+connection order. Start on another controller joins Player 2 from the demo or
+course-selection screen. Pressing Start again on Player 1's controller does not add a player.
+Joining restarts both players at linked course selection.
+If a race is already underway, the join waits until the game returns to
+the demo or course-selection screen, without interrupting Player 1's race. If Player 2's controller
+disconnects, the game returns to solo play.
 
 ### Screenshots
 
@@ -168,7 +178,7 @@ needed in Arcade play style. Hold **Tab** to fast-forward, including through att
 
 Open the menu with **Esc** or **View / Select**:
 
-- **Display:** change sharpness, screen shape, fullscreen, and frame rate. 30 FPS shows the
+- **Display:** change sharpness, screen shape (up to 32:9), fullscreen, and frame rate. 30 FPS shows the
   game as the arcade drew it; 60 and 120 smooth the motion between pictures.
 - **Display > LOD:** Off (default) keeps the most detailed models at every distance, including
   the complete Death Star through the attract-mode approach. On uses the arcade's simpler

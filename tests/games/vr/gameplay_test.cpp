@@ -1,4 +1,5 @@
 #include "../../../src/games/vr/gameplay.h"
+#include "../../../src/games/vr/profile.h"
 #include "../../../src/machine/model1.h"
 #include "../../../src/host/regions.h"
 #include "../../../src/host/png.h"
@@ -10,6 +11,29 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+static void local_join_screens()
+{
+	model1::regions regions;
+	regions.title = game::id{ "vr" };
+	model1 machine(std::move(regions));
+	const auto camera_address = 0x500000 + *game::vr::PROFILE.camera_ram;
+	machine.write32(camera_address, 0x502150);
+	for (uint8_t phase : {0x03, 0x07, 0x10, 0x12, 0x14, 0x19, 0x1c, 0x1e}) {
+		machine.work_ram()[0x1138] = phase;
+		assert(game::vr::in_course_selection(machine) == (phase == 0x10));
+		assert((game::vr::in_attract_mode(machine) || game::vr::in_course_selection(machine)) ==
+			(phase == 0x03 || phase == 0x07 || phase == 0x10));
+	}
+	machine.work_ram()[0x1138] = 0x10;
+	machine.write32(camera_address, 0x502000);
+	assert(!game::vr::in_course_selection(machine));
+	machine.write32(camera_address, 0x502150);
+	machine.write8(*game::vr::PROFILE.mode_ram, game::vr::PROFILE.test_menu_mode);
+	assert(!game::vr::in_course_selection(machine));
+	machine.forget_camera();
+	assert(!game::vr::in_course_selection(machine));
+}
 
 static void scripted_inputs()
 {
@@ -952,6 +976,7 @@ int main(int argc, char **argv)
 	language_settings(true);
 	machine_settings(false);
 	machine_settings(true);
+	local_join_screens();
 	scripted_inputs();
 	scenery_lists();
 	lod_settings();

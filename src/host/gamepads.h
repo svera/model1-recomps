@@ -12,7 +12,8 @@ inline std::string gamepad_guid(SDL_JoystickID id)
 }
 
 // Reconcile rather than reopening every pad: a Bluetooth connection can appear in stages.
-inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2], bool swapped)
+inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2], bool swapped,
+	const std::array<SDL_JoystickID, 2> &preferred = {})
 {
 	int count = 0;
 	SDL_JoystickID *ids = SDL_GetGamepads(&count);
@@ -25,6 +26,20 @@ inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2],
 		if (pads[p]) before[p] = SDL_GetGamepadID(pads[p]);
 	std::array<SDL_Gamepad *, 2> next{};
 	std::vector<bool> used(count, false);
+	for (int p = 0; p < 2; p++)
+		for (int i = 0; preferred[p] && i < count; i++) {
+			if (used[i] || ids[i] != preferred[p]) continue;
+			for (int old = 0; old < 2; old++)
+				if (before[old] == ids[i]) next[p] = pads[old];
+			if (!next[p]) {
+				next[p] = SDL_OpenGamepad(ids[i]);
+				if (!next[p])
+					fprintf(stderr, "Couldn't open gamepad %u: %s (will retry)\n",
+						unsigned(ids[i]), SDL_GetError());
+			}
+			used[i] = next[p] != nullptr;
+			break;
+		}
 	// Explicit choices first, then automatic assignments, then missing choices' fallbacks.
 	for (int pass = 0; pass < 3; pass++)
 		for (int p = 0; p < 2; p++) {

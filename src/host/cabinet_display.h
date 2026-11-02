@@ -3,6 +3,14 @@
 
 enum class cabinet_layout { windows, side_by_side, top_bottom };
 
+inline Uint64 next_cabinet_picture(Uint64 deadline, Uint64 now, int fps)
+{
+	const Uint64 period = 1000000000ull / fps;
+	if (!deadline) return now + period;
+	if (now < deadline) return deadline;
+	return deadline + ((now - deadline) / period + 1) * period;
+}
+
 inline SDL_Texture *create_cabinet_texture(SDL_Renderer *renderer, int width, int height)
 {
 	auto *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
@@ -30,9 +38,9 @@ inline SDL_Rect cabinet_viewport(cabinet_layout layout, int width, int height, i
 	return {0, 0, width, height};
 }
 
-inline bool draw_cabinet(SDL_Renderer *renderer, SDL_Texture *texture, SDL_Rect viewport, float aspect)
+inline SDL_FRect cabinet_picture_rect(SDL_Rect viewport, float aspect)
 {
-	if (viewport.w <= 0 || viewport.h <= 0) return true;
+	if (viewport.w <= 0 || viewport.h <= 0) return {};
 	SDL_FRect dst{float(viewport.x), float(viewport.y), float(viewport.w), float(viewport.h)};
 	if (dst.w > dst.h * aspect) {
 		const float width = dst.h * aspect;
@@ -43,5 +51,12 @@ inline bool draw_cabinet(SDL_Renderer *renderer, SDL_Texture *texture, SDL_Rect 
 		dst.y += (dst.h - height) / 2;
 		dst.h = height;
 	}
+	return dst;
+}
+
+inline bool draw_cabinet(SDL_Renderer *renderer, SDL_Texture *texture, SDL_Rect viewport, float aspect)
+{
+	if (viewport.w <= 0 || viewport.h <= 0) return true;
+	const SDL_FRect dst = cabinet_picture_rect(viewport, aspect);
 	return SDL_RenderTexture(renderer, texture, nullptr, &dst);
 }
