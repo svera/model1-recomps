@@ -5,8 +5,9 @@ much of it comes from MAME, and how AI coding tools were used. The commit histor
 
 ## Pull request checks
 
-The **Tests** GitHub Actions workflow runs all nine ROM-free test targets on macOS when a pull request
-is opened, updated with new commits, or reopened. It can also be run manually from the Actions tab.
+The **Tests** GitHub Actions workflow runs ten ROM-free test targets on Ubuntu 24.04 (x86-64) when a pull
+request is opened, updated with new commits, or reopened. It builds SDL3 from the same version and
+SHA-256-verified source as release packages. It can also be run manually from the Actions tab.
 New updates cancel an older run for the same pull request. ROM-backed checks remain local: CI does
 not download game ROMs or require secrets.
 
