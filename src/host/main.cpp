@@ -847,7 +847,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			fprintf(stderr, "two cabinets: the Model 1 I/O-board ROM is required for independent steering and pedals\n");
 			return false;
 		}
-		c.dir = data_dir + "/two-cabinets/" + std::to_string(p + 1);
+		c.dir = p == 0 ? data_dir : data_dir + "/two-cabinets/2";
 		std::error_code ec;
 		std::filesystem::create_directories(c.dir, ec);
 		if (ec) { fprintf(stderr, "two cabinets: cannot create %s: %s\n", c.dir.c_str(), ec.message().c_str()); return false; }
@@ -878,9 +878,27 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.machine.set_aspect(c.config.aspect ? aspects[c.config.aspect] : 4.0f / 3);
 		c.machine.enable_sound();
 		c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, c.config.effects / 100.0f);
-		load_blob(c.dir + "/nvram.sav", c.machine.nvram().data(), c.machine.nvram().size());
-		load_blob(c.dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
-				  c.machine.eeprom(), model1::EEPROM_SIZE);
+		auto load_save = [&](const char *name, uint8_t *destination, size_t size) {
+			std::string path = c.dir + "/" + name;
+			bool exists = std::filesystem::exists(path, ec);
+			if (!ec && !exists && p == 0) {
+				path = data_dir + "/two-cabinets/1/" + name;
+				exists = std::filesystem::exists(path, ec);
+			}
+			if (ec) {
+				fprintf(stderr, "two cabinets: cannot inspect save %s: %s\n", path.c_str(), ec.message().c_str());
+				return false;
+			}
+			if (!exists) return true;
+			if (!load_blob(path, destination, size)) {
+				fprintf(stderr, "two cabinets: could not read save %s (expected %zu bytes)\n", path.c_str(), size);
+				return false;
+			}
+			return true;
+		};
+		if (!load_save("nvram.sav", c.machine.nvram().data(), c.machine.nvram().size()) ||
+			!load_save(c.machine.real_ioboard() ? "eeprom_93c46.sav" : "eeprom.sav",
+				c.machine.eeprom(), model1::EEPROM_SIZE)) return false;
 		c.host = std::make_unique<host_context>(host_context{
 			c.machine, c.dir, assets, pc_mode, [&c] { c.settings_dirty = true; }, {}, {}, {}});
 		c.host->link_player = cabinet_count == 2 ? p + 1 : 0;
@@ -925,9 +943,25 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	for (int p = 0; p < cabinet_count; p++) if (!create_cabinet(p)) return 1;
 	std::unique_ptr<linked_pair> pair;
 	if (cabinet_count == 2) pair = std::make_unique<linked_pair>(cabinets[0]->machine, cabinets[1]->machine);
+	for (int p = 1; p < cabinet_count; p++)
+		cabinets[p]->game->sync_shared_settings(cabinets[0]->machine);
+	const bool trace_attract = getenv("M1_ATTRACT_TRACE") != nullptr;
+	std::array<int, 2> trace_phase{-1, -1};
+	std::array<uint32_t, 2> trace_camera{};
 	auto run_frame = [&] {
 		if (pair) pair->run_frame();
 		else cabinets[0]->machine.run_frame();
+		if (trace_attract)
+			for (int p = 0; p < cabinet_count; p++) {
+				auto &m = cabinets[p]->machine;
+				const int phase = m.work_ram()[0x1138];
+				if (phase != trace_phase[p] || m.camera() != trace_camera[p]) {
+					fprintf(stderr, "attract trace: frame=%llu cabinet=%d phase=%02x mode=%u camera=%08x\n",
+						(unsigned long long)m.frame_number(), p + 1, phase, m.game_mode(), m.camera());
+					trace_phase[p] = phase;
+					trace_camera[p] = m.camera();
+				}
+			}
 	};
 	auto boot = [&] {
 		for (int p = 0; p < cabinet_count; p++) {
@@ -995,7 +1029,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (!c.display->window) { fprintf(stderr, "two cabinets: window: %s\n", SDL_GetError()); return 1; }
 		c.display->renderer = SDL_CreateRenderer(c.display->window, nullptr);
 		if (!c.display->renderer) { fprintf(stderr, "two cabinets: renderer: %s\n", SDL_GetError()); return 1; }
-		SDL_SetRenderVSync(c.display->renderer, 0);
+		// One refresh wait per loop, even when the cabinets have separate windows.
+		if (!SDL_SetRenderVSync(c.display->renderer, p == 0 ? 1 : 0))
+			fprintf(stderr, "two cabinets: could not set cabinet %d vsync: %s\n", p + 1, SDL_GetError());
+		int vsync = 0;
+		if (!SDL_GetRenderVSync(c.display->renderer, &vsync))
+			fprintf(stderr, "two cabinets: could not read cabinet %d vsync: %s\n", p + 1, SDL_GetError());
+		else fprintf(stderr, "two cabinets: cabinet %d vsync %d\n", p + 1, vsync);
 	}
 	auto configure_3d = [&](local_cabinet &c, int requested) {
 		c.machine.set_gpu3d(nullptr);
@@ -1513,6 +1553,32 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back(back_item());
 		return page;
 	};
+	int service_menu_player = -1;
+	bool game_reset_requested = false;
+	bool remove_player2_requested = false;
+	auto cabinet_game_page = [&](int player) {
+		auto &c = *cabinets[player];
+		c.host->service_menu = [&, player] {
+			service_menu_player = player;
+			join_overlay.close();
+		};
+		menu_page page{player ? "Player 2 game" : "Player 1 game", "", c.game->cabinet_game_menu_items()};
+		page.items.push_back(back_item());
+		return page;
+	};
+	auto game_page = [&] {
+		menu_page page{"Game", "Race type and course selection are shared; player settings are kept separately.", {}};
+		for (int player = 0; player < cabinet_count; player++)
+			page.items.push_back({player ? "Player 2" : "Player 1",
+				"Language, car color, difficulty and the arcade service menu.", {}, {},
+				[&, player] { join_overlay.push(cabinet_game_page(player)); }});
+		for (auto &item : cabinets[0]->game->shared_game_menu_items())
+			page.items.push_back(std::move(item));
+		page.items.push_back({"Reset game", "Restart the active cabinets, keeping both players and their settings.",
+			{}, {}, [&] { game_reset_requested = true; join_overlay.close(); }});
+		page.items.push_back(back_item());
+		return page;
+	};
 	auto main_page = [&] {
 		menu_page page{"", "", {}};
 		page.items.push_back({"Resume", "Return to the game.", {}, {}, [&] { join_overlay.close(); }});
@@ -1521,6 +1587,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back({"Sound", "Overall volume, music and effects.", {}, {}, [&] { join_overlay.push(sound_page()); }});
 		page.items.push_back({"Controls", "Configure each player's controller and keyboard.", {}, {},
 			[&] { join_overlay.push(controls_page()); }});
+		page.items.push_back({"Game", "Race type, course, language, car color, difficulty and service settings.", {}, {},
+			[&] { join_overlay.push(game_page()); }});
+		if (on_demand && cabinet_count == 2)
+			page.items.push_back({"Remove Player 2", "Save both players' settings and restart in single-player mode. Player 2 can join again with Start.",
+				{}, {}, [&] { remove_player2_requested = true; join_overlay.close(); }});
 		page.items.push_back({"Quit", "Save and close the game.", {}, {}, [&] { running = false; }});
 		return page;
 	};
@@ -1560,7 +1631,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		bool ok = true;
 		for (int p = 0; p < cabinet_count; p++) {
 			auto &c = cabinets[p];
-			c->game->keep_arcade_settings();
+			// Pending menu choices must reach menu_closed(), which requests their restart.
+			if (!join_overlay.is_open()) c->game->keep_arcade_settings();
 			c->config.ctl[0] = bindings[p];
 			const bool nv = save_blob(c->dir + "/nvram.sav", c->machine.nvram().data(), c->machine.nvram().size());
 			const bool ee = save_blob(c->dir + (c->machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
@@ -1581,9 +1653,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	std::vector<int16_t> mixed;
 	const int shot_at = getenv("M1_SHOT_AT") ? atoi(getenv("M1_SHOT_AT")) : -1;
 	bool shot_saved = false;
-	auto reset_both = [&] {
+	auto reset_both = [&](bool return_to_solo = true) {
 		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
-		if (on_demand) {
+		if (on_demand && return_to_solo) {
 			pair.reset();
 			cabinets[1].reset();
 			cabinet_count = 1;
@@ -1595,9 +1667,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		for (int p = 0; p < cabinet_count; p++) again = cabinets[p]->game->booted() || again;
 		if (again && !boot()) { fprintf(stderr, "two cabinets: linked settings reboot did not complete\n"); return false; }
 		for (int p = 0; p < cabinet_count; p++) { cabinets[p]->pad = {}; cabinets[p]->service = {}; }
-		second_player = !on_demand;
+		second_player = cabinet_count == 2;
 		join_pending = false;
-		queued_controller = joined_controller = 0;
+		queued_controller = 0;
+		if (return_to_solo) joined_controller = 0;
 		if (on_demand && !SDL_SetWindowTitle(cabinets[0]->display->window, "Virtua Racing")) {
 			fprintf(stderr, "two cabinets: window title: %s\n", SDL_GetError());
 			return false;
@@ -1647,6 +1720,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
 		cabinet_count = 2;
 		if (!create_cabinet(1)) return false;
+		cabinets[1]->game->sync_shared_settings(cabinets[0]->machine);
 		cabinets[1]->config.ctl[0] = bindings[1];
 		cabinets[1]->display = cabinets[0]->display;
 		configure_3d(*cabinets[1], cabinets[1]->config.renderer3d);
@@ -1697,6 +1771,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 							cabinets[0]->machine.work_ram()[0x1138], join_pending, cabinets[0]->machine.read8(0x40dc8c));
 					} else if (!strcmp(name, "sleep")) {
 						wake_clock = audio_wake_clock(audio_wake_clock::ticks() - 60000000000ull);
+					} else if (!strcmp(name, "save")) {
+						if (!save()) return 1;
 					} else if (!strcmp(name, "close")) {
 						event.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
 						event.window.windowID = SDL_GetWindowID(cabinets[cabinet_count - 1]->display->window);
@@ -1805,12 +1881,27 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				else SDL_ResumeAudioStreamDevice(audio.get());
 			}
 			if (!menu_was_open) {
+				bool game_restart = game_reset_requested;
+				game_reset_requested = false;
+				for (int p = 0; p < cabinet_count; p++)
+					game_restart = cabinets[p]->game->menu_closed() != game_host::restart::none || game_restart;
+				for (int p = 1; p < cabinet_count; p++)
+					game_restart = cabinets[p]->game->sync_shared_settings(cabinets[0]->machine) || game_restart;
 				bool dirty = false;
 				for (int p = 0; p < cabinet_count; p++) dirty = dirty || cabinets[p]->settings_dirty;
 				if (dirty && quit_after < 0 && !save()) return 1;
-				if (shape_restart) {
+				if (shape_restart || game_restart || remove_player2_requested) {
 					shape_restart = false;
-					if (!reset_both()) return 1;
+					if (!reset_both(remove_player2_requested)) return 1;
+					if (remove_player2_requested) {
+						remove_player2_requested = false;
+						join_start_was = true;
+						fprintf(stderr, "two cabinets: player 2 removed from menu; returned to solo play\n");
+					}
+				}
+				if (service_menu_player >= 0) {
+					cabinets[service_menu_player]->service.test_pending = true;
+					service_menu_player = -1;
 				}
 				for (int p = 0; p < cabinet_count; p++) {
 					cabinets[p]->settings_dirty = false;
@@ -1875,7 +1966,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			if (paused) { owed = 0; if (audio) SDL_ClearAudioStream(audio.get()); break; }
 			if (cabinets[0]->service.left_test_menu || (cabinet_count == 2 && cabinets[1]->service.left_test_menu)) {
-				if (!reset_both()) return 1;
+				if (!reset_both(false)) return 1;
 				break;
 			}
 			const uint64_t frame_started = perf_enabled ? SDL_GetTicksNS() : 0;

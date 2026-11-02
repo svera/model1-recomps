@@ -79,6 +79,10 @@ public:
 	// Game-specific choices in Display and Game, and main-menu pages after Game and Controls.
 	virtual std::vector<menu_item> display_menu_items() { return {}; }
 	virtual std::vector<menu_item> game_menu_items() { return {}; }
+	virtual std::vector<menu_item> cabinet_game_menu_items() { return game_menu_items(); }
+	virtual std::vector<menu_item> shared_game_menu_items() { return {}; }
+	// Copy session-wide settings from the primary cabinet; true if a restart is needed.
+	virtual bool sync_shared_settings(model1 &) { return false; }
 	virtual std::vector<menu_item> menu_items() { return {}; }
 	virtual std::vector<menu_item> menu_items_after_controls() { return {}; }
 	// The menu closed: whether the game restarts, and with its code changed (recompiled first).

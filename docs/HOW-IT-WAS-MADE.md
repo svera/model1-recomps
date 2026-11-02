@@ -877,6 +877,95 @@ bindings persist in the second cabinet's settings file even before that cabinet 
 the regression verifies that a saved Player 2 Start key is loaded on the next launch. It also
 checks that the removed `--two-cabinets` option is rejected.
 
+The local session also exposes VR's existing Game settings through per-cabinet Player 1 and
+Player 2 pages: language, car color, difficulty and the arcade service menu. Race type
+(Normal or Grand Prix) and course selection are shared options directly on the Game page.
+Closing the menu applies each game's pending
+EEPROM changes through `menu_closed()`, then synchronizes the primary cabinet's course
+selection and race type to the other cabinet. A cabinet joining later inherits both before boot. A
+settings restart, the Game page's reset, and leaving the service menu reboot the active linked
+pair without dropping Player 2; F3 retains its explicit return-to-solo behavior. The ROM-backed
+regression changes Player 2's language and color, checks the EEPROM is saved and verifies both
+cabinets remain linked after the settings restart. It also checks all four shared course choices,
+saving during menu edits, both race types, the per-player menu layout and shared-setting
+synchronization on a later join.
+Player 1 reads and writes the original single-player save files in the game's data folder, so
+enabling on-demand local multiplayer does not reset language, rankings or other saved settings.
+If an original save file is absent, its interim `two-cabinets/1` counterpart is loaded and
+migrated on the next save; an existing original file takes precedence. Player 2's saves remain
+separate under `two-cabinets/2`. The regression verifies migration and original-save precedence
+using an English save alongside a stale Japanese cabinet-1 save.
+While two players are active, the main menu also offers Remove Player 2. It closes the menu,
+applies pending settings, saves both cabinets and uses the same return-to-solo reset as F3.
+The controller remains available for a later Start-to-join request. The regression verifies
+removal, saved Player 2 color, rejoining and absence of the action in solo mode.
+The local-session renderer enables VSync, matching the original single-player host. With
+separate cabinet windows only the primary renderer waits for refresh, avoiding two waits in
+one loop. The desktop regression checks the renderer's reported VSync state and uses explicit
+close events so its event timelines do not depend on the refresh rate.
+
+### Checking linked attract timing
+
+Different attract pictures do not by themselves establish clock drift. The ROM-backed linked
+regression now runs 10,000 link exchanges without Start, checking both cabinets' phase and camera
+target every simulation frame, then runs a complete linked race and watches the return to attract.
+Several initial demo/rankings cycles stay aligned. After the test race, the cabinets enter the
+first demo four frames apart, but finish it together; subsequent demo/rankings phases and camera
+targets match again. The test checks that alignment after the first post-race rankings screen,
+while retaining the moving-peer-position and independent-runtime checks.
+
+A separate hidden-window desktop check joins Player 2, uses Game > Reset game to remove the
+automatic Start pulses, and observes a full attract cycle. Phase changes coincide despite different
+absolute cabinet frame counters, which include standalone initialization before linking.
+`M1_ATTRACT_TRACE=1` logs phase and camera-target changes in the local host and link regression
+for diagnosing a reported mismatch. These checks cover phase/camera selection, not pixel equality,
+all saved-settings histories, or every camera script's internal timer.
+
+A hardware-owner report describes Virtua Racing's linked attracts as synchronized
+([Arcade Museum discussion](https://forums.arcade-museum.com/threads/attract-sync-between-linked-cabinets.528798/)),
+but does not establish exact frame timing or identical camera views. No forced RAM or screen
+mirroring was added: the tested lifecycle does not reproduce a persistent attract-phase offset.
+
+The reported mismatch was subsequently narrowed to **rival-car positions after a player race**,
+not the demo's phase or camera target. Comparing XYZ positions in all 16 car records reproduces
+that distinction: after results, several rivals diverge even once phases and camera targets match.
+In the deterministic test (different accelerator inputs for each player), the maximum separation
+for cars 1-7 over the observed subsequent demos ranges from zero to about 4.4 world units;
+car 0 reaches about 39.4. This is not a measurement of screen pixels or a hardware tolerance.
+The trace now reports per-car maximum separation before play and after resynchronization.
+The first eight cars are bit-identical throughout the initial 10,000-exchange attract period,
+which is also asserted. Other car records are measured rather than assumed identical.
+
+#### Tracing the retained rival state
+
+The reported case occurs after playing a two-player race and returning to attract. Comparing
+rival records at each cabinet's own attract-entry boundary separates inherited state from the
+four-frame difference in entering that first demo. The ROM's car initializer at `FE8A91` resets
+positions and many handling fields, but does not unconditionally reset each car's rank index
+at record offset `+0x123`. The racing ranking loop at `FEA743` writes those indices. After the
+test race, car 0's index is 14/15 across the cabinets, and car 1's is 15/14.
+
+A temporary, test-only experiment set the rank indices to `15 - car_index` for all 16 records
+while each cabinet was in attract setup (phase `02`), without changing clocks, cameras or copying
+positions. Repeating the same race then produced **zero XYZ separation for cars 0-7** throughout
+the observed demos after the first post-race rankings screen. The unmodified run had reached
+about 39.4 world units for car 0 and up to 4.4 for other cars in that group. This demonstrates
+that retained rank state contributes to the later position differences, including rivals;
+it does not establish that each rival's own rank is the direct cause rather than interactions
+with other cars.
+
+The experiment was not a complete all-car fix: records 9 and 10 still differed by up to about
+2.1 and 2.2 world units, respectively, and already differed by about 1.0 and 2.3 before player
+racing. At matching phase-03 entry points, rival record 2 also retained a differing halfword at
+`+0xB4` (which the ROM updates independently of rank). Its causal role was not established.
+These are separate limits to the experiment, not evidence that the game clocks drift.
+
+The temporary rank writes and detailed memory dumps were removed. Gameplay remains unchanged,
+as requested: phase/camera synchronization is not treated as identical rival positions, and no
+new attract-state normalization, cross-cabinet RAM copying or physics reset is applied.
+Exact linked arcade-hardware behavior remains unverified. The existing standalone first-demo
+car-0 rank adjustment described below is unchanged.
+
 ## VR's split-screen frame pacing
 
 The split-screen host originally polled with a fixed 1 ms delay, even though its work is scheduled
