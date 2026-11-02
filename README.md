@@ -93,8 +93,13 @@ or frame rate.
 
 ### Local multiplayer
 
-Virtua Racing starts in solo play and automatically supports a second local player. Connect
-a second controller and press its Start button to join split screen. If Player 2's controller
+Virtua Racing starts in solo play and automatically supports a second local player.
+The first controller to press Start becomes Player 1 and starts solo play, regardless of
+connection order. Start on another controller joins Player 2 from the demo or
+course-selection screen. Pressing Start again on Player 1's controller does not add a player.
+Joining restarts both players at linked course selection.
+If a race is already underway, the join waits until the game returns to
+the demo or course-selection screen, without interrupting Player 1's race. If Player 2's controller
 disconnects, the game returns to solo play. The local session's **Esc / View** menu provides
 Display settings for render scale, antialiasing, CPU/GPU 3D rendering, aspect ratio, frame rate,
 background and CRT/scanline screen filters, and fullscreen, plus shared Sound settings. The GPU

@@ -22,7 +22,7 @@ public:
 	{
 		if (channel != 0) return game_host::analog_key_input(machine, channel, low, high, value);
 		const bool entering_initials = machine.work_ram()[0x1138] == 0x1e && machine.read32(0x5018fc) != 0;
-		const bool selecting_course = machine.work_ram()[0x1138] == 0x10 && machine.camera() == 0x502150;
+		const bool selecting_course = in_course_selection(machine);
 		using screen = menu_steering::screen;
 		return menu_wheel.update(entering_initials ? screen::initials : selecting_course ? screen::course : screen::none,
 			low, high, value, exponential_steering);
@@ -211,7 +211,7 @@ public:
 
 	bool can_join_local_cabinet() const override
 	{
-		return in_attract_mode(ctx->machine);
+		return in_attract_mode(ctx->machine) || in_course_selection(ctx->machine);
 	}
 
 	bool booted() override

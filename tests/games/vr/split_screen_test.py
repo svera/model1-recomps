@@ -20,7 +20,8 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
             events += ("," if events else "") + f"{last_pass}:close"
         # VSync changes the number of simulation frames per event-loop pass.
         env = dict(os.environ, M1_HIDDEN="1", M1_QUIT_AFTER=str(max(frames, last_pass * 4 + 100)),
-                   M1_SAVE="1", M1_EVENTS_AT=events)
+                   M1_SAVE="1", M1_EVENTS_AT=events, M1_INPUT_TRACE="1",
+                   SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001")
         result = subprocess.run(
             [str(binary), str(data), "--scale", "1", *options],
             env=env, capture_output=True, text=True, timeout=120)
@@ -85,21 +86,20 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     player2_settings = (data / "two-cabinets/2/settings.ini").read_text()
     assert "p1_key_start = T" in player2_settings
 
-    cancelled = run(["--split-screen"], "10:1,100:t,150:f3,200:status,240:close")
+    cancelled = run(["--split-screen"], "10:1,10:t,10:f3,40:status,60:close")
     assert "join requested" in cancelled and "cabinet 2 compiled" not in cancelled
     assert re.search(r"cabinets=1 .*join=0 role=0", cancelled)
 
-    disconnected_while_queued = run(["--split-screen"], "10:1,40:pad2,60:disconnect2,80:status")
+    disconnected_while_queued = run(["--split-screen"], "10:1,10:pad2,10:disconnect2,80:status")
     assert "player 2 disconnected before joining; cancelled queued join" in disconnected_while_queued
     assert "cabinet 2 compiled" not in disconnected_while_queued
     assert re.search(r"cabinets=1 .*join=0 role=0", disconnected_while_queued)
 
-    # Player 1's course selection must not be reset by a player 2 join request.
-    queued = run(["--split-screen"], "10:1,100:t,200:status,300:status")
-    assert "join requested" in queued and "player 2 joined" not in queued
-    assert "cabinet 2 compiled" not in queued
-    assert re.search(r"cabinets=1 .*phase=10 join=1 role=0", queued)
-    assert not (data / "two-cabinets/2/nvram.sav").exists()
+    # Player 2 can join while Player 1 is choosing a course, not just during attract.
+    course_join = run(["--split-screen"], "10:1,80:status,100:t,200:status,220:close")
+    assert re.search(r"cabinets=1 .*phase=10 join=0 role=0", course_join)
+    assert "player 2 joined, two cabinets running" in course_join
+    assert re.search(r"cabinets=2 .*phase=10 join=0 role=1", course_join)
 
     joined = run(["--split-screen", "--split-layout", "top-bottom"],
                  "10:t,40:p,60:f7,80:resize,100:p,120:status")
@@ -224,4 +224,35 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     assert race_type(player1_eeprom) == expected_race_type
     assert race_type(player2_eeprom) == expected_race_type
 
-print("Local multiplayer: default solo launch, original save preservation/migration, controller join/disconnect, deferred join, linked boot, saved roles, reset/rejoin, player 2 settings, shared race type and course selection passed")
+    # A staged Bluetooth connection can lose its hotplug event. Use two identical
+    # SDL pads and a real held Start button instead of the direct join test hook.
+    late_controller = run([], "10:1,40:latepads,250:status,260:close", frames=1000)
+    assert "player 2 join requested" in late_controller
+    assert "player 2 joined, two cabinets running" in late_controller
+    assert re.search(r"cabinets=2 .*join=0 role=1", late_controller)
+
+    late_course_join = run([], "10:1,30:status,40:latepads,250:status,260:close", frames=1000)
+    assert re.search(r"cabinets=1 .*phase=10 join=0 role=0", late_course_join)
+    assert "player 2 joined, two cabinets running" in late_course_join
+    assert re.search(r"cabinets=2 .*phase=10 join=0 role=1", late_course_join)
+
+    # A tap released before the host polls must not depend on the periodic scan.
+    tapped_controller = run([], "10:1,40:tappads,80:status,90:close", frames=1000)
+    assert "button=start down" in tapped_controller
+    assert "button=start up" in tapped_controller
+    assert "player 2 join requested" in tapped_controller
+    assert "player 2 joined, two cabinets running" in tapped_controller
+    assert re.search(r"cabinets=2 .*join=0 role=1", tapped_controller)
+
+    for first, second in ((1, 2), (2, 1)):
+        claimed = run([], f"10:testpads,30:tap{first},80:status,100:tap{first},"
+                      f"160:status,180:tap{second},240:status,260:close", frames=1000)
+        assert claimed.count("claimed player 1; starting solo play") == 1
+        assert len(re.findall(r"cabinets=1 .*phase=10 join=0 role=0", claimed)) == 2
+        assert claimed.count("player 2 joined, two cabinets running") == 1
+        assert re.search(r"cabinets=2 .*phase=10 join=0 role=1", claimed)
+        claim = re.search(r"controller=(\d+) button=start down", claimed)
+        assert claim
+        assert f"controller {claim[1]} claimed player 1" in claimed
+
+print("Local multiplayer: default solo launch, original save preservation/migration, controller join/disconnect, missed hotplug recovery, deferred join, linked boot, saved roles, reset/rejoin, player 2 settings, shared race type and course selection passed")

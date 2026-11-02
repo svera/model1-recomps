@@ -94,7 +94,7 @@ public:
 	virtual void before_frame() {}
 	virtual void after_frame() {}
 	virtual bool hide_frame() const { return false; }
-	// A queued local multiplayer join may reboot only from an idle attract screen.
+	// Whether a queued local multiplayer join can safely restart into linked play.
 	virtual bool can_join_local_cabinet() const { return false; }
 
 	// Optional text accompanying the battery-backed save (games without one return an empty name).

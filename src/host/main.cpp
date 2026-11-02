@@ -1181,11 +1181,25 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	}
 	std::array<player_controls, 2> bindings{cabinets[0]->config.ctl[0],
 		on_demand ? waiting_config.ctl[0] : cabinets[1]->config.ctl[0]};
+	std::array<SDL_JoystickID, 2> claimed_pads{};
+	auto open_local_pads = [&] { return refresh_gamepads(pads, bindings.data(), false, claimed_pads); };
 	struct pad_cleanup {
 		SDL_Gamepad **pads;
-		~pad_cleanup() { for (int p = 0; p < 2; p++) if (pads[p]) SDL_CloseGamepad(pads[p]); }
+		std::array<SDL_JoystickID, 2> test_pads{};
+		SDL_Joystick *test_joystick = nullptr;
+		SDL_Gamepad *test_gamepad = nullptr;
+		~pad_cleanup()
+		{
+			for (int p = 0; p < 2; p++) if (pads[p]) SDL_CloseGamepad(pads[p]);
+			if (test_gamepad) SDL_CloseGamepad(test_gamepad);
+			if (test_joystick) SDL_CloseJoystick(test_joystick);
+			for (auto id : test_pads)
+				if (id && !SDL_DetachVirtualJoystick(id))
+					fprintf(stderr, "two cabinets: detach test controller: %s\n", SDL_GetError());
+		}
 	} close_pads{pads};
-	refresh_gamepads(pads, bindings.data(), false);
+	open_local_pads();
+	uint64_t next_pad_scan = SDL_GetTicks() + 1000;
 	game_menu join_overlay;
 	if (on_demand) {
 		if (!join_overlay.init(cabinets[0]->display->window, cabinets[0]->display->renderer, assets)) {
@@ -1197,6 +1211,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	std::array<uint64_t, 2> next_picture{};
 	bool shape_restart = false;
 	bool second_player = !on_demand, join_pending = false, join_start_was = false;
+	bool player1_started = !on_demand;
+	const bool trace_input = getenv("M1_INPUT_TRACE") != nullptr;
 	SDL_JoystickID queued_controller = 0, joined_controller = 0;
 	const SDL_JoystickID test_controller = SDL_JoystickID(0x7ffffffe);
 	if (!join_overlay.ready() && on_demand) {
@@ -1367,7 +1383,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			cabinets[player]->config.ctl[0] = bindings[player];
 			cabinets[player]->settings_dirty = true;
 		}
-		refresh_gamepads(pads, bindings.data(), false);
+		open_local_pads();
 		join_overlay.refresh();
 		return true;
 	};
@@ -1388,6 +1404,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		const auto &choice = bindings[player].pad_choice;
 		if (choice != "auto" && choice != "none" && bindings[1 - player].pad_choice == choice)
 			bindings[1 - player].pad_choice = "auto";
+		claimed_pads = {};
 		controls_changed(player);
 		controls_changed(1 - player);
 	};
@@ -1556,6 +1573,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back({"Swap controllers", "Swap which connected controller is assigned to each player.", {}, {},
 			[&] {
 				std::swap(bindings[0].pad_choice, bindings[1].pad_choice);
+				std::swap(pads[0], pads[1]);
+				for (int p = 0; p < 2; p++)
+					claimed_pads[p] = pads[p] ? SDL_GetGamepadID(pads[p]) : 0;
+				if (joined_controller) joined_controller = claimed_pads[1];
+				if (queued_controller) queued_controller = claimed_pads[1];
 				controls_changed(0);
 				controls_changed(1);
 			}});
@@ -1680,6 +1702,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		join_pending = false;
 		queued_controller = 0;
 		if (return_to_solo) joined_controller = 0;
+		if (return_to_solo) player1_started = false;
 		if (on_demand && !SDL_SetWindowTitle(cabinets[0]->display->window, "Virtua Racing")) {
 			fprintf(stderr, "two cabinets: window title: %s\n", SDL_GetError());
 			return false;
@@ -1694,11 +1717,34 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	};
 	auto request_join = [&](SDL_JoystickID controller = 0) {
 		if (!on_demand || second_player || join_pending) return true;
+		player1_started = true;
 		join_pending = true;
 		queued_controller = controller;
 		next_picture = {};
-		fprintf(stderr, "two cabinets: player 2 join requested; waiting for attract mode\n");
+		fprintf(stderr, "two cabinets: player 2 join requested; waiting for attract mode or course selection\n");
 		return true;
+	};
+	auto controller_start = [&](int player) {
+		if (!on_demand || second_player) return true;
+		if (!player1_started) {
+			if (player == 1) std::swap(pads[0], pads[1]);
+			for (int p = 0; p < 2; p++)
+				claimed_pads[p] = pads[p] ? SDL_GetGamepadID(pads[p]) : 0;
+			player1_started = true;
+			cabinets[0]->pad = {};
+			cabinets[0]->pad.start_delay = 0;
+			join_start_was = false;
+			join_overlay.refresh();
+			fprintf(stderr, "two cabinets: controller %u claimed player 1; starting solo play\n",
+				unsigned(claimed_pads[0]));
+			return true;
+		}
+		if (player == 0) {
+			cabinets[0]->pad.start_delay = 0;
+			return true;
+		}
+		claimed_pads[1] = SDL_GetGamepadID(pads[1]);
+		return request_join(claimed_pads[1]);
 	};
 	auto cancel_pending_join = [&] {
 		if (!join_pending) return true;
@@ -1787,6 +1833,68 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						event.window.windowID = SDL_GetWindowID(cabinets[cabinet_count - 1]->display->window);
 					} else if (!strcmp(name, "pad2")) {
 						if (!request_join(test_controller)) return 1;
+					} else if (!strcmp(name, "tap1") || !strcmp(name, "tap2")) {
+						const int p = !strcmp(name, "tap2") ? 1 : 0;
+						auto *pad = SDL_OpenGamepad(close_pads.test_pads[p]);
+						if (!pad) {
+							fprintf(stderr, "two cabinets: open test pad for tap: %s\n", SDL_GetError());
+							return 1;
+						}
+						auto *joystick = SDL_GetGamepadJoystick(pad);
+						for (bool down : {true, false}) {
+							if (!SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_START, down)) {
+								fprintf(stderr, "two cabinets: test pad tap: %s\n", SDL_GetError());
+								SDL_CloseGamepad(pad);
+								return 1;
+							}
+							SDL_UpdateJoysticks();
+						}
+						SDL_CloseGamepad(pad);
+					} else if (!strcmp(name, "latepads") || !strcmp(name, "tappads") ||
+						!strcmp(name, "testpads")) {
+						SDL_VirtualJoystickDesc desc;
+						SDL_INIT_INTERFACE(&desc);
+						desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+						desc.vendor_id = 0x1209;
+						desc.product_id = 1;
+						desc.name = "Split-screen regression pad";
+						desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+						desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+						desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
+						desc.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
+						for (auto &id : close_pads.test_pads) {
+							id = SDL_AttachVirtualJoystick(&desc);
+							if (!id) {
+								fprintf(stderr, "two cabinets: attach test controller: %s\n", SDL_GetError());
+								return 1;
+							}
+						}
+						close_pads.test_joystick = SDL_OpenJoystick(close_pads.test_pads[1]);
+						const bool tap = !strcmp(name, "tappads");
+						if (tap) {
+							close_pads.test_gamepad = SDL_OpenGamepad(close_pads.test_pads[1]);
+							if (!close_pads.test_gamepad) {
+								fprintf(stderr, "two cabinets: open test gamepad: %s\n", SDL_GetError());
+								return 1;
+							}
+						}
+						if (!close_pads.test_joystick ||
+							!SDL_SetJoystickVirtualButton(close_pads.test_joystick, SDL_GAMEPAD_BUTTON_START,
+								strcmp(name, "testpads") != 0)) {
+							fprintf(stderr, "two cabinets: test controller Start: %s\n", SDL_GetError());
+							return 1;
+						}
+						SDL_UpdateJoysticks();
+						if (tap) {
+							if (!SDL_SetJoystickVirtualButton(close_pads.test_joystick, SDL_GAMEPAD_BUTTON_START, false)) {
+								fprintf(stderr, "two cabinets: release test controller Start: %s\n", SDL_GetError());
+								return 1;
+							}
+							SDL_UpdateJoysticks();
+						}
+						SDL_FlushEvent(SDL_EVENT_JOYSTICK_ADDED);
+						SDL_FlushEvent(SDL_EVENT_GAMEPAD_ADDED);
+						SDL_FlushEvent(SDL_EVENT_GAMEPAD_REMAPPED);
 					} else if (!strcmp(name, "disconnect2")) {
 						event.type = SDL_EVENT_GAMEPAD_REMOVED;
 						event.gdevice.which = test_controller;
@@ -1810,6 +1918,20 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		++passes;
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
+			if (trace_input && (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+				event.type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
+				const auto button = SDL_GamepadButton(event.gbutton.button);
+				const char *name = SDL_GetGamepadStringForButton(button);
+				fprintf(stderr, "input: time=%llu controller=%u button=%s %s player1=%u player2=%u "
+					"start1=%d start2=%d menu=%d cabinets=%d join=%d can_join=%d\n",
+					static_cast<unsigned long long>(SDL_GetTicks()), unsigned(event.gbutton.which),
+					name ? name : "unknown", event.gbutton.down ? "down" : "up",
+					pads[0] ? unsigned(SDL_GetGamepadID(pads[0])) : 0,
+					pads[1] ? unsigned(SDL_GetGamepadID(pads[1])) : 0,
+					bindings[0].pad[C_START], bindings[1].pad[C_START],
+					join_overlay.is_open(), cabinet_count, join_pending,
+					cabinets[0]->game->can_join_local_cabinet());
+			}
 			if (join_overlay.is_open() && join_overlay.handle_event(event)) continue;
 			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) running = false;
 			else if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
@@ -1818,8 +1940,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				last = SDL_GetTicksNS();
 			}
 			else if (event.type == SDL_EVENT_GAMEPAD_ADDED || event.type == SDL_EVENT_GAMEPAD_REMOVED ||
-					 event.type == SDL_EVENT_GAMEPAD_REMAPPED) {
-				refresh_gamepads(pads, bindings.data(), false);
+					 event.type == SDL_EVENT_GAMEPAD_REMAPPED || event.type == SDL_EVENT_JOYSTICK_ADDED ||
+					 event.type == SDL_EVENT_JOYSTICK_REMOVED) {
+				open_local_pads();
 				if (on_demand && event.type == SDL_EVENT_GAMEPAD_REMOVED) {
 					if (join_pending && queued_controller == event.gdevice.which) {
 						if (!cancel_pending_join()) return 1;
@@ -1830,6 +1953,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 			}
 			else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+				if ((!pads[0] || SDL_GetGamepadID(pads[0]) != event.gbutton.which) &&
+					(!pads[1] || SDL_GetGamepadID(pads[1]) != event.gbutton.which) &&
+					open_local_pads()) {
+					for (int p = 0; p < cabinet_count; p++) cabinets[p]->pad = {};
+					join_overlay.refresh();
+				}
 				if (join_overlay.ready() && !join_overlay.is_open())
 					for (int p = 0; p < cabinet_count; p++)
 						if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
@@ -1837,8 +1966,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 							open_menu();
 							break;
 						}
-				if (on_demand && pads[1] && SDL_GetGamepadID(pads[1]) == event.gbutton.which &&
-					bindings[1].pad[C_START] == event.gbutton.button && !request_join(event.gbutton.which)) return 1;
+				for (int p = 0; p < 2; p++)
+					if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
+						bindings[p].pad[C_START] == event.gbutton.button) {
+						if (!controller_start(p)) return 1;
+						break;
+					}
 				for (int p = 0; p < 2; p++)
 					if (paused && pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
 						bindings[p].pad[C_MENU] == event.gbutton.button) {
@@ -1855,7 +1988,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				if (on_demand && event.key.scancode == bindings[1].key[C_START] && !request_join()) return 1;
 				for (int p = 0; p < cabinet_count; p++)
-					if (event.key.scancode == bindings[p].key[C_START]) cabinets[p]->pad.start_delay = 0;
+					if (event.key.scancode == bindings[p].key[C_START]) {
+						if (p == 0) player1_started = true;
+						cabinets[p]->pad.start_delay = 0;
+					}
 				if (event.key.scancode == SDL_SCANCODE_P) {
 					paused = !paused;
 					fprintf(stderr, "two cabinets: %s both at frame %d\n", paused ? "paused" : "resumed", frames);
@@ -1925,12 +2061,23 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (join_overlay.is_open()) paused = true;
 		if (!running) break;
+		if (SDL_GetTicks() >= next_pad_scan) {
+			if (open_local_pads()) {
+				for (int p = 0; p < cabinet_count; p++) cabinets[p]->pad = {};
+				join_overlay.refresh();
+			}
+			next_pad_scan = SDL_GetTicks() + 1000;
+		}
 		if (on_demand && !second_player) {
 			const bool *keys = SDL_GetKeyboardState(nullptr);
 			const bool key_start = bindings[1].key[C_START] != SDL_SCANCODE_UNKNOWN && keys[bindings[1].key[C_START]];
-			const bool pad_start = pads[1] && player_controls::pad_down(pads[1], bindings[1].pad[C_START]);
-			if ((key_start || pad_start) && !join_start_was &&
-				!request_join(pad_start ? SDL_GetGamepadID(pads[1]) : 0)) return 1;
+			const int player = !player1_started && pads[0] &&
+				player_controls::pad_down(pads[0], bindings[0].pad[C_START]) ? 0 : 1;
+			const bool pad_start = pads[player] && player_controls::pad_down(pads[player], bindings[player].pad[C_START]);
+			if ((key_start || pad_start) && !join_start_was) {
+				if (key_start) { if (!request_join()) return 1; }
+				else if (!controller_start(player)) return 1;
+			}
 			join_start_was = key_start || pad_start;
 		}
 		const uint64_t now = SDL_GetTicksNS();

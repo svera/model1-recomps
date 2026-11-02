@@ -388,6 +388,12 @@ bool in_attract_mode(model1 &machine)
 	return machine.past_boot() && !machine.in_test_menu_mode() && (phase == 0x03 || phase == 0x07);
 }
 
+bool in_course_selection(model1 &machine)
+{
+	return machine.past_boot() && !machine.in_test_menu_mode() &&
+		machine.work_ram()[0x1138] == 0x10 && machine.camera() == 0x502150;
+}
+
 void camera_cycle::update(model1 &machine, bool pressed)
 {
 	const uint8_t phase = machine.work_ram()[0x1138];

@@ -855,14 +855,34 @@ budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and
 ## VR's local multiplayer entry and disconnect handling
 
 Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.
-Player 2's Start on the second configured controller queues a join, which
-starts the linked cabinet at the next safe attract-mode point. The controller's device ID
+The first controller to press Start claims Player 1 and starts solo play, regardless of
+connection order. Instance-ID claims keep that assignment stable across periodic scans,
+including when both controllers have identical GUIDs, without changing saved pad choices.
+The Controls menu can explicitly reassign pads; returning to solo with a reset clears the
+first-Start latch. Keyboard Player 1 Start also establishes solo play, while the separate
+Player 2 Start key remains an explicit join shortcut.
+Start on the other controller queues a join, which
+starts the linked cabinet at the next safe attract-mode or course-selection point.
+Joining during course selection restarts both cabinets into linked course selection; an
+active race is not interrupted. The controller's device ID
 is retained with that request; if it disconnects while queued, the join is cancelled, and
 if it disconnects after joining, the second cabinet is saved and released and the first
 returns to standalone play. This avoids continuing to spend emulation and rendering time
 on an absent player. Keyboard-initiated joins remain available and are not tied to a
 controller's connection lifetime. `--split-screen` remains available to explicitly select
 split-screen layout behavior.
+
+Like the single-cabinet host, the local host listens for joystick as well as gamepad
+connection events and reconciles controller assignments once per second. This retries
+staged Bluetooth opens and recovers missed hotplug events without reopening active pads.
+Button-down events from an unassigned controller also trigger reconciliation before the
+button is handled, so a short Start tap is retained even before the next periodic scan.
+The regression attaches two identical SDL virtual gamepads, discards their connection events,
+and checks both a held Start button and a tap released before event polling to verify
+discovery and joining through the real input path.
+For physical-controller diagnosis, `M1_INPUT_TRACE=1` logs gamepad button-down/up events,
+both controller assignments and Start bindings, menu state, and whether joining is pending
+or currently allowed. It does not change input handling.
 
 The ROM-backed split-screen regression exercises both disconnect cases as well as a
 successful controller join, solo boot, deferred joins and reset/rejoin. It opens the local
