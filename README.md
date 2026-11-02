@@ -83,7 +83,7 @@ Pad buttons**. Coins are only needed in Arcade play style.
 
 Open the menu with **Esc** or **View / Select**:
 
-- **Display:** change render scale, antialiasing, screen shape, background filtering, fullscreen, and frame rate.
+- **Display:** change render scale, antialiasing, screen shape (Fit window, 4:3, 16:10, 16:9, 21:9, or 32:9), background filtering, fullscreen, and frame rate.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** choose your car color, language, course, and difficulty.
 - **Sound:** adjust the audio levels.
@@ -183,7 +183,7 @@ needed in Arcade play style. Hold **Tab** to fast-forward, including through att
 
 Open the menu with **Esc** or **View / Select**:
 
-- **Display:** change sharpness, screen shape, fullscreen, and frame rate. 30 FPS shows the
+- **Display:** change sharpness, screen shape (up to 32:9), fullscreen, and frame rate. 30 FPS shows the
   game as the arcade drew it; 60 and 120 smooth the motion between pictures.
 - **Display > LOD:** Off (default) keeps the most detailed models at every distance, including
   the complete Death Star through the attract-mode approach. On uses the arcade's simpler

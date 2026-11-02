@@ -255,4 +255,32 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
         assert claim
         assert f"controller {claim[1]} claimed player 1" in claimed
 
-print("Local multiplayer: default solo launch, original save preservation/migration, controller join/disconnect, missed hotplug recovery, deferred join, linked boot, saved roles, reset/rejoin, player 2 settings, shared race type and course selection passed")
+    def picture_shape(player=1):
+        path = data / "settings.ini" if player == 1 else data / "two-cabinets/2/settings.ini"
+        return int(re.search(r"^picture_shape = (\d+)$", path.read_text(), re.MULTILINE)[1])
+
+    run(["--aspect", "32:9"], "40:close")
+    assert picture_shape() == 5
+    wide_reload = run([], "10:t,80:status,100:close")
+    assert "player 2 joined, two cabinets running" in wide_reload
+    assert picture_shape() == picture_shape(2) == 5
+
+    shape_menu = "10:escape,12:down,14:return,16:down,18:down,20:down"
+    run(["--aspect", "21:9"], shape_menu + ",22:right,24:escape,26:escape,40:close")
+    assert picture_shape() == 5
+    run([], shape_menu + ",22:right,24:escape,26:escape,40:close")
+    assert picture_shape() == 0
+    run([], shape_menu + ",22:left,24:escape,26:escape,40:close")
+    assert picture_shape() == 5
+
+    # Arcade mode uses the single-cabinet host shared with SWA.
+    run(["--arcade", "--aspect", "32:9"], "40:close")
+    assert picture_shape() == 5
+    run(["--arcade"], "40:close")
+    assert picture_shape() == 5
+    run(["--arcade"], "10:f6,40:close")
+    assert picture_shape() == 0
+    run(["--arcade", "--aspect", "21:9"], "10:f6,40:close")
+    assert picture_shape() == 5
+
+print("Local multiplayer: default solo launch, original save preservation/migration, controller join/disconnect, missed hotplug recovery, deferred join, linked boot, saved roles, reset/rejoin, player 2 settings, shared race type and course selection, 32:9 selection/persistence/menu and single-cabinet F6 cycling passed")

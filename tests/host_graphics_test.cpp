@@ -123,12 +123,13 @@ static void split_screen_checks()
 			assert(SDL_UpdateTexture(textures[0], nullptr, &colours[0], 4));
 		}
 		if (size.x == 120) {
+			for (float wide_aspect : {16.0f / 9, 32.0f / 9})
 			for (auto layout : {cabinet_layout::side_by_side, cabinet_layout::top_bottom, cabinet_layout::windows}) {
 				assert(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
 				assert(SDL_RenderClear(renderer));
 				const int views = layout == cabinet_layout::windows ? 1 : 2;
 				for (int p = 0; p < views; p++)
-					assert(draw_cabinet(renderer, textures[p], cabinet_viewport(layout, size.x, size.y, p), p ? 16.0f / 9 : 4.0f / 3));
+					assert(draw_cabinet(renderer, textures[p], cabinet_viewport(layout, size.x, size.y, p), p ? wide_aspect : 4.0f / 3));
 				auto *pixels = SDL_RenderReadPixels(renderer, nullptr);
 				assert(pixels);
 				for (int p = 0; p < views; p++) {
@@ -147,7 +148,7 @@ static void split_screen_checks()
 							min_x = std::min(min_x, x); max_x = std::max(max_x, x);
 							min_y = std::min(min_y, y); max_y = std::max(max_y, y);
 						}
-					const float aspect = p ? 16.0f / 9 : 4.0f / 3;
+					const float aspect = p ? wide_aspect : 4.0f / 3;
 					const float width = std::min(float(view.w), view.h * aspect);
 					const float height = width / aspect;
 					assert(std::fabs((max_x - min_x + 1) - width) <= 1);

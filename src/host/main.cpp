@@ -65,6 +65,12 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #include <pthread.h>
 #endif
 
+// Picture shapes F6 / View+RB cycle through; zero follows the window.
+static constexpr float ASPECTS[] = { 0.0f, 4.0f / 3, 16.0f / 10, 16.0f / 9, 64.0f / 27, 32.0f / 9 };
+static constexpr const char *ASPECT_NAMES[] = { "auto", "4:3", "16:10", "16:9", "21:9", "32:9" };
+static constexpr int N_ASPECTS = sizeof(ASPECTS) / sizeof(ASPECTS[0]);
+static_assert(sizeof(ASPECT_NAMES) / sizeof(ASPECT_NAMES[0]) == N_ASPECTS);
+
 // Every message box goes through here: a test run (M1_HIDDEN) never shows one (nor a file picker),
 // the message goes to stderr (log.txt without a console) instead.
 static bool message_box(SDL_MessageBoxFlags flags, const char *title, const std::string &msg)
@@ -466,7 +472,7 @@ struct settings
 		};
 		auto flag = [&](const char *k, bool &v) { int i = v; num(k, i, 0, 1); v = i; };
 		num("scale", scale, 1, 6);
-		num("picture_shape", aspect, 0, 4);
+		num("picture_shape", aspect, 0, N_ASPECTS - 1);
 		num("volume", volume, 0, 100);
 		num("antialiasing", aa, 0, 3);   // 1 off, 0 Low (the 3D's edges smoothed), 2 and 3 drawn larger
 		num("music_volume", music, 0, 100);
@@ -835,7 +841,6 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	const bool pc_mode = true;
 	const bool hidden = getenv("M1_HIDDEN") != nullptr;
 	const int quit_after = getenv("M1_QUIT_AFTER") ? atoi(getenv("M1_QUIT_AFTER")) : -1;
-	const float aspects[] = {0, 4.0f / 3, 16.0f / 10, 16.0f / 9, 64.0f / 27};
 	rec::hints map;
 	if (!interp && !map.read(assets + "/games/vr/vr_map.txt")) {
 		fprintf(stderr, "two cabinets: could not read VR's recompiler map\n");
@@ -876,7 +881,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.machine.set_edge_aa(c.config.aa == 0);
 		c.machine.set_smooth(c.config.fps != 30);
 		c.machine.set_sky_filter(c.config.smooth_bg);
-		c.machine.set_aspect(c.config.aspect ? aspects[c.config.aspect] : 4.0f / 3);
+		c.machine.set_aspect(c.config.aspect ? ASPECTS[c.config.aspect] : 4.0f / 3);
 		c.machine.enable_sound();
 		c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, c.config.effects / 100.0f);
 		auto load_save = [&](const char *name, uint8_t *destination, size_t size) {
@@ -905,7 +910,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.host->link_player = cabinet_count == 2 ? p + 1 : 0;
 		c.host->standalone_cabinet = cabinet_count == 1;
 		c.game->start(*c.host);
-		c.game->set_picture_shape(c.config.aspect ? aspects[c.config.aspect] : 0);
+		c.game->set_picture_shape(ASPECTS[c.config.aspect]);
 		c.game->before_boot();
 		c.game->play_style_changed();
 		load_backgrounds(c.machine, assets + "/games/vr/backgrounds");
@@ -1275,15 +1280,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back({"Picture shape", "Fit the window or preserve a fixed arcade aspect ratio.",
 			[&] {
 				const int aspect = cabinets[0]->config.aspect;
-				const char *names[] = {"Fit window", "4:3", "16:10", "16:9", "21:9"};
-				return std::string(names[std::clamp(aspect, 0, 4)]);
+				return std::string(aspect ? ASPECT_NAMES[std::clamp(aspect, 0, N_ASPECTS - 1)] : "Fit window");
 			},
 			[&](int direction) {
-				const float shapes[] = {0, 4.0f / 3, 16.0f / 10, 16.0f / 9, 64.0f / 27};
-				const int aspect = wrap_choice(cabinets[0]->config.aspect + direction, 5);
+				const int aspect = wrap_choice(cabinets[0]->config.aspect + direction, N_ASPECTS);
 				for (int p = 0; p < cabinet_count; p++) {
 					cabinets[p]->config.aspect = aspect;
-					shape_restart = cabinets[p]->game->set_picture_shape(shapes[aspect]) || shape_restart;
+					shape_restart = cabinets[p]->game->set_picture_shape(ASPECTS[aspect]) || shape_restart;
 				}
 				apply_shared_settings();
 			}});
@@ -2115,7 +2118,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				if (action == hotkey::aspect) {
 					for (int i = 0; i < cabinet_count; i++)
-						cabinets[i]->config.aspect = (cabinets[i]->config.aspect + 1) % 5;
+						cabinets[i]->config.aspect = (cabinets[i]->config.aspect + 1) % N_ASPECTS;
 					apply_shared_settings();
 				}
 				c.game->before_frame();
@@ -2180,7 +2183,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			const SDL_Rect viewport = cabinet_viewport(layout, width, height, p, second_player);
 			viewports[p] = viewport;
 			if (viewport.w <= 0 || viewport.h <= 0) continue;
-			const float aspect = c.config.aspect ? aspects[c.config.aspect] :
+			const float aspect = c.config.aspect ? ASPECTS[c.config.aspect] :
 				(viewport.h ? std::clamp(float(viewport.w) / viewport.h, 4.0f / 3, 32.0f / 9) : 4.0f / 3);
 			picture_aspects[p] = aspect;
 			const bool shape_changed = std::fabs(c.machine.aspect() - aspect) > 0.001f;
@@ -2326,11 +2329,6 @@ int main(int argc, char **argv)
 		std::string d = std::string(base) + "data";
 		if (FILE *f = fopen((d + "/maincpu.bin").c_str(), "rb")) { fclose(f); dir = d; }
 	}
-	// picture shapes F6 / View+RB cycle through
-	// 0 = follow the window's shape; the rest are fixed
-	const float ASPECTS[] = { 0.0f, 4.0f / 3.0f, 16.0f / 10.0f, 16.0f / 9.0f, 64.0f / 27.0f };
-	const char *ASPECT_NAMES[] = { "auto", "4:3", "16:10", "16:9", "21:9" };
-	const int N_ASPECTS = 5;
 	// the command line wins over settings.ini, which is found in the data directory
 	int arg_scale = 0, arg_aspect = -1, arg_full = -1;
 #ifdef M1_NATIVE
