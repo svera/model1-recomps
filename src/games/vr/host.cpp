@@ -17,13 +17,15 @@ public:
 	const romset::definition &romset() const override { return ROMSET; }
 	const control_profile &controls() const override { return CONTROLS; }
 
-	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value) override
+	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value,
+		bool exponential_steering = false) override
 	{
 		if (channel != 0) return game_host::analog_key_input(machine, channel, low, high, value);
 		const bool entering_initials = machine.work_ram()[0x1138] == 0x1e && machine.read32(0x5018fc) != 0;
 		const bool selecting_course = machine.work_ram()[0x1138] == 0x10 && machine.camera() == 0x502150;
 		using screen = menu_steering::screen;
-		return menu_wheel.update(entering_initials ? screen::initials : selecting_course ? screen::course : screen::none, low, high, value);
+		return menu_wheel.update(entering_initials ? screen::initials : selecting_course ? screen::course : screen::none,
+			low, high, value, exponential_steering);
 	}
 
 	void load_settings(const settings_map &settings) override

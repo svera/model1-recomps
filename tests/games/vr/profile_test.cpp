@@ -8,6 +8,75 @@
 
 using screen = game::vr::menu_steering::screen;
 
+static void steering_curve()
+{
+	using wheel_t = game::vr::menu_steering;
+	wheel_t linear, curved;
+	assert(wheel_t::exponential(0) == 0);
+	assert(wheel_t::exponential(128) == 128);
+	assert(wheel_t::exponential(255) == 255);
+	assert(wheel_t::exponential(64) == 96);
+	assert(wheel_t::exponential(192) == 160);
+	int previous = 0;
+	for (int analog = 0; analog <= 255; analog++) {
+		const auto input = uint8_t(analog);
+		const int output = curved.update(screen::none, false, false, input, true);
+		assert(output >= previous);
+		assert(std::abs(output - 128) <= std::abs(analog - 128));
+		assert(linear.update(screen::none, false, false, input) == input);
+		assert(curved.update(screen::none, true, false, input, true) == 0);
+		assert(curved.update(screen::none, false, true, input, true) == 255);
+		previous = output;
+	}
+	for (int delta = 0; delta <= 127; delta++)
+		assert(std::abs((128 - wheel_t::exponential(uint8_t(128 - delta))) -
+			(wheel_t::exponential(uint8_t(128 + delta)) - 128)) <= 1);
+	// Both menu screens must see the uncurved axis, including their repeat thresholds.
+	for (auto s : { screen::course, screen::initials })
+		for (int analog = 0; analog <= 255; analog++)
+			for (int frame = 0; frame < 20; frame++)
+				assert(linear.update(s, false, false, uint8_t(analog)) ==
+					curved.update(s, false, false, uint8_t(analog), true));
+
+	const auto &profile = game::vr::CONTROLS;
+	auto p1 = player_controls::defaults(0, profile);
+	auto p2 = player_controls::defaults(1, profile);
+	assert(profile.steering_curve && !control_profile{}.steering_curve);
+	assert(!p1.exponential_steering && !p2.exponential_steering);
+	const std::map<std::string, std::string> settings{
+		{ "p1_steering_curve", "exponential" }, { "p2_steering_curve", "linear" }
+	};
+	p1.load(settings, 0, profile);
+	p2.load(settings, 1, profile);
+	assert(p1.exponential_steering && !p2.exponential_steering);
+	p1.load({ { "p1_steering_curve", "invalid" } }, 0, profile);
+	assert(p1.exponential_steering);
+	FILE *saved = tmpfile();
+	assert(saved);
+	p1.save(saved, 0, profile);
+	p2.save(saved, 1, profile);
+	rewind(saved);
+	std::map<std::string, std::string> restored;
+	char line[256];
+	while (fgets(line, sizeof(line), saved)) {
+		std::string text(line);
+		const auto separator = text.find(" = ");
+		assert(separator != std::string::npos && text.back() == '\n');
+		restored.emplace(text.substr(0, separator), text.substr(separator + 3, text.size() - separator - 4));
+	}
+	assert(!ferror(saved));
+	fclose(saved);
+	p1 = player_controls::defaults(0, profile);
+	p2.exponential_steering = true;
+	p1.load(restored, 0, profile);
+	p2.load(restored, 1, profile);
+	assert(p1.exponential_steering && !p2.exponential_steering);
+	p1.load({ { "p1_steering_curve", "linear" } }, 0, profile);
+	assert(!p1.exponential_steering);
+	assert(!player_controls::defaults(0, profile).exponential_steering);
+	printf("VR steering curve: quadratic response, full lock, monotonicity, menu input and per-player settings passed\n");
+}
+
 // Taps on course selection: the game's own wheel reading is the host's formula, and each tap is one course.
 static void pad_courses(const char *dir)
 {
@@ -87,6 +156,7 @@ static void pad_initials(const char *dir)
 
 int main(int argc, char **argv)
 {
+	steering_curve();
 	using wheel_t = game::vr::menu_steering;
 	game::vr::menu_steering wheel;
 	// racing: the keys steer fully, the stick passes through
