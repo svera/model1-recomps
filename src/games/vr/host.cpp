@@ -43,9 +43,19 @@ public:
 			else fprintf(stderr, "VR: invalid arcade_coins '%s'; expected 0 through %d\n", text.c_str(), FREE_PLAY);
 		}
 		const auto it = settings.find("draw_distance");
-		if (it == settings.end()) return;
-		if (it->second == "arcade" || it->second == "extended") extended = it->second == "extended";
-		else fprintf(stderr, "VR: invalid draw_distance '%s'; expected arcade or extended\n", it->second.c_str());
+		if (it != settings.end()) {
+			if (it->second == "arcade" || it->second == "extended") extended = it->second == "extended";
+			else fprintf(stderr, "VR: invalid draw_distance '%s'; expected arcade or extended\n", it->second.c_str());
+		}
+		if (ctx) {
+			set_extended_draw_distance(ctx->machine, extended);
+			set_lod(ctx->machine, lod);
+		}
+	}
+
+	settings_map shared_display_settings() const override
+	{
+		return {{"draw_distance", extended ? "extended" : "arcade"}, {"lod", lod ? "on" : "off"}};
 	}
 
 	void save_settings(FILE *f) const override
@@ -163,7 +173,8 @@ private:
 			{ "Easy", "Normal", "Hard", "Hardest" }
 		} };
 		for (size_t i = 0; i < names.size(); i++)
-			if ((i == size_t(machine_setting::course_select) || i == size_t(machine_setting::race_type)) ? shared : cabinet)
+			if (((i == size_t(machine_setting::course_select) || i == size_t(machine_setting::race_type)) ? shared : cabinet) &&
+				(i != size_t(machine_setting::race_type) || ctx->link_player != 0))
 				items.insert(cabinet ? items.end() - 1 : items.end(), { names[i], help[i],
 				[this, i] {
 					const int value = machine_choices[i];

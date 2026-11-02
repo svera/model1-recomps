@@ -49,9 +49,11 @@ public:
 		return low != high ? (low ? 0 : 255) : value;
 	}
 
-	// settings.ini's own keys (read before start)
+	// settings.ini's own keys (read before start, or shared display choices applied during play).
 	virtual void load_settings(const settings_map &) {}
 	virtual void save_settings(FILE *) const {}
+	// Only renderer settings shared by local cabinets; excludes each player's game preferences.
+	virtual settings_map shared_display_settings() const { return {}; }
 
 	// The machine is made, its code not yet recompiled (an instruction the game changes goes in it).
 	virtual void start(host_context &) {}
