@@ -100,12 +100,7 @@ course-selection screen. Pressing Start again on Player 1's controller does not 
 Joining restarts both players at linked course selection.
 If a race is already underway, the join waits until the game returns to
 the demo or course-selection screen, without interrupting Player 1's race. If Player 2's controller
-disconnects, the game returns to solo play. The local session's **Esc / View** menu provides
-Display settings for render scale, antialiasing, CPU/GPU 3D rendering, aspect ratio, frame rate,
-background and CRT/scanline screen filters, and fullscreen, plus shared Sound settings. The GPU
-renderer is picture-checked and falls back to the CPU if unavailable or incorrect. These preferences
-are saved in the usual VR settings file and shared by both players. The Controls menu configures each player's controller,
-keyboard, pad buttons and analog axes separately; those bindings are saved for the next session.
+disconnects, the game returns to solo play.
 
 ### Screenshots
 
