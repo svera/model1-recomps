@@ -1007,6 +1007,16 @@ loop, so the change improves deadline-based pacing without evidence of a CPU-tim
 Hidden-window measurements are useful for comparing scheduling, but do not predict every
 display/GPU combination.
 
+The on-demand host also serves solo VR, and its minute-based autosave initially called the
+synchronous full save on the gameplay thread. Flushing NVRAM, EEPROM and settings could stall
+both simulation and audio regardless of the renderer. Periodic saves now hand owned NVRAM and
+EEPROM snapshots to the same background writer as the single-cabinet host. Settings are saved
+when the menu closes and at explicit saves or exit, rather than rewritten every minute during play.
+Explicit saves drain older background work before replacing the files, and shutdown joins the
+writer. `make test-host-saver` checks submission while a writer is blocked, snapshot ownership,
+pending-write coalescing, draining and shutdown. The ROM-backed split-screen checks also exercise
+autosave persistence without a synchronous final save.
+
 The picture scheduler had a separate drift bug: assigning each new deadline from the current
 wake-up time accumulated scheduling delays. At 1x with antialiasing off, hidden-window runs
 presented about 57.4 pictures/s for a 60 FPS selection and 112-113 pictures/s for 120 FPS, even
