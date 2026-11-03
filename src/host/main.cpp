@@ -1128,13 +1128,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			double cpu_ms = 0, gpu_ms = 0;
 			long long differ = -1;
 			const long long pixels = (long long)c.machine.frame_w() * c.machine.frame_h();
-			if (!c.machine.bench3d(3, cpu_ms, gpu_ms, &differ) || differ < 0 ||
+			if (!c.machine.bench3d(1, cpu_ms, gpu_ms, &differ) || differ < 0 ||
 				!c.machine.gpu_diff_ok(c.machine.m_bench_diff, pixels)) {
 				c.machine.set_gpu3d(nullptr);
 				c.gpu.reset();
 				return false;
 			}
-			c.gpu_enabled = requested == 1 || (!c.gpu->software() && gpu_ms < cpu_ms);
+			// Match the single-cabinet host: readback timing can overestimate hardware GPU cost.
+			c.gpu_enabled = requested == 1 || !c.gpu->software();
 			return true;
 		};
 		bool checked = false;
@@ -1170,7 +1171,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.machine.m_gpu3d_verify = 3;
 #endif
 		if (requested == 2 && !c.gpu_enabled) {
-			fprintf(stderr, "two cabinets: Auto chose CPU for %s\n", c.dir.c_str());
+			fprintf(stderr, "two cabinets: Auto chose CPU for %s (its GPU is drawn on the CPU)\n", c.dir.c_str());
 			c.machine.set_gpu3d(nullptr);
 			c.gpu.reset();
 		}

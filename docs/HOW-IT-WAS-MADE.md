@@ -215,8 +215,9 @@ picture exactly, not an approximation of it:
 - **Checked, then trusted.** Over the attract and fights, at several scales and shapes, on Metal, Vulkan and
   Direct3D 12, the GPU's pictures are the CPU's: 100%, no pixel different. The game repeats a small version of this at
   every start: a test picture drawn both ways, then its first pictures of a fight. A difference, an error or a
-  missing driver, and that run uses the CPU. Auto (the default) then uses the GPU unless it's clearly slower than the
-  CPU on that machine.
+  missing driver, and that run uses the CPU. Auto (the default) then uses a working hardware GPU,
+  including in Virtua Racing's solo/split-screen host. Software GPU drivers use the CPU renderer instead.
+  Startup readback timings do not select the renderer: they can overestimate hardware GPU cost.
 
 ## How it was checked
 
