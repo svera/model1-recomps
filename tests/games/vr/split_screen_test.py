@@ -45,6 +45,19 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     assert "1 cabinet(s) running, 0/0 link exchanges" in solo
     assert not (data / "two-cabinets/2/nvram.sav").exists()
 
+    gpu = re.search(r"^gpu3d (?:metal|sdl_gpu): (.+), its (?:shaders|pipelines) ready", solo, re.MULTILINE)
+    if gpu and "The GPU is unavailable or failed its picture check" not in solo:
+        software = any(name in gpu[1] for name in
+                       ("llvmpipe", "lavapipe", "softpipe", "SwiftShader", "Software", "Basic Render"))
+        selected = re.search(r"^two cabinets: cabinet .+ 3D renderer: (.+)$", solo, re.MULTILINE)
+        assert selected, solo
+        if software:
+            assert selected[1] == "CPU (Auto)"
+            assert "its GPU is drawn on the CPU" in solo
+        else:
+            assert selected[1] != "CPU (Auto)", solo
+            assert "Auto chose CPU" not in solo
+
     # Autosaves must survive shutdown without the synchronous final-save test hook.
     for name in ("nvram.sav", "eeprom_93c46.sav"):
         (data / name).unlink()
