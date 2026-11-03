@@ -14,6 +14,7 @@
 #include "gamepads.h"
 #include "audio_recovery.h"
 #include "audio_frame_clock.h"
+#include "background_saver.h"
 #include "input_replay.h"
 #include "local_link.h"
 #include "cabinet_display.h"
@@ -406,42 +407,6 @@ bool write_marker(const std::string &path, const char *text)
 	if (!ok || !closed) fprintf(stderr, "couldn't flush GPU start marker %s: %s\n", path.c_str(), strerror(errno));
 	return ok && closed;
 }
-
-// The saves written off the game's thread: save_blob flushes each file to the disk (a crash mid-save
-// keeps the old one), which on a hard disk waits tens of milliseconds a file, and the autosave ran
-// every few seconds in play: a hitch each time (on an SSD barely noticeable, on a hard disk heavy
-// stutter even at 1x). put() hands over a copy and returns at once; a writer thread saves it, the
-// newest copy of a file winning if two wait. finish() writes what's left and stops.
-struct bg_saver {
-	std::mutex mx;
-	std::condition_variable cv;
-	std::map<std::string, std::vector<uint8_t>> jobs;
-	bool stop = false;
-	std::thread th{ [this] { run(); } };
-	void put(const std::string &path, const void *src, size_t n) {
-		{ std::lock_guard<std::mutex> l(mx); if (stop) return; jobs[path].assign(static_cast<const uint8_t *>(src), static_cast<const uint8_t *>(src) + n); }
-		cv.notify_one();
-	}
-	void run() {
-		std::unique_lock<std::mutex> l(mx);
-		for (;;) {
-			cv.wait(l, [&] { return stop || !jobs.empty(); });
-			if (jobs.empty()) return;   // (stop, nothing left)
-			auto todo = std::move(jobs);
-			jobs.clear();
-			l.unlock();
-			for (auto &[path, bytes] : todo)
-				if (!save_blob(path, bytes.data(), bytes.size())) fprintf(stderr, "couldn't save %s\n", path.c_str());
-			l.lock();
-		}
-	}
-	void finish() {
-		{ std::lock_guard<std::mutex> l(mx); stop = true; }
-		cv.notify_one();
-		if (th.joinable()) th.join();
-	}
-	~bg_saver() { finish(); }
-};
 
 // The menu's choices and the controls, kept in settings.ini next to the saves ("key = value"),
 // with the game's own (its game_host's).
@@ -1860,7 +1825,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		perf_frame_intervals.clear(); perf_sim_samples.clear(); perf_present_samples.clear();
 		for (auto &samples : perf_render_samples) samples.clear();
 	};
+	bg_saver saver(save_blob);
+	auto autosave = [&] {
+		for (int p = 0; p < cabinet_count; p++) {
+			auto &c = *cabinets[p];
+			saver.put(c.dir + "/nvram.sav", c.machine.nvram().data(), c.machine.nvram().size());
+			saver.put(c.dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
+					  c.machine.eeprom(), model1::EEPROM_SIZE);
+		}
+	};
 	auto save = [&] {
+		saver.wait();
 		bool ok = true;
 		for (int p = 0; p < cabinet_count; p++) {
 			auto &c = cabinets[p];
@@ -2050,6 +2025,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						wake_clock = audio_wake_clock(audio_wake_clock::ticks() - 60000000000ull);
 					} else if (!strcmp(name, "save")) {
 						if (!save()) return 1;
+					} else if (!strcmp(name, "autosave")) {
+						autosave();
 					} else if (!strcmp(name, "close")) {
 						event.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
 						event.window.windowID = SDL_GetWindowID(cabinets[cabinet_count - 1]->display->window);
@@ -2593,7 +2570,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				double(perf_loops) / perf_frames);
 			reset_perf();
 		}
-		if (quit_after < 0 && now >= next_save) { if (!save()) return 1; next_save = now + 60000000000ull; }
+		if (quit_after < 0 && now >= next_save) { autosave(); next_save = now + 60000000000ull; }
 		const uint64_t wait_started = SDL_GetTicksNS();
 		uint64_t deadline = wait_started + 8000000ull;
 		if (!paused && !frame_clock.due()) {
@@ -2921,7 +2898,7 @@ int main(int argc, char **argv)
 			fclose(f);
 			game_part.load_sidecar(text);
 		}
-	bg_saver saver;   // (the autosave's writes, off the game's thread)
+	bg_saver saver(save_blob);   // (the autosave's writes, off the game's thread)
 	bool rank_put = false;   // (the game's file handed to it: the last save at quit writes it whatever, in case its write failed)
 	auto save_rank_names = [&](bool now) {
 		if (rank_path.empty() || (game_part.save_sidecar_version() == rank_saved && !(now && rank_put))) return;

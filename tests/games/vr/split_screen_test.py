@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     for region in regions.glob("*.bin"):
         (data / region.name).symlink_to(region)
 
-    def run(options, events="", frames=120, environment=None):
+    def run(options, events="", frames=120, environment=None, save=True):
         last_pass = max((int(event.split(":")[0]) for event in events.split(",") if event), default=0)
         if not any(event.endswith(":close") for event in events.split(",")):
             last_pass = max(frames, last_pass + 20)
@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
                    SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001")
         if environment:
             env.update(environment)
+        if not save:
+            env.pop("M1_SAVE", None)
         result = subprocess.run(
             [str(binary), str(data), "--scale", "1", *options],
             env=env, capture_output=True, text=True, timeout=120)
@@ -42,6 +44,13 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     assert "cabinet 2 compiled" not in solo
     assert "1 cabinet(s) running, 0/0 link exchanges" in solo
     assert not (data / "two-cabinets/2/nvram.sav").exists()
+
+    # Autosaves must survive shutdown without the synchronous final-save test hook.
+    for name in ("nvram.sav", "eeprom_93c46.sav"):
+        (data / name).unlink()
+    run([], "20:autosave,40:close", save=False)
+    for name in ("nvram.sav", "eeprom_93c46.sav"):
+        assert (data / name).stat().st_size > 0
 
     player1_eeprom = data / "eeprom_93c46.sav"
 
@@ -117,6 +126,14 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     player2_eeprom = data / "two-cabinets/2/eeprom_93c46.sav"
     assert car_color_value(player2_eeprom) == 1
     assert car_color_value(player1_eeprom) == 0
+
+    for folder in (data, data / "two-cabinets/2"):
+        for name in ("nvram.sav", "eeprom_93c46.sav"):
+            (folder / name).unlink()
+    run([], "10:t,80:autosave,100:close", save=False)
+    for folder in (data, data / "two-cabinets/2"):
+        for name in ("nvram.sav", "eeprom_93c46.sav"):
+            assert (folder / name).stat().st_size > 0
 
     before_removed_color = car_color_value(player2_eeprom)
     removed = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:down,92:return,120:status,160:close", frames=1000)
