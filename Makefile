@@ -122,6 +122,13 @@ test-host-audio: $(BIN)/host_audio_test
 	$(BIN)/host_audio_test
 .PHONY: test-host-audio
 
+$(BIN)/host_saver_test: $(OBJ)/tests/host_saver_test.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+test-host-saver: $(BIN)/host_saver_test
+	$(BIN)/host_saver_test
+.PHONY: test-host-saver
+
 $(BIN)/host_gamepads_test: $(OBJ)/tests/host_gamepads_test.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
