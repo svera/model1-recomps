@@ -48,7 +48,7 @@ static bool swa_layout(const model1::regions &r)
 	if (!std::all_of(r.sndcpu.begin() + 0x20000, r.sndcpu.begin() + 0x80000, [](uint8_t b) { return b == 0; }) ||
 		!std::all_of(r.sndcpu.begin() + 0xa0000, r.sndcpu.end(), [](uint8_t b) { return b == 0; }) ||
 		!std::all_of(r.mpeg.begin() + 0x400000, r.mpeg.end(), [](uint8_t b) { return b == 0; }) ||
-		!crc(r.tgp_program, 0, 0x2000, 0xc5ddb8fc) ||
+		!crc(r.tgp_program, 0, 0x2000, 0x6a21f304) ||
 		!crc(r.mpegcpu, 0, 0x20000, 0xf4ee84a4) ||
 		!crc(r.mpeg, 0, 0x200000, 0x3175b0be) ||
 		!crc(r.mpeg, 0x200000, 0x200000, 0x3114d748)) {
@@ -56,6 +56,28 @@ static bool swa_layout(const model1::regions &r)
 		return false;
 	}
 	puts("swa: all three program copies, byte-swapped sound reload, TGP and DSB data verified");
+	return true;
+}
+
+static bool swa_rejects_unexpected_tgp(const romset::definition &set, const std::vector<std::string> &zips)
+{
+	std::vector<romset::rom> roms(set.roms.begin(), set.roms.end());
+	auto tgp = std::find_if(roms.begin(), roms.end(), [](const romset::rom &ro) {
+		return ro.region == romset::TGP_PROGRAM;
+	});
+	if (tgp == roms.end()) {
+		fprintf(stderr, "swa: missing TGP definition\n");
+		return false;
+	}
+	tgp->crc = 0xc5ddb8fc;
+	romset::definition alternate = set;
+	alternate.roms = roms;
+	const auto rejected = romset::load(alternate, zips);
+	if (rejected.ok || rejected.error.find("315-5711.bin") == std::string::npos) {
+		fprintf(stderr, "swa: unexpected TGP checksum was not rejected explicitly\n");
+		return false;
+	}
+	puts("swa: unexpected TGP checksum rejected");
 	return true;
 }
 
@@ -69,7 +91,8 @@ int main(int argc, char **argv)
 	const std::string dir = argv[argc - 1];
 	const romset::result r = romset::load(set, zips);
 	if (!r.ok) { fprintf(stderr, "%s: %s\n", argv[1], r.error.c_str()); return 1; }
-	if (set.title.name == "swa" && !swa_layout(r.regions)) return 1;
+	if (set.title.name == "swa" &&
+		(!swa_layout(r.regions) || !swa_rejects_unexpected_tgp(set, zips))) return 1;
 	if (r.regions.title != set.title) { fprintf(stderr, "%s: wrong title\n", argv[1]); return 1; }
 	if (!romset::is_game_set(set, zips[0])) { fprintf(stderr, "%s: %s not recognised\n", argv[1], zips[0].c_str()); return 1; }
 	for (const romset::definition *other : romset::registered())

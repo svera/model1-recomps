@@ -6,15 +6,14 @@ namespace {
 
 using namespace romset;
 
-// MAME 0.280's ROM_START(swa). Repeated entries reproduce ROM_RELOAD, including byte swapping.
+// MAME 0.289's ROM_START(swa). Repeated entries reproduce ROM_RELOAD, including byte swapping.
 const rom ROMS[] = {
 	{ "epr-16669.14", 0x52e5e7e4, MAINCPU, 0x200000, BYTE16 },
 	{ "epr-16670.15", 0x1e7ecabd, MAINCPU, 0x200001, BYTE16 },
 	{ "epr-16668.5", 0x9e112425, MAINCPU, 0xf80000, RAW },
 	{ "epr-16668.5", 0x9e112425, MAINCPU, 0x000000, RAW },
 	{ "epr-16668.5", 0x9e112425, MAINCPU, 0x080000, RAW },
-	// MAME marks the available TGP program BAD_DUMP.
-	{ "315-5711.bin", 0xc5ddb8fc, TGP_PROGRAM, 0x0, RAW },
+	{ "315-5711.bin", 0x6a21f304, TGP_PROGRAM, 0x0, RAW },
 	{ "epr-16470.7", 0x7da18cf7, SNDCPU, 0x00000, WORDSWAP },
 	{ "epr-16470.7", 0x7da18cf7, SNDCPU, 0x80000, WORDSWAP },
 	{ "mpr-16486.32", 0x7df50533, PCM1, 0x000000, RAW },

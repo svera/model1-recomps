@@ -1,4 +1,4 @@
-"""Star Wars Arcade's US ROM set: MAME 0.280's ROM_START(swa), past the shared CPU board."""
+"""Star Wars Arcade's US ROM set: MAME 0.289's ROM_START(swa), past the shared CPU board."""
 
 ROMS = [
     ('epr-16669.14', 0x52e5e7e4, 'maincpu', 0x200000, 'byte16'),
@@ -7,7 +7,7 @@ ROMS = [
     # ROM_RELOAD: the program also occupies both low-ROM windows.
     ('epr-16668.5', 0x9e112425, 'maincpu', 0x000000, 'raw'),
     ('epr-16668.5', 0x9e112425, 'maincpu', 0x080000, 'raw'),
-    ('315-5711.bin', 0xc5ddb8fc, 'tgp_program', 0x0, 'raw'),  # BAD_DUMP in MAME 0.280
+    ('315-5711.bin', 0x6a21f304, 'tgp_program', 0x0, 'raw'),
     ('epr-16470.7', 0x7da18cf7, 'sndcpu', 0x00000, 'wordswap'),
     # ROM_RELOAD repeats the byte-swapped 68000 code.
     ('epr-16470.7', 0x7da18cf7, 'sndcpu', 0x80000, 'wordswap'),

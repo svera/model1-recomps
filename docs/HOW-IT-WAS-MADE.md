@@ -1055,10 +1055,9 @@ byte-swapped and reloaded at `0x80000`. These are explicit operations in both lo
 that happens to contain a useful copy. The profile and ROM tables also include the TGP program,
 polygon/data ROMs and the extra sound board's Z80 and MPEG data.
 
-The supported archive is MAME 0.280's US set, with `315-5711.bin` CRC32 `c5ddb8fc`. That release
-marks the TGP program `BAD_DUMP`. Checking its checksum establishes which dump was tested, not
-that its geometry is hardware-perfect. Newer TGP dumps and the Japanese `swaj` program are not
-covered by these tables.
+The supported archive is MAME 0.289's US set, with `315-5711.bin` CRC32 `6a21f304`.
+Checking its checksum establishes which dump was tested, not that its geometry is
+hardware-perfect. The Japanese `swaj` program is not covered by these tables.
 
 ### Use the geometry program already in the archive
 
@@ -2438,10 +2437,9 @@ build/bin/swa --arcade --scale 1 --aspect 4:3
 Keep your own `swa.zip` and `model1io.zip` in `roms/`. The runtime ZIP loader and the development
 loader both place the program at `0xf80000`, `0x000000` and `0x080000`, and reload the byte-swapped
 sound program at `0x80000`. The TGP program, polygon/data ROMs and DSB Z80/MPEG ROMs are also loaded
-and checked. These tables target MAME 0.280's US set, including `315-5711.bin` with CRC32
-`c5ddb8fc` (`BAD_DUMP` in that release); loading it is not a claim of verified geometry
-compatibility. Newer sets with a different TGP checksum and the Japanese `swaj` program are
-not supported by these tables.
+and checked. These tables target MAME 0.289's US set, including `315-5711.bin` with CRC32
+`6a21f304`. Loading it is not a claim of hardware-perfect geometry. Other TGP checksums and the
+Japanese `swaj` program are not supported by these tables.
 
 #### Replay to manual play
 
