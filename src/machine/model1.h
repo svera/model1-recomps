@@ -818,12 +818,9 @@ public:
 	TGP_FUNCTION( f42 );
 	TGP_FUNCTION( xyz2rqf );
 	TGP_FUNCTION( f43 );
-	TGP_FUNCTION( f43_swa );
 	TGP_FUNCTION( matrix_sdir );
 	TGP_FUNCTION( fsqrt );
 	TGP_FUNCTION( f47 );
-	TGP_FUNCTION( f49_swa );
-	TGP_FUNCTION( f50_swa );
 	TGP_FUNCTION( f52 );
 	TGP_FUNCTION( matrix_rdir );
 	TGP_FUNCTION( f56 );

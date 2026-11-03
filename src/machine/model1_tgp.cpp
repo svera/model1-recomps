@@ -637,20 +637,6 @@ TGP_FUNCTION( model1::f43 )
 	fifoout_push_f(0);
 }
 
-TGP_FUNCTION( model1::f43_swa )
-{
-	float a = fifoin_pop_f();
-	int b = fifoin_pop();
-	int c = fifoin_pop();
-	(void)a;
-	(void)b;
-	(void)c;
-	M1_LOG(0, "TGP f43_swa %f, %d, %d (%x)\n", a, b, c, m_pushpc);
-	fifoout_push_f(0);
-	fifoout_push_f(0);
-	fifoout_push_f(0);
-}
-
 TGP_FUNCTION( model1::matrix_sdir )
 {
 	float a = fifoin_pop_f();
@@ -714,37 +700,6 @@ TGP_FUNCTION( model1::f47 )
 	M1_LOG(0, "TGP f47 %f, %f, %f (%x)\n", a, b, c, m_pushpc);
 	fifoout_push_f(a+c);
 	fifoout_push_f(b+c);
-}
-
-TGP_FUNCTION( model1::f49_swa )
-{
-	float a = fifoin_pop_f();
-	float b = fifoin_pop_f();
-	float c = fifoin_pop_f();
-	float d = fifoin_pop_f();
-	float e = fifoin_pop_f();
-	float f = fifoin_pop_f();
-	(void)a;
-	(void)b;
-	(void)c;
-	(void)d;
-	(void)e;
-	(void)f;
-	M1_LOG(0, "TGP f49_swa %f, %f, %f, %f, %f, %f (%x)\n", a, b, c, d, e, f, m_pushpc);
-}
-
-TGP_FUNCTION( model1::f50_swa )
-{
-	float a = fifoin_pop_f();
-	float b = fifoin_pop_f();
-	float c = fifoin_pop_f();
-	float d = fifoin_pop_f();
-	(void)a;
-	(void)b;
-	(void)c;
-	(void)d;
-	M1_LOG(0, "TGP f50_swa %f, %f, %f, %f (%x)\n", a, b, c, d, m_pushpc);
-	fifoout_push_f(d);
 }
 
 TGP_FUNCTION( model1::f52 )
