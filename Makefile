@@ -327,7 +327,10 @@ endef
 $(foreach g,$(GAMES),$(foreach s,$($(g)_COV_SCENARIOS),$(eval $(call COV_RULE,$(g),$(s)))))
 $(foreach g,$(GAMES),$(eval $(call GAME_RULES,$(g))))
 
-test-romset: $(BIN)/romset_test $(foreach g,$(GAMES),$($(g)_LOCAL_REGIONS))
+test-romset-tool:
+	python3 tests/romset_tool_test.py
+
+test-romset: test-romset-tool $(BIN)/romset_test $(foreach g,$(GAMES),$($(g)_LOCAL_REGIONS))
 	@[ -n "$(wildcard $(GAMES:%=roms/%.zip))" ] || { echo "test-romset: none of $(GAMES:%=roms/%.zip)" >&2; exit 1; }
 	@$(foreach g,$(GAMES),if [ -f roms/$(g).zip ]; then $(BIN)/romset_test $(g) roms/$(g).zip $(IOBOARD_ZIP) build/$(g) || exit 1; fi;) true
 
@@ -335,4 +338,4 @@ clean:
 	rm -rf build/obj build/bin
 
 -include $(shell find $(OBJ) -name '*.d' 2>/dev/null)
-.PHONY: all clean native regions rec test-romset test-model1io-adc test-mb86233
+.PHONY: all clean native regions rec test-romset test-romset-tool test-model1io-adc test-mb86233

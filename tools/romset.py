@@ -57,10 +57,13 @@ ALIASES = {'opr14744.bin': 'opr-14744.58', 'opr14745.bin': 'opr-14745.59',
 def find(z, name, crc):
     by_crc = {i.CRC: i.filename for i in z.infolist()}
     for n in (name, ALIASES.get(name)):
-        if n and n in z.namelist():
+        if n and n in z.namelist() and z.getinfo(n).CRC == crc:
             return n
     if crc in by_crc:
         return by_crc[crc]
+    for n in (name, ALIASES.get(name)):
+        if n and n in z.namelist():
+            return n  # Let the caller report the unexpected checksum.
     sys.exit(f'{name}: not in the zip')
 
 OPTIONAL_IOBOARD = ('epr-14869b.25', 0x2d093304, 'ioboard.bin',
