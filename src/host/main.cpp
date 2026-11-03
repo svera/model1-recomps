@@ -13,6 +13,7 @@
 #include "controls.h"
 #include "gamepads.h"
 #include "audio_recovery.h"
+#include "audio_frame_clock.h"
 #include "input_replay.h"
 #include "local_link.h"
 #include "cabinet_display.h"
@@ -1015,7 +1016,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	bool running = true, paused = false;
 	bool second_player = !on_demand, join_pending = false, join_start_was = false;
 	uint64_t last = SDL_GetTicksNS(), next_save = last + 60000000000ull;
-	double owed = 0;
+	audio_frame_clock frame_clock(FRAME_HZ);
 	int frames = 0;
 	std::array<uint64_t, 2> next_picture{};
 	auto save = [&] {
@@ -1060,7 +1061,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		next_picture = {};
 		if (audio) SDL_ClearAudioStream(audio.get());
-		owed = 0;
+		frame_clock.reset();
 		last = SDL_GetTicksNS();
 		fprintf(stderr, "two cabinets: reset complete, %d cabinet(s) running\n", cabinet_count);
 		return true;
@@ -1119,7 +1120,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		next_picture = {};
 		if (audio) SDL_ClearAudioStream(audio.get());
-		owed = 0;
+		frame_clock.reset();
 		last = SDL_GetTicksNS();
 		if (!SDL_SetWindowTitle(cabinets[0]->display->window, "Virtua Racing - Split Screen (F7 layout, F11 fullscreen, P/Esc pause, F3 reset)")) {
 			fprintf(stderr, "two cabinets: session title: %s\n", SDL_GetError());
@@ -1172,7 +1173,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) running = false;
 			else if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
 				sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks(), true);
-				owed = 0;
+				frame_clock.reset();
 				last = SDL_GetTicksNS();
 			}
 			else if (event.type == SDL_EVENT_GAMEPAD_ADDED || event.type == SDL_EVENT_GAMEPAD_REMOVED ||
@@ -1231,14 +1232,20 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (wake_clock.update()) {
 			fprintf(stderr, "clock: sleep-inclusive clock detected a gap; restarting playback\n");
 			sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks(), true);
-			owed = 0;
+			frame_clock.reset();
 			last = now;
-		} else sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks());
+		} else if (sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks())) {
+			frame_clock.reset();
+			last = now;
+		}
 		const double elapsed = std::min(0.1, double(now - last) / 1e9);
 		last = now;
-		if (paused) owed = 0;
-		else owed = std::min(4.0, owed + elapsed * FRAME_HZ);
-		while (owed >= 1 && (quit_after < 0 || frames < quit_after)) {
+		if (paused) frame_clock.reset();
+		else {
+			const double frame_bytes = double(m1audio::OUT_RATE) / FRAME_HZ * 2 * sizeof(int16_t);
+			frame_clock.update(elapsed, audio ? SDL_GetAudioStreamQueued(audio.get()) / frame_bytes : -1);
+		}
+		while (frame_clock.due() && (quit_after < 0 || frames < quit_after)) {
 			if (join_pending && cabinets[0]->game->can_join_local_cabinet() &&
 				cabinets[0]->pad.start_frames == 0 && cabinets[0]->pad.start_delay < 0) {
 				if (!start_linked_session()) return 1;
@@ -1262,14 +1269,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				c.game->before_frame();
 			}
-			if (paused) { owed = 0; if (audio) SDL_ClearAudioStream(audio.get()); break; }
+			if (paused) { frame_clock.reset(); if (audio) SDL_ClearAudioStream(audio.get()); break; }
 			if (cabinets[0]->service.left_test_menu || (cabinet_count == 2 && cabinets[1]->service.left_test_menu)) {
 				if (!reset_both()) return 1;
 				break;
 			}
 			run_frame();
 			++frames;
-			owed -= 1;
+			frame_clock.advance();
 			size_t samples = 0;
 			for (int p = 0; p < cabinet_count; p++) {
 				auto &c = cabinets[p];
@@ -1310,7 +1317,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (now < next_picture[p] && c.texture && !shape_changed && !shot_due) continue;
 			next_picture[p] = now + 1000000000ull / c.config.fps;
 			if (shape_changed) { c.machine.set_aspect(aspect); c.machine.redraw(); }
-			if (c.machine.smooth()) c.machine.render_smooth(double(c.machine.frame_number() - 1) + std::clamp(owed, 0.0, 1.0));
+			if (c.machine.smooth()) c.machine.render_smooth(double(c.machine.frame_number() - 1) + frame_clock.fraction());
 			const int w = c.machine.frame_w(), h = c.machine.frame_h();
 			if (!c.texture || w != c.texture_w || h != c.texture_h) {
 				if (c.texture) SDL_DestroyTexture(c.texture);
