@@ -1,9 +1,72 @@
 #include "../src/host/audio_recovery.h"
+#include "../src/host/audio_frame_clock.h"
 #include <array>
 #include <cassert>
 
+static void test_frame_clock()
+{
+	constexpr double hz = 60;
+	audio_frame_clock clock(hz);
+	auto run_due = [&] {
+		int frames = 0;
+		while (clock.due()) { clock.advance(); ++frames; }
+		assert(clock.fraction() >= 0 && clock.fraction() < 1);
+		return frames;
+	};
+	clock.update(0, 0);
+	assert(run_due() == 3);
+	clock.update(0, 3);
+	assert(run_due() == 0);
+	clock.reset();
+	clock.update(0);
+	assert(run_due() == 0);
+	clock.update(1.0 / hz);
+	assert(run_due() == 1);
+	clock.update(10);
+	assert(run_due() == 4);
+	clock.reset();
+	clock.update(0, 20);
+	assert(run_due() == 0);
+	clock.update(1, 20);
+	assert(run_due() == 0);
+	clock.reset();
+	clock.update(0, 0);
+	assert(run_due() == 3);
+	int gulped_frames = 0;
+	for (int pass = 0; pass < 240; ++pass) {
+		clock.update(1.0 / 120, 0);
+		gulped_frames += run_due();
+	}
+	assert(gulped_frames <= 123);
+
+	// Slightly different playback clocks and occasional long frames must not drain the queue.
+	for (const int display_hz : {30, 60, 120})
+	for (const double playback_rate : {0.995, 1.0, 1.005}) {
+		clock.reset();
+		double queued = 0, elapsed = 0;
+		int frames = 0;
+		clock.update(0, queued);
+		queued += run_due();
+		for (int pass = 1; pass <= display_hz * 180; ++pass) {
+			const double dt = pass % (display_hz * 30) == 0 ? 0.035 : 1.0 / display_hz;
+			elapsed += dt;
+			queued -= dt * hz * playback_rate;
+			if (queued <= 0)
+				fprintf(stderr, "Audio underrun: playback=%g pass=%d queued=%g\n", playback_rate, pass, queued);
+			assert(queued > 0);
+			clock.update(dt, queued);
+			const int due = run_due();
+			queued += due;
+			frames += due;
+			assert(queued < 7);
+		}
+		assert(std::fabs(frames / hz - elapsed) <= elapsed * 0.01 + 4 / hz);
+	}
+}
+
 int main()
 {
+	test_frame_clock();
 	assert(SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy"));
 	assert(SDL_Init(SDL_INIT_AUDIO));
 	const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, 48000};
@@ -62,4 +125,5 @@ int main()
 	audio.reset();
 	SDL_Quit();
 	printf("Audio recovery: sleep-inclusive wake detection, healthy-queue restart, stalled playback, progress, volume, menu pause and device retry passed\n");
+	printf("Audio pacing: prebuffer, reset, no-device timing, bounded catch-up, stalled queue and three-minute clock-drift/hitch simulations passed\n");
 }

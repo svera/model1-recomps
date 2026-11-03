@@ -13,6 +13,7 @@
 #include "controls.h"
 #include "gamepads.h"
 #include "audio_recovery.h"
+#include "audio_frame_clock.h"
 #include "input_replay.h"
 #include "local_link.h"
 #include "cabinet_display.h"
@@ -1833,7 +1834,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	uint64_t last = SDL_GetTicksNS(), next_save = last + 60000000000ull;
 	uint64_t fps_started = last;
 	int fps_presents = 0;
-	double owed = 0;
+	audio_frame_clock frame_clock(FRAME_HZ);
 	int frames = 0;
 	bool perf_enabled = cabinets[0]->config.timings || getenv("M1_PERF") != nullptr;
 	uint64_t perf_started = SDL_GetTicksNS(), perf_last_frame = 0;
@@ -1912,7 +1913,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		reset_perf();
 		next_picture = {};
 		if (audio) SDL_ClearAudioStream(audio.get());
-		owed = 0;
+		frame_clock.reset();
 		last = SDL_GetTicksNS();
 		fprintf(stderr, "two cabinets: reset complete, %d cabinet(s) running\n", cabinet_count);
 		return true;
@@ -1996,7 +1997,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		join_pending = false;
 		next_picture = {};
 		if (audio) SDL_ClearAudioStream(audio.get());
-		owed = 0;
+		frame_clock.reset();
 		last = SDL_GetTicksNS();
 		if (!SDL_SetWindowTitle(cabinets[0]->display->window, "Virtua Racing")) {
 			fprintf(stderr, "two cabinets: session title: %s\n", SDL_GetError());
@@ -2172,7 +2173,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) running = false;
 			else if (event.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
 				sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused, SDL_GetTicks(), true);
-				owed = 0;
+				frame_clock.reset();
 				last = SDL_GetTicksNS();
 			}
 			else if (event.type == SDL_EVENT_GAMEPAD_ADDED || event.type == SDL_EVENT_GAMEPAD_REMOVED ||
@@ -2313,7 +2314,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						cabinets[p]->pad.back_combo = cabinets[p]->pad.start_was = true;
 				}
 				next_picture = {};
-				owed = 0;
+				frame_clock.reset();
 				last = SDL_GetTicksNS();
 			}
 		}
@@ -2346,14 +2347,23 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (wake_clock.update()) {
 			fprintf(stderr, "clock: sleep-inclusive clock detected a gap; restarting playback\n");
 			sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused && !fast_forward, SDL_GetTicks(), true);
-			owed = 0;
+			frame_clock.reset();
 			last = now;
-		} else sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused && !fast_forward, SDL_GetTicks());
+		} else if (sound_recovery.update(audio, sound_spec, hidden ? 0 : 1, !paused && !fast_forward, SDL_GetTicks())) {
+			frame_clock.reset();
+			last = now;
+		}
 		const double elapsed = std::min(0.1, double(now - last) / 1e9);
 		last = now;
-		if (paused) owed = 0;
-		else owed = fast_forward ? 4.0 : std::min(4.0, owed + elapsed * FRAME_HZ);
-		while (owed >= 1 && (quit_after < 0 || frames < quit_after)) {
+		if (paused) frame_clock.reset();
+		else if (fast_forward) {
+			frame_clock.reset();
+			frame_clock.update(4.0 / FRAME_HZ);
+		} else {
+			const double frame_bytes = double(m1audio::OUT_RATE) / FRAME_HZ * 2 * sizeof(int16_t);
+			frame_clock.update(elapsed, audio ? SDL_GetAudioStreamQueued(audio.get()) / frame_bytes : -1);
+		}
+		while (frame_clock.due() && (quit_after < 0 || frames < quit_after)) {
 			if (join_pending && cabinets[0]->game->can_join_local_cabinet() &&
 				cabinets[0]->pad.start_frames == 0 && cabinets[0]->pad.start_delay < 0) {
 				if (!start_linked_session()) return 1;
@@ -2380,7 +2390,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				c.game->before_frame();
 			}
-			if (paused) { owed = 0; if (audio) SDL_ClearAudioStream(audio.get()); break; }
+			if (paused) { frame_clock.reset(); if (audio) SDL_ClearAudioStream(audio.get()); break; }
 			if (cabinets[0]->service.left_test_menu || (cabinet_count == 2 && cabinets[1]->service.left_test_menu)) {
 				if (!reset_both(false)) return 1;
 				break;
@@ -2402,7 +2412,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (sim_ns > uint64_t(1e9 / FRAME_HZ)) perf_sim_late++;
 			}
 			++frames;
-			owed -= 1;
+			frame_clock.advance();
 			const uint64_t mix_started = perf_enabled ? SDL_GetTicksNS() : 0;
 			size_t samples = 0;
 			for (int p = 0; p < cabinet_count; p++) {
@@ -2448,7 +2458,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			next_picture[p] = next_cabinet_picture(next_picture[p], picture_now, c.config.fps);
 			const uint64_t render_started = perf_enabled ? SDL_GetTicksNS() : 0;
 			if (shape_changed) { c.machine.set_aspect(aspect); c.machine.redraw(); }
-			if (c.machine.smooth()) c.machine.render_smooth(double(c.machine.frame_number() - 1) + std::clamp(owed, 0.0, 1.0));
+			if (c.machine.smooth()) c.machine.render_smooth(double(c.machine.frame_number() - 1) + frame_clock.fraction());
 			if (c.gpu_enabled && c.machine.m_g3.failed > c.gpu_failed) {
 				c.machine.set_gpu3d_on(false);
 				c.gpu_enabled = false;
@@ -2586,8 +2596,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (quit_after < 0 && now >= next_save) { if (!save()) return 1; next_save = now + 60000000000ull; }
 		const uint64_t wait_started = SDL_GetTicksNS();
 		uint64_t deadline = wait_started + 8000000ull;
-		if (!paused && owed < 1) {
-			const uint64_t next_frame = last + uint64_t((1.0 - owed) * 1e9 / FRAME_HZ);
+		if (!paused && !frame_clock.due()) {
+			const uint64_t next_frame = last + uint64_t(frame_clock.until_next() * 1e9);
 			deadline = std::min(deadline, next_frame);
 		}
 		for (int p = 0; p < cabinet_count; p++)
