@@ -41,6 +41,12 @@ int main()
 	const auto second = attach_pad(2);
 	assert(refresh_gamepads(pads, ctl, false));
 	assert(pads[0] == kept && SDL_GetGamepadID(pads[1]) == second);
+	const std::array<SDL_JoystickID, 2> claimed{second, first};
+	assert(refresh_gamepads(pads, ctl, false, claimed));
+	assert(SDL_GetGamepadID(pads[0]) == second && pads[1] == kept);
+	assert(!refresh_gamepads(pads, ctl, false, claimed));
+	assert(SDL_GetGamepadID(pads[0]) == second && pads[1] == kept);
+	assert(refresh_gamepads(pads, ctl, false));
 	auto *joystick = SDL_GetGamepadJoystick(pads[0]);
 	assert(SDL_SetJoystickVirtualAxis(joystick, SDL_GAMEPAD_AXIS_LEFTX, 24000));
 	assert(SDL_SetJoystickVirtualButton(joystick, SDL_GAMEPAD_BUTTON_SOUTH, true));

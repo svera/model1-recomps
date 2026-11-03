@@ -587,12 +587,18 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
-		m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
+		const auto &slide = m_video->wide_tile_slide;
+		const bool sliding = m_ext && m_wide_frame && slide && slide->layer == layer &&
+			slide->mode == m_ram_b[0x1138] && slide->distance > 0 &&
+			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
+			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
+		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance);
+		else m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
 		if (flags & segas24_tile::DRAW_OPAQUE) fill_backdrop_sides(c.px, layer, flags);
-		c.sides = m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
-			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext);
+		c.sides = sliding || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
+			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext));
 		c.x0.assign(SCREEN_H, 0);
 		c.x1.assign(SCREEN_H, 0);
 		for (int y = 0; y < SCREEN_H; y++) {

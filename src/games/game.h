@@ -233,6 +233,12 @@ struct hud_tile_range
 	uint16_t first, last;
 };
 
+struct tile_slide
+{
+	uint8_t mode;
+	int layer, distance;
+};
+
 struct video_traits
 {
 	bool smooth_frames = false;      // the 3D blended between game frames (a 30 Hz game's)
@@ -246,6 +252,7 @@ struct video_traits
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera
 	std::vector<hud_tile_range> hud_tile_groups; // artwork kept separate from nearby centered prompts
+	std::optional<tile_slide> wide_tile_slide; // non-wrapping overlay, travelling from the wide screen's edge
 	// polygon ROM addresses below this are the scenery a moving model's shadow falls on, which
 	// above 1x has its shadows kept off the models (0: no such split, shadows drawn as the arcade)
 	uint32_t scenery_polys_end = 0;

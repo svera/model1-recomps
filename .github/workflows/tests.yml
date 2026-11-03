@@ -15,16 +15,39 @@ concurrency:
 jobs:
   test:
     name: ROM-free tests
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out code
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: brew install sdl3 freetype pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config zlib1g-dev libfreetype-dev \
+            xorg-dev libasound2-dev libudev-dev
+
+      - name: Build SDL3
+        run: |
+          . tools/release/deps.sh
+          mkdir -p "$DEPS"
+          release_fetch \
+            "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz" \
+            SDL3.tar.gz "$SDL_SHA256"
+          tar xzf "$DEPS/SDL3.tar.gz" -C "$DEPS"
+          cmake -S "$SDL_SRC" -B build/sdl3-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_STATIC=OFF
+          cmake --build build/sdl3-ci --parallel 3
+          cmake --install build/sdl3-ci
 
       - name: Run tests
+        env:
+          PKG_CONFIG_PATH: ${{ runner.temp }}/sdl3/lib/pkgconfig
+          LD_LIBRARY_PATH: ${{ runner.temp }}/sdl3/lib
         run: |
           make -j3 \
             test-host-gamepads \

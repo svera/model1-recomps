@@ -49,6 +49,7 @@ struct control_profile
 	std::array<bool, C_COUNT> p1_only{};              // controls player 2 doesn't have (hidden on their pages)
 	std::array<uint8_t, 2> start_bits{};              // each player's start button in the system byte
 	bool hold_start = false;                         // keep Start pressed after its initial pulse
+	bool steering_curve = false;
 	std::array<std::array<SDL_Scancode, C_COUNT>, 2> keys{};   // the defaults, per player
 	std::array<int, C_COUNT> pad;                     // (PAD_NONE until set)
 	std::vector<int> pad_actions;                     // the pad buttons page's, in order (those with bits play)
@@ -89,6 +90,7 @@ struct player_controls
 		game::host_axis::none, game::host_axis::none, game::host_axis::none, game::host_axis::none
 	};
 	std::string pad_choice = "auto";   // "auto" (the next free pad), "none", or a pad's GUID
+	bool exponential_steering = false;
 
 	static player_controls defaults(int player, const control_profile &profile)
 	{
@@ -124,12 +126,23 @@ struct player_controls
 		}
 		auto c = kv.find(p + "pad");
 		if (c != kv.end()) pad_choice = c->second;
+		if (profile.steering_curve) {
+			const auto curve = kv.find(p + "steering_curve");
+			if (curve != kv.end()) {
+				if (curve->second == "linear" || curve->second == "exponential")
+					exponential_steering = curve->second == "exponential";
+				else fprintf(stderr, "controls: invalid %ssteering_curve '%s'; expected linear or exponential\n",
+					p.c_str(), curve->second.c_str());
+			}
+		}
 	}
 
 	void save(FILE *f, int player, const control_profile &profile) const
 	{
 		const char *p = player ? "p2_" : "p1_";
 		fprintf(f, "%spad = %s\n", p, pad_choice.c_str());
+		if (profile.steering_curve)
+			fprintf(f, "%ssteering_curve = %s\n", p, exponential_steering ? "exponential" : "linear");
 		for (int a = 0; a < C_COUNT; a++)
 			if (profile.visible(a))
 				fprintf(f, "%skey_%s = %s\n", p, profile.key_name(a), key[a] ? SDL_GetScancodeName(key[a]) : "none");

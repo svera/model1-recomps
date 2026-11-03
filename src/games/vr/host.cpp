@@ -17,13 +17,15 @@ public:
 	const romset::definition &romset() const override { return ROMSET; }
 	const control_profile &controls() const override { return CONTROLS; }
 
-	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value) override
+	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value,
+		bool exponential_steering = false) override
 	{
 		if (channel != 0) return game_host::analog_key_input(machine, channel, low, high, value);
 		const bool entering_initials = machine.work_ram()[0x1138] == 0x1e && machine.read32(0x5018fc) != 0;
-		const bool selecting_course = machine.work_ram()[0x1138] == 0x10 && machine.camera() == 0x502150;
+		const bool selecting_course = in_course_selection(machine);
 		using screen = menu_steering::screen;
-		return menu_wheel.update(entering_initials ? screen::initials : selecting_course ? screen::course : screen::none, low, high, value);
+		return menu_wheel.update(entering_initials ? screen::initials : selecting_course ? screen::course : screen::none,
+			low, high, value, exponential_steering);
 	}
 
 	void load_settings(const settings_map &settings) override
@@ -41,9 +43,19 @@ public:
 			else fprintf(stderr, "VR: invalid arcade_coins '%s'; expected 0 through %d\n", text.c_str(), FREE_PLAY);
 		}
 		const auto it = settings.find("draw_distance");
-		if (it == settings.end()) return;
-		if (it->second == "arcade" || it->second == "extended") extended = it->second == "extended";
-		else fprintf(stderr, "VR: invalid draw_distance '%s'; expected arcade or extended\n", it->second.c_str());
+		if (it != settings.end()) {
+			if (it->second == "arcade" || it->second == "extended") extended = it->second == "extended";
+			else fprintf(stderr, "VR: invalid draw_distance '%s'; expected arcade or extended\n", it->second.c_str());
+		}
+		if (ctx) {
+			set_extended_draw_distance(ctx->machine, extended);
+			set_lod(ctx->machine, lod);
+		}
+	}
+
+	settings_map shared_display_settings() const override
+	{
+		return {{"draw_distance", extended ? "extended" : "arcade"}, {"lod", lod ? "on" : "off"}};
 	}
 
 	void save_settings(FILE *f) const override
@@ -56,6 +68,8 @@ public:
 	void start(host_context &context) override
 	{
 		ctx = &context;
+		default_blue_pending = context.link_player == 2 &&
+			machine_setting_value(context.machine, machine_setting::car_color) < 0;
 		if (!enable_standalone_car_color(context.machine)) {
 			fprintf(stderr, "VR: standalone car-color support could not be initialized\n");
 			std::abort();
@@ -84,11 +98,44 @@ public:
 
 	std::vector<menu_item> game_menu_items() override
 	{
+		return build_game_menu_items(true, true);
+	}
+
+	std::vector<menu_item> cabinet_game_menu_items() override
+	{
+		return build_game_menu_items(false, true);
+	}
+
+	std::vector<menu_item> shared_game_menu_items() override
+	{
+		return build_game_menu_items(true, false);
+	}
+
+	bool sync_shared_settings(model1 &primary) override
+	{
+		bool changed = false;
+		for (const auto setting : {machine_setting::course_select, machine_setting::race_type}) {
+			const int value = machine_setting_value(primary, setting);
+			if (value < 0) {
+				fprintf(stderr, "VR: cannot synchronize shared setting %zu before valid EEPROM settings are available\n",
+					size_t(setting));
+				continue;
+			}
+			changed = set_machine_setting(ctx->machine, setting, value) || changed;
+		}
+		if (changed) ctx->settings_changed();
+		return changed;
+	}
+
+private:
+	std::vector<menu_item> build_game_menu_items(bool shared, bool cabinet)
+	{
 		if (!language_before) {
 			language_before = language_value(ctx->machine);
 			language_choice = *language_before;
 		}
-		std::vector<menu_item> items{ { "Language", "The game's own text: Japanese or English. Changing it restarts the game when the menu closes.",
+		std::vector<menu_item> items;
+		if (cabinet) items = { { "Language", "The game's own text: Japanese or English. Changing it restarts the game when the menu closes.",
 			[this] {
 				return std::string(language_choice < 0 ? "-" : language_choice ? "English" : "Japanese");
 			},
@@ -109,11 +156,11 @@ public:
 			machine_before = values;
 			machine_choices = values;
 		}
-		// (no Race mode: only linked cabinets use it, so a standalone race is the same either way)
-		static const std::array<const char *, 4> names{ "Car color", nullptr, "Course select", "Difficulty" };
+		static const std::array<const char *, 4> names{ "Car color", "Race type", "Course select", "Difficulty" };
 		static const std::array<const char *, 4> help{
 			"Your car's color in a race, including standalone play. Demo cars keep their arcade colors. Changing it restarts the game when the menu closes.",
-			nullptr,
+			"The arcade's Normal or Grand Prix race mode for both players. Applies to linked races; solo races are unchanged. "
+			"Changing it restarts the game when the menu closes.",
 			"Majority vote: you choose the course before each race (linked cabinets take the most votes). A course here is raced every time, "
 			"skipping the course choice for the gears only. Changing it restarts the game when the menu closes.",
 			"How fast the arcade's automatic difficulty rises: the more the game is played, the less starting time races get, from 65 seconds down to "
@@ -121,12 +168,14 @@ public:
 		};
 		static const std::array<std::vector<const char *>, 4> choices{ {
 			{ "Red", "Blue", "Yellow", "Green", "Black", "Pink", "Sky blue", "Orange" },
-			{},
+			{ "Normal", "Grand Prix" },
 			{ "Majority vote", "Beginner", "Medium", "Expert" },
 			{ "Easy", "Normal", "Hard", "Hardest" }
 		} };
 		for (size_t i = 0; i < names.size(); i++)
-			if (names[i]) items.insert(items.end() - 1, { names[i], help[i],
+			if (((i == size_t(machine_setting::course_select) || i == size_t(machine_setting::race_type)) ? shared : cabinet) &&
+				(i != size_t(machine_setting::race_type) || ctx->link_player != 0))
+				items.insert(cabinet ? items.end() - 1 : items.end(), { names[i], help[i],
 				[this, i] {
 					const int value = machine_choices[i];
 					return std::string(value < 0 ? "-" : choices[i][value]);
@@ -143,6 +192,7 @@ public:
 		return items;
 	}
 
+public:
 	void keep_arcade_settings() override
 	{
 		apply_settings();
@@ -172,7 +222,7 @@ public:
 
 	bool can_join_local_cabinet() const override
 	{
-		return in_attract_mode(ctx->machine);
+		return in_attract_mode(ctx->machine) || in_course_selection(ctx->machine);
 	}
 
 	bool booted() override
@@ -182,16 +232,23 @@ public:
 		const bool monitor_changed = set_monitor_type(ctx->machine, 0);
 		const bool link_changed = ctx->standalone_cabinet ? set_standalone(ctx->machine) :
 			ctx->link_player && set_link_player(ctx->machine, ctx->link_player);
+		bool color_changed = false;
+		if (default_blue_pending && machine_setting_value(ctx->machine, machine_setting::car_color) >= 0) {
+			color_changed = set_machine_setting(ctx->machine, machine_setting::car_color, 1);
+			default_blue_pending = false;
+			if (color_changed) ctx->settings_changed();
+		}
+		const bool machine_changed = monitor_changed || link_changed || color_changed;
 		const int now = coin_setting(ctx->machine);
-		if (now < 0) return monitor_changed || link_changed;
+		if (now < 0) return machine_changed;
 		if (ctx->pc_mode) {
 			if (now != FREE_PLAY && now != arcade_coin) {
 				arcade_coin = now;
 				ctx->settings_changed();
 			}
-			return set_coin_setting(ctx->machine, FREE_PLAY) || monitor_changed || link_changed;
+			return set_coin_setting(ctx->machine, FREE_PLAY) || machine_changed;
 		}
-		return set_coin_setting(ctx->machine, arcade_coin >= 0 ? arcade_coin : now == FREE_PLAY ? 0 : now) || monitor_changed || link_changed;
+		return set_coin_setting(ctx->machine, arcade_coin >= 0 ? arcade_coin : now == FREE_PLAY ? 0 : now) || machine_changed;
 	}
 
 	restart menu_closed() override
@@ -233,6 +290,7 @@ private:
 	host_context *ctx = nullptr;
 	bool extended = true;
 	bool lod = false;
+	bool default_blue_pending = false;
 	camera_cycle cameras;
 	int arcade_coin = -1;
 	std::optional<int> language_before;
