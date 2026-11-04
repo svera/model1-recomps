@@ -68,7 +68,8 @@ public:
 		m_comm_external_clock = external_clock;
 	}
 	m1comm *link() { return m_comm.get(); }
-	void disable_link() { m_comm.reset(); m_comm_external_clock = false; }
+	void observe(model1 *source) { if (m_gameplay.observe) m_gameplay.observe(source); }
+	void disable_link() { observe(nullptr); m_comm.reset(); m_comm_external_clock = false; }
 	const bitmap_rgb32 &frame() const { return m_bitmap; }
 	// Runs the TGP from its own program (315-5724.bin) instead of MAME 0.210's simulation.
 	bool use_tgp_program(const std::vector<uint8_t> &rom);
@@ -354,12 +355,18 @@ private:
 		bool above_hud = false;
 		uint32_t owner = 0;                          // (video_traits::records) 0: not known, 1: the still world, else its record
 	};
+	using projection_view = std::array<uint32_t, 8>; // viewport and screen-space projection translation
+	struct view_zoom {
+		std::array<float, 2> value{};
+		bool uniform = true;
+	};
 	struct logic_frame {
 		std::vector<uint16_t> list;                  // the display list as the game left it
 		uint64_t hash = 0;
 		int frame = 0;
 		uint16_t hscr = 0, vscr = 0;                 // the sky map's scroll
 		std::vector<struct slot> slots;              // matrix commands and the objects drawn with each
+		std::map<projection_view, view_zoom> zooms;
 		std::vector<game::record_visibility> visibility;
 		int objects = 0;
 		bool above_hud = false;
@@ -394,6 +401,8 @@ private:
 	int m_smooth_stats[3] = {};                     // per picture: unmatched, jumped, blended objects
 	std::vector<std::array<float, 12>> m_blend;     // per slot of the newer list, the blended matrix
 	std::vector<uint8_t> m_blend_ok;
+	std::map<projection_view, std::array<float, 2>> m_blend_zooms;
+	void smooth_zoom(const projection_view &view, float &x, float &y) const;
 	// per slot of the newer list, what each polygon's shade is blended from: the older and newer
 	// frames' matrices and the older frame's light (the newer's is the list's own as it's drawn)
 	std::vector<std::array<float, 12>> m_blend_from, m_blend_to;

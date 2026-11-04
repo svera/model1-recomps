@@ -1,6 +1,7 @@
 #include "../../../src/host/regions.h"
 #include "../../../src/host/png.h"
 #include "../../../src/games/settings.h"
+#include "../../../src/games/script.h"
 #include "../../../src/games/vr/gameplay.h"
 #include "../../../src/machine/linked_pair.h"
 #include "../../../src/rt/native.h"
@@ -20,6 +21,82 @@ using machines_type = std::array<std::unique_ptr<model1>, 3>;
 
 struct model1_video_test
 {
+	struct observed_race {
+		std::array<int, 16> copies{};
+		int corrected = 0;
+	};
+
+	static void watch_observer(model1 &m, observed_race &proof)
+	{
+		const auto read = m.m_gameplay.read_value;
+		m.m_gameplay.read_value = [&, read](uint32_t pc, uint32_t address, uint16_t value) {
+			const auto state = std::static_pointer_cast<game::vr::gameplay_state>(m.game_state());
+			const uint32_t car = m.cpu().reg(25);
+			const bool copying = state->observed_racers && m.work_ram()[0x1138] == 0x14 &&
+				car >= 0x400d00 + uint32_t(state->observed_racers) * 0x280 &&
+				car <= 0x403280 && (car - 0x400d00) % 0x280 == 0 && address == car + 0x34;
+			std::array<uint8_t, 0x10> header{};
+			uint32_t before = 0;
+			if (copying) {
+				std::copy_n(m.nvram().begin() + car - 0x400000 + 4, header.size(), header.begin());
+				before = m.read32(car + 0x1e);
+			}
+			const uint16_t result = read(pc, address, value);
+			if (copying) {
+				const int index = int((car - 0x400d00) / 0x280);
+				const auto &snapshot = state->observed_cars[index];
+				assert(m.read32(car) == snapshot.flags);
+				assert(std::equal(snapshot.race.begin(), snapshot.race.end(),
+					m.nvram().begin() + car - 0x400000 + 0x14));
+				assert(std::equal(header.begin(), header.end(), m.nvram().begin() + car - 0x400000 + 4));
+				proof.copies[index]++;
+				proof.corrected += before != m.read32(car + 0x1e);
+			}
+			return result;
+		};
+	}
+
+	static int distant_cars(const model1 &m)
+	{
+		int count = 0;
+		for (const auto &[word, objects] : m.m_list_extra[m.m_picture_buffer])
+			for (const auto &object : objects)
+				count += object.owner >= 0x400d00 && object.owner <= 0x403280;
+		return count;
+	}
+
+	static int monitor_zoom(model1 &m)
+	{
+		const auto &a = m.m_logic[0], &b = m.m_logic[1];
+		if (b.frame - a.frame != 2 || m.work_ram()[0x1138] != 0x14) return 0;
+		int checked = 0;
+		for (const auto &[view, to] : b.zooms) {
+			if ((view[0] & 0xffff) != 248 || !to.uniform) continue;
+			const auto from = a.zooms.find(view);
+			if (from == a.zooms.end() || !from->second.uniform ||
+				std::fabs(from->second.value[0] - to.value[0]) < 0.01f) continue;
+			for (double fraction : {0.25, 0.5, 0.75}) {
+				m.render_smooth(a.frame + 2 + 2 * fraction, false);
+				if (m.m_blend_cut || m.m_replay_older) continue;
+				const auto &zoom = m.m_blend_zooms.at(view);
+				for (int axis = 0; axis < 2; axis++) {
+					const float expected = float(from->second.value[axis] +
+						(to.value[axis] - from->second.value[axis]) * fraction);
+					assert(std::fabs(zoom[axis] - expected) < 0.0001f);
+				}
+				for (const auto &[last_view, blended] : m.m_blend_zooms)
+					if ((last_view[0] & 0xffff) == uint32_t(m.m_view->xc) &&
+						last_view[6] == std::bit_cast<uint32_t>(m.m_view->viewx) &&
+						last_view[7] == std::bit_cast<uint32_t>(m.m_view->viewy)) {
+						assert(std::fabs(m.m_view->zoomx - 4 * blended[0]) < 0.0001f);
+						assert(std::fabs(m.m_view->zoomy - 4 * blended[1]) < 0.0001f);
+					}
+				checked++;
+			}
+		}
+		return checked;
+	}
+
 	static void monitor_commentator(model1 &m)
 	{
 		const float original_aspect = m.aspect();
@@ -119,6 +196,7 @@ struct model1_video_test
 static void run_reversed_frame(machines_type &machines, std::array<m1comm::memory, 2> &snapshots)
 {
 	for (const auto &machine : machines) assert(machine->scanline() == 0);
+	machines[2]->observe(machines[0].get());
 	for (int line = 0; line < model1::FRAME_LINES; line++) {
 		if (line == model1::FRAME_VBLANK &&
 			machines[0]->link()->ready() && machines[1]->link()->ready()) {
@@ -180,7 +258,7 @@ int main(int argc, char **argv)
 			assert(machine.past_boot());
 			game::vr::set_coin_setting(machine, game::vr::FREE_PLAY);
 			game::vr::set_language(machine, 1);
-			game::vr::set_machine_setting(machine, game::vr::machine_setting::car_color, p == 1 ? 1 : 0);
+			game::vr::set_machine_setting(machine, game::vr::machine_setting::car_color, p == 0 ? 3 : p == 1 ? 1 : 0);
 			assert(game::edit_eeprom_settings(machine, 5, [p](uint16_t *words) {
 				words[6] = uint16_t((words[6] & 0x00ff) | ((p + 1) << 8));
 				return true;
@@ -195,6 +273,8 @@ int main(int argc, char **argv)
 	};
 	initialize(machines, runtimes);
 	initialize(reference, reference_runtimes);
+	model1_video_test::observed_race pair_race;
+	model1_video_test::watch_observer(*machines[2], pair_race);
 	linked_pair pair(*machines[0], *machines[1], machines[2].get());
 	std::array<m1comm::memory, 2> reference_snapshots{};
 	for (int p = 0; p < 2; p++)
@@ -336,6 +416,9 @@ int main(int argc, char **argv)
 	assert(machines[2]->link()->ticks() > 6000);
 	assert(artwork_checked);
 	assert(commentator_checked);
+	assert(pair_race.copies[0] == 0 && pair_race.copies[1] == 0);
+	for (int i = 2; i < 16; i++) assert(pair_race.copies[i] > 120);
+	assert(pair_race.corrected > 120);
 	model1_video_test::monitor_hud(*machines[2]);
 	model1_video_test::monitor_hud(*reference[2]);
 	auto monitor_line_check = std::move(machines[2]->on_line);
@@ -371,6 +454,7 @@ int main(int argc, char **argv)
 	for (const auto &machine : machines) assert(machine->link()->read(3) == 2);
 	pair.disconnect();
 	for (const auto &machine : machines) assert(!machine->link());
+	assert(std::static_pointer_cast<game::vr::gameplay_state>(machines[2]->game_state())->observed_racers == 0);
 	bool disconnected = false;
 	try { pair.run_frame(); }
 	catch (const std::logic_error &) { disconnected = true; }
@@ -387,6 +471,8 @@ int main(int argc, char **argv)
 		reference[p]->forget_camera();
 		if (native) reference_runtimes[p].attach(reference[p]->cpu(), "vr");
 		reference[p]->set_drawing(false);
+		machines[p]->set_smooth(true);
+		reference[p]->set_smooth(true);
 	}
 	linked_pair solo(*machines[0], nullptr, machines[2].get());
 	for (int p : {0, 2}) {
@@ -398,22 +484,38 @@ int main(int argc, char **argv)
 			assert(machines[2]->scanline() == line);
 		};
 	}
-	int solo_racing = 0, solo_pictures = 0, solo_positions = 0;
+	int solo_racing = 0, solo_pictures = 0, solo_positions = 0, zoom_pictures = 0;
+	std::array<int, 2> distant_car_pictures{};
 	std::deque<std::array<uint32_t, 3>> solo_history;
-	for (int frame = 0; frame < 7000; frame++) {
+	auto driver = game::make_auto_play(game::id{"vr"}, "qualifying", 12345, false);
+	const auto pair_copies = pair_race.copies;
+	float max_ai_separation = 0;
+	int max_lap = 0;
+	for (int frame = 0; frame < 15000; frame++) {
 		const auto tick = machines[0]->link()->ticks();
 		const bool start = (tick >= 400 && tick < 406) || (tick >= 520 && tick < 526);
 		machines[0]->m_inputs[0] = uint8_t(~(start ? 0x10 : 0));
 		machines[0]->set_analog_input(0, 0x80);
 		machines[0]->set_analog_input(1, 0xff);
 		machines[0]->set_analog_input(2, 0x30);
-		machines[2]->set_drawing(frame % 300 == 0);
+		machines[0]->m_inputs[1] = 0xff;
+		auto controls = driver->frame(frame + 6200, *machines[0]);
+		if (machines[0]->work_ram()[0x1138] == 0x14) {
+			for (int c = 0; c < 3; c++) machines[0]->set_analog_input(c, uint8_t(controls.analog[c]));
+			machines[0]->m_inputs[1] = uint8_t(~controls.pressed[1]);
+		}
+		machines[2]->set_drawing(true);
 		reference[0]->m_inputs[0] = machines[0]->m_inputs[0];
 		reference[0]->set_analog_input(0, 0x80);
 		reference[0]->set_analog_input(1, 0xff);
 		reference[0]->set_analog_input(2, 0x30);
-		reference[2]->set_drawing(frame % 300 == 0);
+		reference[0]->m_inputs[1] = machines[0]->m_inputs[1];
+		if (machines[0]->work_ram()[0x1138] == 0x14) {
+			for (int c = 0; c < 3; c++) reference[0]->set_analog_input(c, uint8_t(controls.analog[c]));
+		}
+		reference[2]->set_drawing(true);
 		solo.run_frame();
+		reference[2]->observe(reference[0].get());
 		for (int line = 0; line < model1::FRAME_LINES; line++) {
 			if (line == model1::FRAME_VBLANK && reference[0]->link()->ready()) {
 				const auto snapshot = reference[0]->link()->snapshot();
@@ -423,6 +525,11 @@ int main(int argc, char **argv)
 			for (int p : {2, 0}) reference[p]->run_scanline();
 		}
 		assert_same_state(machines, reference, true);
+		if (frame % 30 == 0) {
+			const int checked = model1_video_test::monitor_zoom(*machines[2]);
+			assert(checked == model1_video_test::monitor_zoom(*reference[2]));
+			zoom_pictures += checked;
+		}
 		for (int p : {0, 2}) machines[p]->m_audio_out.clear();
 		for (int p : {0, 2}) reference[p]->m_audio_out.clear();
 		if (machines[0]->link()->ticks()) assert(machines[0]->link()->read(3) == 1);
@@ -435,9 +542,30 @@ int main(int argc, char **argv)
 		if (solo_history.size() > 8) solo_history.pop_front();
 		if (machines[2]->work_ram()[0x1138] == 0x14) {
 			solo_racing++;
+			if (frame > 2400 && machines[0]->work_ram()[0x1138] == 0x14) {
+				max_lap = std::max(max_lap, int(machines[0]->read8(0x400d70)));
+				for (uint32_t car = 0x400f80; car <= 0x403280; car += 0x280) {
+					float squared = 0;
+					for (int axis = 0; axis < 3; axis++) {
+						const float delta = std::bit_cast<float>(machines[0]->read32(car + 0x1e + axis * 4)) -
+							std::bit_cast<float>(machines[2]->read32(car + 0x1e + axis * 4));
+						assert(std::isfinite(delta));
+						squared += delta * delta;
+					}
+					max_ai_separation = std::max(max_ai_separation, std::sqrt(squared));
+				}
+			}
+			for (int p : {0, 2})
+				distant_car_pictures[p / 2] += model1_video_test::distant_cars(*machines[p]) > 0;
 			for (int axis = 0; axis < 3; axis++)
 				position[axis] = machines[2]->read32(0x400d00 + 0x1e + axis * 4);
-			solo_positions += std::find(solo_history.begin(), solo_history.end(), position) != solo_history.end();
+			// The ROM extrapolates a moving linked player between published updates.
+			solo_positions += std::any_of(solo_history.begin(), solo_history.end(), [&](const auto &published) {
+				for (int axis = 0; axis < 3; axis++)
+					if (std::fabs(std::bit_cast<float>(published[axis]) -
+						std::bit_cast<float>(position[axis])) > 0.25f) return false;
+				return true;
+			});
 			if (frame % 300 == 0 && machines[2]->frame_quads()) {
 				solo_pictures++;
 				assert(std::equal(machines[2]->frame().data(),
@@ -452,5 +580,17 @@ int main(int argc, char **argv)
 	fprintf(stderr, "Solo LIVE: %d race frames, %d broadcast pictures, %d replicated positions\n",
 		solo_racing, solo_pictures, solo_positions);
 	assert(solo_racing > 120 && solo_pictures > 0 && solo_positions > 120);
-	puts("Solo monitor: one racer, scanline lockstep and reversed CPU/delivery order match for 7000 frames");
+	fprintf(stderr, "Monitor zoom: %d fractional pictures track the ROM's changing projection\n", zoom_pictures);
+	assert(zoom_pictures > 30);
+	assert(distant_car_pictures[0] > 100 && distant_car_pictures[1] > 100);
+	fprintf(stderr, "Distant cars: player %d, Live Monitor %d race frames include renderer-only cars\n",
+		distant_car_pictures[0], distant_car_pictures[1]);
+	assert(pair_race.copies[0] == 0);
+	for (int i = 1; i < 16; i++) assert(pair_race.copies[i] - pair_copies[i] > 120);
+	fprintf(stderr, "Authoritative AI: every rival copied exactly, %d divergent poses corrected; human headers untouched\n",
+		pair_race.corrected);
+	fprintf(stderr, "Authoritative AI: maximum end-of-video-frame separation %g world units\n", max_ai_separation);
+	assert(std::isfinite(max_ai_separation) && max_ai_separation < 3.0f);
+	assert(max_lap >= 2);
+	puts("Solo monitor: one racer, auto-driven race and reversed CPU/delivery order match for 15000 frames");
 }

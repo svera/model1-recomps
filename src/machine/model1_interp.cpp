@@ -120,6 +120,7 @@ void model1::index_objects(logic_frame &lf)
 {
 	const std::vector<uint32_t> &owners = m_list_owner[m_picture_buffer];
 	lf.slots.clear();
+	lf.zooms.clear();
 	lf.above_hud = false;
 	lf.visibility = m_list_visibility[m_picture_buffer];
 	lf.slots.push_back({});                        // objects before the first matrix
@@ -129,10 +130,18 @@ void model1::index_objects(logic_frame &lf)
 	int off = 0;
 	float light[3] = { 0, 0, 0 };
 	bool has_light = false;
+	projection_view viewport{};
+	std::optional<std::array<float, 2>> zoom;
+	auto record_zoom = [&] {
+		if (!zoom) return;
+		auto [it, inserted] = lf.zooms.try_emplace(viewport, view_zoom{*zoom});
+		if (!inserted && it->second.value != *zoom) it->second.uniform = false;
+	};
 	for (int guard = 0; guard < 0x10000; guard++) {
 		switch (rdi(off)) {
 		case 0: off += 2; break;
 		case 1: case 0x41:
+			record_zoom();
 			if (rdi(off) == 0x41) lf.above_hud = lf.slots.back().above_hud = true;
 			lf.slots.back().polys.push_back(rdi(off + 4));
 			if (rdi(off) == 1 && lf.slots.back().visibility)
@@ -141,6 +150,7 @@ void model1::index_objects(logic_frame &lf)
 			off += 8;
 			break;
 		case 2: {                                  // as skip_direct
+			record_zoom();
 			off += 18;
 			for (;;) {
 				const uint32_t t = rdi(off + 2) & 3;
@@ -150,11 +160,22 @@ void model1::index_objects(logic_frame &lf)
 			off += 4;
 			break;
 		}
-		case 3: off += 16; break;
+		case 3:
+			for (int i = 0; i < 6; i++) viewport[i] = rdi(off + 4 + 2 * i);
+			off += 16;
+			break;
 		case 4: off += 6 + (rdi(off + 4) + 1) * 2; break;
 		case 5: case 6: off += 6 + rdi(off + 4) * 2; break;
 		case 7: case 8: off += 4; break;
-		case 9: case 0xc: off += 6; break;
+		case 9:
+			zoom = {rdf(off + 2), rdf(off + 4)};
+			off += 6;
+			break;
+		case 0xc:
+			viewport[6] = rdi(off + 2);
+			viewport[7] = rdi(off + 4);
+			off += 6;
+			break;
 		case 0xa:                                  // the light vector, as set_light_direction keeps it
 			{
 				const glm::vec3 v = view_t::light_vector(rdf(off + 2), rdf(off + 4), rdf(off + 6));
@@ -1400,8 +1421,19 @@ void model1::blend_slots(const logic_frame &a, const logic_frame &b, double alph
 	m_extra_from.assign(b.slots.size(), nullptr);
 	m_extra_alpha = alpha;
 	m_blend_cut = false;
+	m_blend_zooms.clear();
 	if (alpha >= 1 && !m_replay_older) return;
 	if (a.slots.empty()) return;
+	// A view's repeated zoom writes are one projection, not separate object animations.
+	// Leave object-specific zooms untouched, and never pair the world with an inset viewport.
+	for (const auto &[view, to] : b.zooms) {
+		const auto from = a.zooms.find(view);
+		if (!to.uniform || from == a.zooms.end() || !from->second.uniform) continue;
+		auto &zoom = m_blend_zooms[view];
+		for (int axis = 0; axis < 2; axis++)
+			zoom[axis] = float(from->second.value[axis] +
+				(to.value[axis] - from->second.value[axis]) * std::clamp(alpha, 0.0, 1.0));
+	}
 	if (m_video->records && a.has_camera && b.has_camera) { blend_by_records(a, b, alpha); return; }
 	// pair the slots in order, like a diff: the same first model pairs; a different model in the
 	// same place (a hand, a face swapped) pairs too; slots that appeared or went are skipped
@@ -1933,6 +1965,15 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 	if (m_blend_cut) std::fill(m_blend_ok.begin(), m_blend_ok.end(), 0);
 	for (size_t i = 0; i < nb; i++)
 		if (!b.slots[i].polys.empty()) m_smooth_stats[m_blend_ok[i] ? 2 : 0]++;
+}
+
+void model1::smooth_zoom(const projection_view &view, float &x, float &y) const
+{
+	if (!m_replaying || m_blend_cut || (m_replay_older && !m_replay_extra)) return;
+	if (const auto it = m_blend_zooms.find(view); it != m_blend_zooms.end()) {
+		x = it->second[0];
+		y = it->second[1];
+	}
 }
 
 // While replaying: the matrix for the object being drawn (the current slot's, blended).

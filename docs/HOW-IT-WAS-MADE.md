@@ -97,6 +97,11 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   bridge every car does), so with the turn smoothed it went now ahead, now back on screen; each car whose direction
   from the eye goes at least as evenly as the game drew it as turned with the smoothed camera is left as drawn (eased
   in and out over a few game frames) while the rest of the picture is turned.
+  The Live Monitor's trackside cameras also change zoom. Leaving that at 30 Hz while blending
+  their matrices made shots such as HOME STRAIGHT appear to vibrate. Zoom now follows the same
+  frame pair and fraction, matched by viewport and projection translation so the minimap and
+  commentator retain their own projections. A projection with object-specific zooms is left alone,
+  as are camera cuts and the original 30 Hz rendering.
   VR's sky scroll alternates between the current position and the average of two game frames.
   The port keeps the half-pixels that average drops and calculates the next horizontal scroll from the game's RAM,
   so the sky moves between those positions at render resolution instead of extrapolating whole-pixel steps.
@@ -632,7 +637,7 @@ load/save and simulated sleep. An SDL-GPU host built on macOS also checked curre
 the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
 management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
 
-## VR's extended scenery distance
+## VR's extended draw distance
 
 VR does its distance culling in the V60 program, before submitting objects to the shared renderer. Its routine
 at `FF7C1E` selects visible cells from a 5x5 neighborhood of the camera in a 16x16 course grid, each cell 128 units
@@ -667,6 +672,21 @@ as the world. Additional geometry has its own depth-sort accumulator, leaving th
 inherited sort depths unchanged. Static scenery bypasses the arcade budget and command-buffer limit,
 but does not change which cars the CPU submits. Renderer geometry allocations have explicit bounds
 checks to prevent full-course geometry from overflowing the finite point/quad buffers.
+
+Full distance also adds cars outside the arcade's camera-specific cell mask in player and Live Monitor
+views. The original drawing checks at `FEF9F3`, `FEFDB2` and `FEFE08` remain untouched: admitting cars
+through those CPU loops changes emulated timing. Instead the renderer attaches missing active cars
+to the same world matrix as the extra scenery. It uses each car's complete distant model (`record+A8`)
+and the position, suspension height, yaw, pitch and roll used by `FEFB8F`. Already-visible cars and
+the camera's own player record are excluded, avoiding duplicates. All 16 car records are considered.
+These additional distant cars use the arcade's simpler complete models even with LOD Off; LOD Off
+still preserves full detail inside the original visibility range. Arcade distance adds no cars.
+
+The car-distance regression compares otherwise identical machines with and without only these host
+objects, with LOD and smooth motion on and off. It requires changed rendered pictures alongside exact
+RAM, battery RAM, CPU-register and audio equality, on interpreter and native backends:
+`build/bin/vr_gameplay_test build/vr --car-distance` (or `--car-distance-native`).
+The solo linked-monitor regression also checks that both views receive the additional cars.
 
 The desktop's Display > Draw distance choice defaults to Full, saves the choice in VR's settings, and applies it to
 the next list without restarting. Updated regression assertions cover all 256 camera cells,
@@ -739,9 +759,10 @@ The native desktop menu was also checked through both choices and a saved Arcade
 ## VR's model detail (LOD)
 
 Display > LOD defaults to Off and persists as `lod = off` in settings. Off keeps the near-detail
-car bodies and separate wheels at every distance; On restores the arcade's distance-based
+car bodies and separate wheels throughout the arcade's visibility range; On restores its distance-based
 models. Static scenery already has a single detail level in its course-cell records, so it
-remains full detail in both modes. Draw distance independently controls scenery visibility.
+remains full detail in both modes. Full draw distance additionally shows cars beyond that range
+using their complete distant models, independently of LOD.
 
 The TGP still executes its original program. Only the completed distance results read at
 `FEFBF5` and `FF0D3B`, the two car-rendering detail decisions, are treated as near when LOD is off.
@@ -997,8 +1018,9 @@ Both layouts use the same scanline-synchronized receive-only instance. Solo mode
 links one master and the monitor, with racer count 1 and relay ID 0, without a hidden
 slave or a synthetic racer block. The board loops the master's published block into
 its own receive slot and copies the same pre-tick snapshot and master status to the
-monitor. The ROM-backed test runs another 7,000 frames in this mode, requiring actual
-broadcast polygons and matching player positions during a race. Reversed CPU and
+monitor. The ROM-backed test runs another 15,000 frames in this mode with the existing
+Beginner-course driver, requiring actual broadcast polygons and matching player positions
+(allowing the ROM's sub-unit extrapolation between publications). Reversed CPU and
 board-delivery order must match RAM, audio, link state and sampled pixels here too.
 Joining or removing
 Player 2 rebuilds the transport and reboots the coordinated session, retaining the
@@ -1024,6 +1046,27 @@ uses each whole window's aspect within those same bounds. It remains muted at th
 buffer is discarded every frame, and the final mixer still includes only the one or
 two players with the original gain/divisor. There is deliberately no audible
 commentary option: player audio only is the chosen policy.
+
+The ROM advances AI rivals independently in the monitor. In a longer solo race, one rival
+slows down in the player's simulation while its monitor counterpart continues at speed,
+eventually separating by over 60 world units. Increasing draw distance cannot fix that.
+For local LIVE racing, the master is now authoritative for AI cars. Before any cabinet
+advances a video frame, the scheduler takes an immutable snapshot of the master's AI records.
+At `FEDD6B`, after the monitor's AI update but before its pose and lap bookkeeping, the
+monitor adopts those records' flags and physics/presentation prefix (`+0x14..+0x1c5`).
+It preserves its own record IDs, linked-list offsets, handlers and camera pointers
+(`+0x04..+0x13`), and the trailing non-AI animation state.
+AI records retain their ordering between the master and observer; the first one or two
+human records are excluded and continue using the original link protocol. This also supplies
+the race data used by the monitor's rankings and minimap, not just polygon transforms.
+Snapshots apply only when both machines are racing on the same course; reset, disconnect
+and other phases clear them. There is no write back to a player and no attract-state
+normalization. This is intentionally a local spectator correction, not a claim about original
+relay hardware fidelity. Unit tests cover every AI slot, immutable snapshots, preserved
+headers, untouched humans/source, and lifecycle guards. ROM tests check every copied payload
+exactly in native and interpreter execution, including the longer auto-driven race.
+That race must keep every AI within 3 world units at video-frame boundaries (measured
+maximum 2.783), allowing one logic-update phase offset but not accumulated divergence.
 
 LIVE's course-selection camera differs from the racing cabinets' `TRACK_SELECT_CAMERA`.
 The VR scene classifier also checks role 3 and phase `0x10`, keeping this painted

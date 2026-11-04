@@ -36,6 +36,7 @@ public:
 		for (model1 *machine : m_machines)
 			if (machine && machine->scanline())
 				throw std::logic_error("linked cabinets must start at a frame boundary");
+		if (m_machines[2]) m_machines[2]->observe(m_machines[0]);
 		for (int line = 0; line < model1::FRAME_LINES; line++) {
 			if (line == model1::FRAME_VBLANK && m_machines[0]->link()->ready() &&
 				(!m_machines[1] || m_machines[1]->link()->ready())) {

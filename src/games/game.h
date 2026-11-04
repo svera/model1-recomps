@@ -132,6 +132,8 @@ struct gameplay_callbacks
 	std::function<void()> reset;
 	std::function<void()> frame_begin;
 	std::function<void()> frame_end;
+	// Receive-only local cabinets may take a race snapshot before any cabinet advances.
+	std::function<void(model1 *)> observe;
 	// An optional aligned work-RAM word to observe after the CPU writes it (mask: bytes written).
 	uint32_t work_ram_watch = 0;
 	std::function<void(uint16_t)> work_ram_written;

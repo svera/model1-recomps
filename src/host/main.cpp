@@ -1174,7 +1174,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (shared) c.display = cabinets[0]->display;
 		else {
 			c.display = std::make_shared<local_display>();
-			c.display->window = SDL_CreateWindow("Virtua Racing - Live Monitor (muted)", 640, 480,
+			c.display->window = SDL_CreateWindow("Virtua Racing - Live Monitor", 640, 480,
 				SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (hidden ? SDL_WINDOW_HIDDEN : 0));
 			if (!c.display->window) { fprintf(stderr, "Live Monitor: window: %s\n", SDL_GetError()); return false; }
 			c.display->icon_set = set_window_icon(c.display->window);

@@ -42,6 +42,7 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 - Sharper graphics, widescreen and ultrawide views without stretching the HUD.
 - Original arcade motion or smoother 60 / 120 FPS.
 - Full-detail models by default, with an optional LOD toggle for simpler distant models.
+- Full draw distance for scenery and distant cars, including the Live Monitor; Arcade restores the original limits.
 - Keyboard and gamepad support, with customizable controls.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Optional original Live Monitor broadcast above the players or in a spectator window.

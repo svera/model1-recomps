@@ -80,14 +80,14 @@ public:
 
 	std::vector<menu_item> display_menu_items() override
 	{
-		return { { "Draw distance", "Full adds distant static scenery from the full 256-cell course in the renderer, without changing arcade car logic or timing. This can substantially lower performance. Applies to the next scenery list.",
+		return { { "Draw distance", "Full shows distant scenery and cars in player and Live Monitor views. Arcade keeps the original visibility limits. Full can substantially lower performance. Applies to the next display list.",
 			[this] { return extended ? "Full" : "Arcade"; },
 			[this](int d) {
 				extended = (int(extended) + d + 2) % 2;
 				set_extended_draw_distance(ctx->machine, extended);
 				ctx->settings_changed();
 			} },
-			{ "LOD", "Off keeps the highest-detail models at every distance. On uses the arcade's simpler distant models. Scenery keeps its full detail in either mode; Draw distance controls how much scenery is visible. Off can lower performance.",
+			{ "LOD", "Off keeps the highest-detail models within the arcade's visibility range. On uses the arcade's simpler distant models. Full draw distance adds cars beyond that range using their distant models. Scenery keeps its full detail in either mode. Off can lower performance.",
 			[this] { return lod ? "On" : "Off"; },
 			[this](int d) {
 				lod = (int(lod) + d + 2) % 2;
