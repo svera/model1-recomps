@@ -926,6 +926,44 @@ separate cabinet windows only the primary renderer waits for refresh, avoiding t
 one loop. The desktop regression checks the renderer's reported VSync state and uses explicit
 close events so its event timelines do not depend on the refresh rate.
 
+### Verifying the original Live Monitor
+
+Virtua Racing's service-menu **LINK ID** has four values: **NO LINK**, **MASTER**,
+**SLAVE**, and **LIVE** (0 through 3). LIVE is EEPROM byte `0x0c`, value **3**
+(word 6's high byte), mirrored at work RAM `0x40dc8c`. The service field handler
+at `FC5EC4` cycles these four values; the label table is at `FC8166`. This is not
+the separate monitor-aspect setting. The EEPROM checksum must also remain valid.
+The ROM's link setup at `FE6CBF` translates LIVE to communication-board mode **0**
+(relay), without changing the saved role of 3. Standalone role 0 is not LIVE.
+
+`make test-vr-live-monitor` boots three fresh machines as MASTER, SLAVE, and LIVE,
+using the local extracted ROMs. It changes only in-memory EEPROMs with the normal
+checksum helper, never reading or writing player saves. The racers run the existing
+two-cabinet link protocol in scanline lockstep. A **test-only receiver** feeds their
+published car blocks and the master's status bytes to the monitor's receive slots.
+It does not implement a production relay, its complete handshake/flag behavior,
+or a monitor layout in the desktop host.
+
+The 7,000-frame probe checks relay ID 0, two racers, distinct moving player positions
+received by the monitor, multiple broadcast camera targets, rendered 3D, and nonzero
+audio output. Screenshots in `build/vr/live-monitor/` show the original helicopter
+view, **LIVE** banner, and **mr. VIRT MCPOLYGON.** portrait and on-screen commentary
+during a player race. Camera direction and broadcast overlays come from the ROM;
+no custom camera director or commentator was added.
+
+For an interpreter comparison, run:
+
+```
+build/bin/vr_live_monitor_test build/vr build/vr/live-monitor-interpreter --interp
+diff -rq build/vr/live-monitor build/vr/live-monitor-interpreter
+```
+
+The native and interpreter runs produced identical sampled PNGs. Native execution
+still uses interpreter fallbacks, including the LIVE-specific path at `FEE66B`;
+the probe reports fallback calls separately for each machine. Nonzero audio is
+verified, but spoken commentary has not been verified by listening. This establishes
+the ROM's broadcast path, not complete relay-device fidelity or a shipping feature.
+
 ### Checking linked attract timing
 
 Different attract pictures do not by themselves establish clock drift. The ROM-backed linked
