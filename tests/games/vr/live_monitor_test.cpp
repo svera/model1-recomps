@@ -2,6 +2,7 @@
 #include "../../../src/host/png.h"
 #include "../../../src/games/settings.h"
 #include "../../../src/games/vr/gameplay.h"
+#include "../../../src/machine/linked_pair.h"
 #include "../../../src/rt/native.h"
 #include <algorithm>
 #include <array>
@@ -13,22 +14,142 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 
-// Test-only relay receiver: the racing nodes keep their existing two-cabinet protocol.
-// The monitor receives both published car blocks and the master's additional status bytes.
-static void receive_live(m1comm &relay, const std::array<m1comm::memory, 2> &snapshots)
+using machines_type = std::array<std::unique_ptr<model1>, 3>;
+
+struct model1_video_test
 {
-	assert(relay.cn() & 1);
-	assert(relay.read(1) == 0);
-	relay.write(0, 1);
-	relay.write(2, 0);
-	relay.write(3, 2);
-	for (int p = 0; p < 2; p++)
-		if (snapshots[p][4])
-			for (unsigned i = 0; i < 0x1c4; i++)
-				relay.write(0x10 + (p + 1) * 0x1c4 + i, snapshots[p][0x10 + i]);
-	for (unsigned i = 6; i < 16; i++) relay.write(i, snapshots[0][i]);
-	relay.write(5, 0);
+	static void monitor_commentator(model1 &m)
+	{
+		const float original_aspect = m.aspect();
+		for (int scale : {1, 2}) {
+			m.set_render_scale(scale);
+			m.set_aspect(4.0f / 3);
+			m.redraw();
+			assert(m.m_view->xc == 405 && m.m_view->yc == 59);
+			assert(m.m_view->lx1 == 327 && m.m_view->lx2 == 482);
+			const std::vector<uint32_t> original(m.frame().data(),
+				m.frame().data() + size_t(m.frame_w()) * m.frame_h());
+			for (float aspect : {16.0f / 9, 64.0f / 27, 32.0f / 9, 128.0f / 27, 64.0f / 9}) {
+				m.set_aspect(aspect);
+				assert(m.aspect() == aspect);
+				m.redraw();
+				assert(m.m_wide_frame);
+				assert(m.m_view->xc == 405 + m.m_ext);
+				assert(m.m_view->lx1 == 327 + m.m_ext && m.m_view->lx2 == 482 + m.m_ext);
+				// Portrait, background, name and speech stay together, with the original right margin.
+				for (int y = 7 * scale; y < 113 * scale; y++)
+					for (int x = 327 * scale; x < 483 * scale; x++)
+						assert(m.frame().pix(y, 2 * m.m_ext * scale + x) ==
+							original[size_t(y) * model1::SCREEN_W * scale + x]);
+			}
+		}
+		m.set_render_scale(1);
+		m.set_aspect(original_aspect);
+		m.redraw();
+	}
+
+	static void monitor_hud(model1 &m)
+	{
+		const float original_aspect = m.aspect();
+		for (int scale : {1, 2}) {
+			m.set_render_scale(scale);
+			m.set_aspect(4.0f / 3);
+			m.redraw();
+			bitmap_rgb32 original;
+			original.allocate(m.frame_w(), m.frame_h());
+			original.fill(model1::KEY);
+			m.draw_tiles(original, original.cliprect(), 1, 0);
+			int artwork_pixels = 0;
+			for (int y = 0; y < 104 * scale; y++)
+				for (int x = 0; x < 128 * scale; x++)
+					artwork_pixels += original.pix(y, x) != model1::KEY;
+			assert(artwork_pixels > 1000 * scale * scale);
+			for (float aspect : {16.0f / 9, 32.0f / 9, 128.0f / 27, 64.0f / 9}) {
+				m.set_aspect(aspect);
+				assert(m.aspect() == aspect);
+				m.redraw();
+				assert(m.m_wide_frame);
+				bitmap_rgb32 wide;
+				wide.allocate(m.frame_w(), m.frame_h());
+				wide.fill(model1::KEY);
+				m.draw_tiles(wide, wide.cliprect(), 1, 0);
+				// The LIVE logo and camera label move to the edge, never scale horizontally.
+				for (int y = 0; y < 104 * scale; y++)
+					for (int x = 0; x < 128 * scale; x++)
+						assert(wide.pix(y, x) == original.pix(y, x));
+			}
+		}
+		m.set_render_scale(1);
+		m.set_aspect(original_aspect);
+		m.redraw();
+	}
+
+	static void monitor_artwork(model1 &m)
+	{
+		assert(m.work_ram()[0x1138] == 0x10);
+		assert(m.read8(0x40dc8c) == 3);
+		const float original_aspect = m.aspect();
+		for (int scale : {1, 2}) {
+			m.set_render_scale(scale);
+			m.set_aspect(4.0f / 3);
+			m.redraw();
+			const std::vector<uint32_t> original(m.frame().data(),
+				m.frame().data() + size_t(m.frame_w()) * m.frame_h());
+			for (float aspect : {16.0f / 9, 32.0f / 9, 128.0f / 27, 64.0f / 9}) {
+				m.set_aspect(aspect);
+				assert(m.aspect() == aspect);
+				m.redraw();
+				assert(!m.m_wide_frame);
+				for (int y = 0; y < m.frame_h(); y++)
+					for (int x = 0; x < model1::SCREEN_W * scale; x++)
+						assert(m.frame().pix(y, m.m_ext * scale + x) ==
+							original[size_t(y) * model1::SCREEN_W * scale + x]);
+			}
+		}
+		m.set_render_scale(1);
+		m.set_aspect(original_aspect);
+		m.redraw();
+	}
+};
+
+// Independent reference: reverse both board delivery and CPU execution, while
+// retaining the same vblank snapshot boundary as the production scheduler.
+static void run_reversed_frame(machines_type &machines, std::array<m1comm::memory, 2> &snapshots)
+{
+	for (const auto &machine : machines) assert(machine->scanline() == 0);
+	for (int line = 0; line < model1::FRAME_LINES; line++) {
+		if (line == model1::FRAME_VBLANK &&
+			machines[0]->link()->ready() && machines[1]->link()->ready()) {
+			for (int p = 0; p < 2; p++) snapshots[p] = machines[p]->link()->snapshot();
+			if (machines[2]->link()->ready())
+				machines[2]->link()->receive(snapshots[0], snapshots[1]);
+			machines[1]->link()->tick();
+			machines[0]->link()->tick();
+		}
+		for (int p : {2, 1, 0}) machines[p]->run_scanline();
+		for (const auto &machine : machines)
+			assert(machine->scanline() == (line + 1) % model1::FRAME_LINES);
+	}
+}
+
+static void assert_same_state(machines_type &machines, machines_type &reference, bool solo = false)
+{
+	for (int p = 0; p < 3; p++) {
+		if (solo && p == 1) continue;
+		auto &machine = *machines[p];
+		auto &other = *reference[p];
+		assert(machine.scanline() == 0 && other.scanline() == 0);
+		assert(machine.frame_number() == other.frame_number());
+		assert(*machine.cpu().m_cycles == *other.cpu().m_cycles);
+		assert(machine.work_ram() == other.work_ram() && machine.nvram() == other.nvram());
+		assert(machine.camera() == other.camera());
+		assert(machine.link()->snapshot() == other.link()->snapshot());
+		assert(machine.link()->ticks() == other.link()->ticks());
+		assert(machine.link()->cn() == other.link()->cn() && machine.link()->fg() == other.link()->fg());
+		assert(machine.m_audio_out == other.m_audio_out);
+	}
 }
 
 int main(int argc, char **argv)
@@ -41,45 +162,63 @@ int main(int argc, char **argv)
 	std::filesystem::create_directories(argv[2]);
 	rec::hints map;
 	assert(map.read("assets/games/vr/vr_map.txt"));
-	std::array<std::unique_ptr<model1>, 3> machines;
-	std::array<rec::context, 3> runtimes;
-	for (int p = 0; p < 3; p++) {
-		machines[p] = std::make_unique<model1>(load_regions(argv[1], game::id{"vr"}));
-		auto &machine = *machines[p];
-		if (native) {
-			runtimes[p].attach(machine.cpu(), "vr");
-			assert(rec::build_native(machine.maincpu_rom(), map));
-			machine.run_cpu = [&, p](int n) { runtimes[p].run(n); };
+	machines_type machines, reference;
+	std::array<rec::context, 3> runtimes, reference_runtimes;
+	auto initialize = [&](machines_type &nodes, std::array<rec::context, 3> &contexts) {
+		for (int p = 0; p < 3; p++) {
+			nodes[p] = std::make_unique<model1>(load_regions(argv[1], game::id{"vr"}));
+			auto &machine = *nodes[p];
+			if (native) {
+				contexts[p].attach(machine.cpu(), "vr");
+				assert(rec::build_native(machine.maincpu_rom(), map));
+				machine.run_cpu = [context = &contexts[p]](int n) { context->run(n); };
+			}
+			machine.set_drawing(false);
+			machine.enable_sound();
+			machine.reset();
+			for (int f = 0; f < 900 && !machine.past_boot(); f++) machine.run_frame();
+			assert(machine.past_boot());
+			game::vr::set_coin_setting(machine, game::vr::FREE_PLAY);
+			game::vr::set_language(machine, 1);
+			game::vr::set_machine_setting(machine, game::vr::machine_setting::car_color, p == 1 ? 1 : 0);
+			assert(game::edit_eeprom_settings(machine, 5, [p](uint16_t *words) {
+				words[6] = uint16_t((words[6] & 0x00ff) | ((p + 1) << 8));
+				return true;
+			}));
+			machine.reset();
+			machine.forget_camera();
+			if (native) {
+				contexts[p].attach(machine.cpu(), "vr");
+				rec::reset_fallbacks();
+			}
 		}
-		machine.set_drawing(false);
-		machine.enable_sound();
-		machine.reset();
-		for (int f = 0; f < 900 && !machine.past_boot(); f++) machine.run_frame();
-		assert(machine.past_boot());
-		game::vr::set_coin_setting(machine, game::vr::FREE_PLAY);
-		game::vr::set_language(machine, 1);
-		game::vr::set_machine_setting(machine, game::vr::machine_setting::car_color, p == 1 ? 1 : 0);
-		assert(game::edit_eeprom_settings(machine, 5, [p](uint16_t *words) {
-			words[6] = uint16_t((words[6] & 0x00ff) | ((p + 1) << 8));
-			return true;
-		}));
-		machine.reset();
-		machine.forget_camera();
-		if (native) {
-			runtimes[p].attach(machine.cpu(), "vr");
-			rec::reset_fallbacks();
-		}
-	}
-	std::array<m1comm::memory, 2> snapshots{};
+	};
+	initialize(machines, runtimes);
+	initialize(reference, reference_runtimes);
+	linked_pair pair(*machines[0], *machines[1], machines[2].get());
+	std::array<m1comm::memory, 2> reference_snapshots{};
 	for (int p = 0; p < 2; p++)
-		machines[p]->enable_link([&, p](const auto &, auto &peer) {
-			peer = snapshots[1 - p];
+		reference[p]->enable_link([&, p](const auto &, auto &peer) {
+			peer = reference_snapshots[1 - p];
 			return true;
 		}, true);
-	machines[2]->enable_link([](const auto &, auto &) {
-		assert(false && "the test relay must never publish racing data");
-		return false;
+	reference[2]->enable_link([](const auto &, auto &) -> bool {
+		throw std::logic_error("a relay must not publish racing data");
 	}, true);
+	for (int p = 0; p < 3; p++)
+		machines[p]->on_line = [&, p](int line) {
+			for (int other = 0; other < 3; other++)
+				assert(machines[other]->scanline() ==
+					(other < p ? (line + 1) % model1::FRAME_LINES : line));
+		};
+	auto run_both = [&] {
+		std::array<uint64_t, 3> frames{};
+		for (int p = 0; p < 3; p++) frames[p] = machines[p]->frame_number();
+		pair.run_frame();
+		run_reversed_frame(reference, reference_snapshots);
+		assert_same_state(machines, reference);
+		for (int p = 0; p < 3; p++) assert(machines[p]->frame_number() == frames[p] + 1);
+	};
 	std::array<int, 3> previous_phase{-1, -1, -1};
 	std::array<uint32_t, 3> previous_camera{};
 	std::array<std::deque<std::array<uint32_t, 3>>, 2> positions;
@@ -88,10 +227,14 @@ int main(int argc, char **argv)
 	std::set<uint32_t> broadcast_cameras;
 	int racing = 0, monitor_pictures = 0, audible_frames = 0;
 	uint64_t last_link_tick = 0;
+	bool artwork_checked = false, commentator_checked = false;
 	for (int frame = 0; frame < 7000; frame++) {
 		const auto tick = machines[0]->link()->ticks();
 		const bool capture = tick >= 600 && tick != last_link_tick && tick % 300 == 0;
-		for (int p : {0, 2}) machines[p]->set_drawing(capture);
+		for (int p : {0, 2}) {
+			machines[p]->set_drawing(capture);
+			reference[p]->set_drawing(capture);
+		}
 		for (int p = 0; p < 2; p++) {
 			auto &machine = *machines[p];
 			const bool start = (tick >= 400 && tick < 406) || (tick >= 520 && tick < 526);
@@ -99,17 +242,25 @@ int main(int argc, char **argv)
 			assert(machine.set_analog_input(0, 0x80));
 			assert(machine.set_analog_input(1, p ? 0x90 : 0xff));
 			assert(machine.set_analog_input(2, 0x30));
+			reference[p]->m_inputs[0] = machine.m_inputs[0];
+			assert(reference[p]->set_analog_input(0, 0x80));
+			assert(reference[p]->set_analog_input(1, p ? 0x90 : 0xff));
+			assert(reference[p]->set_analog_input(2, 0x30));
 		}
-		for (int line = 0; line < model1::FRAME_LINES; line++) {
-			if (line == model1::FRAME_VBLANK &&
-				machines[0]->link()->ready() && machines[1]->link()->ready()) {
-				for (int p = 0; p < 2; p++) snapshots[p] = machines[p]->link()->snapshot();
-				for (int p = 0; p < 2; p++) machines[p]->link()->tick();
-				auto &relay = *machines[2]->link();
-				if ((relay.cn() & 1) && relay.read(1) == 0) receive_live(relay, snapshots);
+		run_both();
+		if (!artwork_checked && machines[2]->work_ram()[0x1138] == 0x10 && tick >= 600) {
+			model1_video_test::monitor_artwork(*machines[2]);
+			model1_video_test::monitor_artwork(*reference[2]);
+			artwork_checked = true;
+		}
+		for (auto &machine : reference) machine->m_audio_out.clear();
+		assert(machines[0]->link()->ticks() == machines[1]->link()->ticks());
+		for (int p = 0; p < 3; p++)
+			if (machines[p]->link()->ticks()) {
+				assert((machines[p]->link()->fg() & 0x80) == 0);
+				assert(machines[p]->link()->read(2) == (p + 1) % 3);
+				assert(machines[p]->link()->read(3) == 2);
 			}
-			for (auto &machine : machines) machine->run_scanline();
-		}
 		for (int p = 0; p < 3; p++) {
 			auto &machine = *machines[p];
 			const int phase = machine.work_ram()[0x1138];
@@ -128,7 +279,7 @@ int main(int argc, char **argv)
 		for (int p = 0; p < 2; p++) {
 			std::array<uint32_t, 3> position{};
 			for (int axis = 0; axis < 3; axis++)
-				memcpy(&position[axis], &snapshots[p][0x10 + 0x1e + axis * 4], 4);
+				memcpy(&position[axis], &machines[p]->link()->snapshot()[0x10 + 0x1e + axis * 4], 4);
 			positions[p].push_back(position);
 			if (positions[p].size() > 8) positions[p].pop_front();
 		}
@@ -152,7 +303,16 @@ int main(int argc, char **argv)
 				const std::string path = std::string(argv[2]) + "/node-" + std::to_string(p + 1) +
 					"-" + std::to_string(tick) + ".png";
 				assert(write_png(path.c_str(), machine.frame().data(), machine.frame_w(), machine.frame_h()));
+				assert(machine.frame_w() == reference[p]->frame_w() && machine.frame_h() == reference[p]->frame_h());
+				assert(std::equal(machine.frame().data(),
+					machine.frame().data() + size_t(machine.frame_w()) * machine.frame_h(),
+					reference[p]->frame().data()));
 				if (p == 2 && machine.frame_quads() > 0) monitor_pictures++;
+			}
+			if (tick == 6000) {
+				model1_video_test::monitor_commentator(*machines[2]);
+				model1_video_test::monitor_commentator(*reference[2]);
+				commentator_checked = true;
 			}
 		}
 	}
@@ -173,4 +333,124 @@ int main(int argc, char **argv)
 	assert(broadcast_cameras.size() >= 2 && audible_frames > 120);
 	assert(replicated[0] > 120 && replicated[1] > 120);
 	assert(replicated_positions[0].size() > 120 && replicated_positions[1].size() > 120);
+	assert(machines[2]->link()->ticks() > 6000);
+	assert(artwork_checked);
+	assert(commentator_checked);
+	model1_video_test::monitor_hud(*machines[2]);
+	model1_video_test::monitor_hud(*reference[2]);
+	auto monitor_line_check = std::move(machines[2]->on_line);
+	machines[2]->on_line = {};
+	machines[2]->run_scanline();
+	reference[2]->run_scanline();
+	bool unaligned = false;
+	try { pair.run_frame(); }
+	catch (const std::logic_error &) { unaligned = true; }
+	assert(unaligned);
+	const auto racer_ticks = machines[0]->link()->ticks();
+	machines[2]->reset();
+	machines[2]->on_line = std::move(monitor_line_check);
+	reference[2]->reset();
+	machines[2]->m_audio_out.clear();
+	reference[2]->m_audio_out.clear();
+	machines[2]->set_drawing(false);
+	reference[2]->set_drawing(false);
+	if (native) {
+		runtimes[2].attach(machines[2]->cpu(), "vr");
+		reference_runtimes[2].attach(reference[2]->cpu(), "vr");
+	}
+	assert(!machines[2]->link()->ready());
+	for (int frame = 0; frame < 900; frame++) {
+		run_both();
+		for (auto &machine : machines) machine->m_audio_out.clear();
+		for (auto &machine : reference) machine->m_audio_out.clear();
+	}
+	assert(machines[0]->link()->ticks() == racer_ticks + 900);
+	assert(machines[1]->link()->ticks() == racer_ticks + 900);
+	assert(machines[2]->past_boot() && machines[2]->link()->ticks() > 800);
+	assert((machines[2]->link()->fg() & 0x80) == 0);
+	for (const auto &machine : machines) assert(machine->link()->read(3) == 2);
+	pair.disconnect();
+	for (const auto &machine : machines) assert(!machine->link());
+	bool disconnected = false;
+	try { pair.run_frame(); }
+	catch (const std::logic_error &) { disconnected = true; }
+	assert(disconnected);
+	puts("Relay lifecycle: frame-boundary guard, independent reboot and disconnect passed");
+	puts("Three-machine synchronization: scanline lockstep and reversed CPU/delivery order match for 7900 frames");
+	for (int p : {0, 2}) {
+		machines[p]->on_line = {};
+		machines[p]->reset();
+		machines[p]->forget_camera();
+		if (native) runtimes[p].attach(machines[p]->cpu(), "vr");
+		machines[p]->set_drawing(false);
+		reference[p]->reset();
+		reference[p]->forget_camera();
+		if (native) reference_runtimes[p].attach(reference[p]->cpu(), "vr");
+		reference[p]->set_drawing(false);
+	}
+	linked_pair solo(*machines[0], nullptr, machines[2].get());
+	for (int p : {0, 2}) {
+		reference[p]->enable_link([](const auto &, auto &) -> bool {
+			throw std::logic_error("a solo session must not publish to another racer");
+		}, true);
+		machines[p]->on_line = [&, p](int line) {
+			assert(machines[0]->scanline() == (p == 0 ? line : (line + 1) % model1::FRAME_LINES));
+			assert(machines[2]->scanline() == line);
+		};
+	}
+	int solo_racing = 0, solo_pictures = 0, solo_positions = 0;
+	std::deque<std::array<uint32_t, 3>> solo_history;
+	for (int frame = 0; frame < 7000; frame++) {
+		const auto tick = machines[0]->link()->ticks();
+		const bool start = (tick >= 400 && tick < 406) || (tick >= 520 && tick < 526);
+		machines[0]->m_inputs[0] = uint8_t(~(start ? 0x10 : 0));
+		machines[0]->set_analog_input(0, 0x80);
+		machines[0]->set_analog_input(1, 0xff);
+		machines[0]->set_analog_input(2, 0x30);
+		machines[2]->set_drawing(frame % 300 == 0);
+		reference[0]->m_inputs[0] = machines[0]->m_inputs[0];
+		reference[0]->set_analog_input(0, 0x80);
+		reference[0]->set_analog_input(1, 0xff);
+		reference[0]->set_analog_input(2, 0x30);
+		reference[2]->set_drawing(frame % 300 == 0);
+		solo.run_frame();
+		for (int line = 0; line < model1::FRAME_LINES; line++) {
+			if (line == model1::FRAME_VBLANK && reference[0]->link()->ready()) {
+				const auto snapshot = reference[0]->link()->snapshot();
+				if (reference[2]->link()->ready()) reference[2]->link()->receive(snapshot);
+				reference[0]->link()->tick(true);
+			}
+			for (int p : {2, 0}) reference[p]->run_scanline();
+		}
+		assert_same_state(machines, reference, true);
+		for (int p : {0, 2}) machines[p]->m_audio_out.clear();
+		for (int p : {0, 2}) reference[p]->m_audio_out.clear();
+		if (machines[0]->link()->ticks()) assert(machines[0]->link()->read(3) == 1);
+		if (machines[2]->link()->ticks())
+			assert(machines[2]->link()->read(2) == 0 && machines[2]->link()->read(3) == 1);
+		std::array<uint32_t, 3> position{};
+		for (int axis = 0; axis < 3; axis++)
+			memcpy(&position[axis], &machines[0]->link()->snapshot()[0x10 + 0x1e + axis * 4], 4);
+		solo_history.push_back(position);
+		if (solo_history.size() > 8) solo_history.pop_front();
+		if (machines[2]->work_ram()[0x1138] == 0x14) {
+			solo_racing++;
+			for (int axis = 0; axis < 3; axis++)
+				position[axis] = machines[2]->read32(0x400d00 + 0x1e + axis * 4);
+			solo_positions += std::find(solo_history.begin(), solo_history.end(), position) != solo_history.end();
+			if (frame % 300 == 0 && machines[2]->frame_quads()) {
+				solo_pictures++;
+				assert(std::equal(machines[2]->frame().data(),
+					machines[2]->frame().data() + size_t(machines[2]->frame_w()) * machines[2]->frame_h(),
+					reference[2]->frame().data()));
+				const auto path = std::string(argv[2]) + "/solo-monitor.png";
+				assert(write_png(path.c_str(), machines[2]->frame().data(),
+					machines[2]->frame_w(), machines[2]->frame_h()));
+			}
+		}
+	}
+	fprintf(stderr, "Solo LIVE: %d race frames, %d broadcast pictures, %d replicated positions\n",
+		solo_racing, solo_pictures, solo_positions);
+	assert(solo_racing > 120 && solo_pictures > 0 && solo_positions > 120);
+	puts("Solo monitor: one racer, scanline lockstep and reversed CPU/delivery order match for 7000 frames");
 }

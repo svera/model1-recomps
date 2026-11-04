@@ -16,6 +16,7 @@ const video_traits VIDEO{ .smooth_frames = true,
 	.foreground_objects = { 0x1031c7 },   // the screen-space SEGA logo, also in close-up car views
 	.right_edge_objects = { 0x1031c7 },
 	.edge_views = { { -232, 134, -1 }, { 149, 12, 1 } },   // position pointer; circuit map and its cars
+	.edge_viewports = { { 405, 59, 1 } },   // Live Monitor's commentator window
 	.hud_tile_groups = { { 0x1180, 0x11bc } },   // position gauge, beside the large GO! tiles
 	.wide_tile_slide = tile_slide{ 0x1c, 1, 480 },   // results: line scroll from 480 to 0
 	// FFE3C6/FFE444 average these whole-pixel scrolls on even video frames; odd frames

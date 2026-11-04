@@ -2666,6 +2666,10 @@ struct model1_video_test
 		assert(m.hud_view_offset(149, 12) == m.m_ext);
 		assert(m.hud_view_offset(-232, 134) == -m.m_ext);
 		assert(m.hud_view_offset(0, -30) == 0);
+		assert(m.hud_view_offset(405, 59, true) == m.m_ext);
+		assert(m.hud_view_offset(248, 191, true) == 0);
+		assert(m.hud_view_offset(405, 59) == 0);
+		assert(m.hud_view_offset(149, 12, true) == 0);
 		assert(m.hud_edge_pinning_active());
 
 		constexpr uint32_t KEY = 0xff000000;

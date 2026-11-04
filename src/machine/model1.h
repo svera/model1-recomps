@@ -562,7 +562,7 @@ private:
 	bool hud_edge_pinning_active() const;
 	void pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const;
 	float hud_edge_offset(float left, float right) const;
-	float hud_view_offset(float x, float y) const;
+	float hud_view_offset(float x, float y, bool viewport = false) const;
 	void pin_hud_point(point_t *point, float offset) const;
 	std::vector<size_t> direct_groups(point_t *points, quad_t *quads) const;
 	void pin_hud_direct(point_t *points, quad_t *quads);

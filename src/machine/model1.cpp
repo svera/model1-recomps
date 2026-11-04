@@ -511,7 +511,8 @@ void model1::set_render_scale(int scale)
 
 void model1::set_aspect(float aspect)
 {
-	m_aspect = std::clamp(aspect, 4.0f / 3.0f, 32.0f / 9.0f);
+	// Full-width, half-height stacked views need twice the host composition's aspect.
+	m_aspect = std::clamp(aspect, 4.0f / 3.0f, 64.0f / 9.0f);
 	// the arcade's pixels are slightly wide: 496x384 fills a 4:3 tube
 	float width = SCREEN_H * m_aspect * float(SCREEN_W) / (SCREEN_H * 4.0f / 3.0f);
 	m_ext = std::max(0, int(std::lround((width - SCREEN_W) / 2)));
@@ -690,10 +691,10 @@ float model1::hud_edge_offset(float left, float right) const
 	return 0;
 }
 
-float model1::hud_view_offset(float x, float y) const
+float model1::hud_view_offset(float x, float y, bool viewport) const
 {
 	if (hud_edge_pinning_active())
-		for (const auto &view : m_video->edge_views)
+		for (const auto &view : viewport ? m_video->edge_viewports : m_video->edge_views)
 			if (x == view.x && y == view.y) return float(view.edge * m_ext);
 	return 0;
 }

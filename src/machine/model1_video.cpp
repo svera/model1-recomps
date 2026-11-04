@@ -2365,7 +2365,8 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				float x2 = readi16(list_offset + 12);
 				float y1 = 383 - (readi16(list_offset + 14) - 39);
 
-				m_view->set_viewport(xc, yc, x1, x2, y1, y2);
+				const float offset = hud_view_offset(xc, yc, true);
+				m_view->set_viewport(xc + offset, yc, x1 + offset, x2 + offset, y1, y2);
 
 				list_offset += 16;
 				break;

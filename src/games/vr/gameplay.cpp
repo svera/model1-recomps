@@ -286,7 +286,9 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		}
 		return records;
 	};
-	callbacks.wide_scene = [](uint32_t camera, bool) {
+	callbacks.wide_scene = [&machine](uint32_t camera, bool) {
+		// LIVE uses a different camera record for the same painted course-selection screen.
+		if (machine.read8(0x40dc8c) == 3 && machine.work_ram()[0x1138] == 0x10) return false;
 		return camera != 0 && camera != TRACK_SELECT_CAMERA;
 	};
 	return callbacks;
@@ -367,6 +369,16 @@ bool set_link_player(model1 &machine, int player)
 	}
 	return edit_eeprom_settings(machine, 5, [&](uint16_t *e) {
 		const uint16_t value = uint16_t((e[6] & 0x00ff) | (player << 8));
+		if (e[6] == value) return false;
+		e[6] = value;
+		return true;
+	});
+}
+
+bool set_live_monitor(model1 &machine)
+{
+	return edit_eeprom_settings(machine, 5, [&](uint16_t *e) {
+		const uint16_t value = uint16_t((e[6] & 0x00ff) | 0x0300);
 		if (e[6] == value) return false;
 		e[6] = value;
 		return true;

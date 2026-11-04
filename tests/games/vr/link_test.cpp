@@ -61,6 +61,117 @@ static void board_protocol()
 	assert(broken.read(0) == 0xff);
 }
 
+static void relay_protocol()
+{
+	std::array<m1comm::memory, 2> racers{};
+	for (int p = 0; p < 2; p++) {
+		racers[p][1] = uint8_t(p + 1);
+		racers[p][4] = 1;
+		std::fill_n(racers[p].begin() + 6, 10, uint8_t(0xa0 + p));
+		std::fill_n(racers[p].begin() + 0x10, 0x1c4, uint8_t(0x31 + p));
+	}
+	const auto original = racers;
+	m1comm relay([](const auto &, auto &) {
+		assert(false && "a relay must never call the racing transport");
+		return false;
+	});
+	assert(!relay.ready());
+	relay.receive(racers[0], racers[1]);
+	assert(relay.ticks() == 0 && relay.read(0) == 0);
+	relay.set_cn(1);
+	relay.set_fg(1);
+	assert(relay.ready() && relay.fg() == 0xff);
+	relay.write(4, 1);
+	relay.write(5, 0xff);
+	for (unsigned i = 0x10; i < 0x1d4; i++) relay.write(i, 0x99);
+	relay.tick();
+	assert(relay.ticks() == 0);
+	relay.receive(racers[0], racers[1]);
+	assert(relay.read(0) == 1 && relay.read(2) == 0 && relay.read(3) == 2);
+	assert(relay.read(5) == 0 && relay.ticks() == 1 && relay.fg() == 0x7f);
+	assert(racers == original);
+	for (unsigned i = 0; i < 0x1c4; i++) {
+		assert(relay.read(0x10 + i) == 0x99);
+		assert(relay.read(0x1d4 + i) == 0x31);
+		assert(relay.read(0x398 + i) == 0x32);
+	}
+	for (unsigned i = 6; i < 16; i++) assert(relay.read(i) == 0xa0);
+	assert(relay.read(0x55c) == 0);
+	for (int p = 0; p < 2; p++) {
+		racers[p][4] = 0;
+		std::fill_n(racers[p].begin() + 0x10, 0x1c4, uint8_t(0x40 + p));
+	}
+	racers[0][6] = 0x5a;
+	relay.receive(racers[0], racers[1]);
+	assert(relay.read(0x1d4) == 0x31 && relay.read(0x398) == 0x32);
+	assert(relay.read(6) == 0x5a && relay.ticks() == 2);
+	racers[1][4] = 1;
+	relay.receive(racers[0], racers[1]);
+	assert(relay.read(0x1d4) == 0x31 && relay.read(0x398) == 0x41);
+	relay.set_cn(0);
+	relay.receive(racers[0], racers[1]);
+	assert(!relay.ready() && relay.ticks() == 0 && relay.fg() == 0xff);
+	relay.set_cn(1);
+	relay.receive(racers[1], racers[0]);
+	assert(!relay.ready() && relay.read(0) == 0xff && relay.fg() == 0xff);
+	relay.receive(racers[0], racers[1]);
+	assert(relay.read(0) == 0xff && relay.ticks() == 0);
+	relay.set_cn(1);
+	relay.receive(racers[0], racers[1]);
+	assert(relay.ready() && relay.read(0) == 1 && relay.fg() == 0x7f && relay.ticks() == 1);
+	relay.write(1, 1);
+	relay.receive(racers[0], racers[1]);
+	assert(!relay.ready() && relay.read(0) == 0xff && relay.fg() == 0xff);
+	relay.reset();
+	assert(!relay.ready() && relay.cn() == 0xfe && relay.fg() == 0xfe && relay.ticks() == 0);
+	for (uint8_t value : relay.snapshot()) assert(value == 0);
+	relay.set_cn(1);
+	relay.write(1, 3);
+	assert(!relay.ready());
+	puts("Receive-only relay: two racer slots, master status, readiness, flags, reset and failure recovery passed");
+}
+
+static void solo_relay_protocol()
+{
+	auto no_transport = [](const auto &, auto &) -> bool {
+		throw std::logic_error("a single-racer session must not exchange with a peer");
+	};
+	m1comm master(no_transport), relay(no_transport);
+	master.write(1, 1);
+	master.write(4, 1);
+	master.write(6, 0x5a);
+	master.write(0x10, 0x31);
+	master.tick(true);
+	assert(master.ticks() == 0);
+	master.set_cn(1);
+	relay.set_cn(1);
+	const auto snapshot = master.snapshot();
+	master.tick(true);
+	relay.receive(snapshot);
+	assert(master.read(2) == 1 && master.read(3) == 1 && master.read(0x1d4) == 0x31);
+	assert(relay.read(2) == 0 && relay.read(3) == 1 && relay.read(0x1d4) == 0x31);
+	assert(relay.read(6) == 0x5a && master.fg() == 0x7e && relay.fg() == 0x7e);
+	assert(master.read(0x398) == 0 && relay.read(0x398) == 0);
+	master.write(4, 0);
+	master.write(0x10, 0x77);
+	master.tick(true);
+	relay.receive(master.snapshot());
+	assert(master.read(0x1d4) == 0x31 && relay.read(0x1d4) == 0x31);
+	assert(master.ticks() == 2 && relay.ticks() == 2);
+	master.reset();
+	master.set_cn(1);
+	master.write(1, 2);
+	master.tick(true);
+	assert(master.read(0) == 0xff && !master.ready());
+	master.write(1, 1);
+	master.tick(true);
+	assert(master.read(0) == 0xff);
+	master.set_cn(1);
+	master.tick(true);
+	assert(master.read(0) == 1 && master.read(3) == 1);
+	puts("Solo relay: one racer, master loopback, receive-only monitor, flags and failure recovery passed");
+}
+
 static void in_process(const std::string &dir)
 {
 	rec::hints map;
@@ -384,15 +495,20 @@ static void mapping_and_settings()
 	std::fill_n(machine.eeprom(), model1::EEPROM_SIZE, 0);
 	assert(!game::vr::set_link_player(machine, 1));
 	assert(!game::vr::set_standalone(machine));
+	assert(!game::vr::set_live_monitor(machine));
 	machine.eeprom()[0] = 0x53; machine.eeprom()[1] = 0x45;
 	machine.eeprom()[2] = 0x47; machine.eeprom()[3] = 0x41;
 	machine.eeprom()[13] = 0x5a;
 	assert(!game::vr::set_link_player(machine, 0));
 	assert(!game::vr::set_link_player(machine, 3));
-	for (int player : {1, 2, 0}) {
-		assert(player ? game::vr::set_link_player(machine, player) : game::vr::set_standalone(machine));
+	for (int player : {1, 2, 3, 0}) {
+		auto set_role = [&] {
+			return player == 3 ? game::vr::set_live_monitor(machine) :
+				player ? game::vr::set_link_player(machine, player) : game::vr::set_standalone(machine);
+		};
+		assert(set_role());
 		assert(machine.eeprom()[12] == player && machine.eeprom()[13] == 0x5a);
-		assert(!(player ? game::vr::set_link_player(machine, player) : game::vr::set_standalone(machine)));
+		assert(!set_role());
 		uint16_t crc = 0;
 		for (int i = 10; i < model1::EEPROM_SIZE; i++) {
 			crc ^= uint16_t(machine.eeprom()[i]) << 8;
@@ -471,6 +587,8 @@ static int cabinet(const std::string &dir, int player, int port)
 int main(int argc, char **argv)
 {
 	board_protocol();
+	relay_protocol();
+	solo_relay_protocol();
 	if (argc == 3 && !strcmp(argv[1], "--in-process")) {
 		in_process(argv[2]);
 		puts("VR in-process link tests passed");

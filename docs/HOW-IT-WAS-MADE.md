@@ -939,14 +939,33 @@ The ROM's link setup at `FE6CBF` translates LIVE to communication-board mode **0
 `make test-vr-live-monitor` boots three fresh machines as MASTER, SLAVE, and LIVE,
 using the local extracted ROMs. It changes only in-memory EEPROMs with the normal
 checksum helper, never reading or writing player saves. The racers run the existing
-two-cabinet link protocol in scanline lockstep. A **test-only receiver** feeds their
-published car blocks and the master's status bytes to the monitor's receive slots.
-It does not implement a production relay, its complete handshake/flag behavior,
-or a monitor layout in the desktop host.
+two-cabinet link protocol in scanline lockstep. `linked_pair` accepts an optional
+third machine as a receive-only relay. At vblank it feeds the same pre-exchange
+snapshots to both racers and the relay through the communication-board HLE;
+the test no longer writes directly into the relay's shared RAM.
+
+Communication-board mode 0 receives both ready racer blocks in slots 1 and 2,
+plus the master's status bytes 6-15. It reports relay ID 0, racer count 2, and
+the normal alive/status flags. It never publishes its own block or calls the
+racing transport, even if its local publish flag is set. An unready or rebooting
+relay does not stall the racers. Invalid source roles fail the relay explicitly;
+reset or re-enabling the board clears that failure. This remains a two-racer local
+HLE, not full communication-board firmware or a network relay transport.
 
 The 7,000-frame probe checks relay ID 0, two racers, distinct moving player positions
 received by the monitor, multiple broadcast camera targets, rendered 3D, and nonzero
-audio output. Screenshots in `build/vr/live-monitor/` show the original helicopter
+audio output, then independently reboots the relay while the racers keep exchanging.
+Each scheduler call advances all three machines by exactly one frame, with per-scanline
+checks that no machine gets ahead. A second three-machine session executes CPUs in
+reverse order and delivers the relay's data before ticking the racers, still using
+immutable pre-exchange snapshots. Across all 7,900 frames, including monitor reboot,
+both sessions must match each machine's work RAM, battery-backed RAM, remaining CPU
+cycles, frame/scanline counters, link RAM/flags/ticks, camera target, and audio samples.
+Sampled player and monitor pictures must also match pixel for pixel. This verifies
+execution-order independence without adding an execution-order setting to the host.
+`make test-vr-link` also checks the relay protocol without ROMs, including unpublished
+blocks, master-only status, alive flags, invalid roles, and reset/failure recovery.
+Screenshots in `build/vr/live-monitor/` show the original helicopter
 view, **LIVE** banner, and **mr. VIRT MCPOLYGON.** portrait and on-screen commentary
 during a player race. Camera direction and broadcast overlays come from the ROM;
 no custom camera director or commentator was added.
@@ -962,7 +981,74 @@ The native and interpreter runs produced identical sampled PNGs. Native executio
 still uses interpreter fallbacks, including the LIVE-specific path at `FEE66B`;
 the probe reports fallback calls separately for each machine. Nonzero audio is
 verified, but spoken commentary has not been verified by listening. This establishes
-the ROM's broadcast path, not complete relay-device fidelity or a shipping feature.
+the ROM's broadcast path through the local link HLE, not complete relay-device
+fidelity.
+
+#### Desktop Live Monitor
+
+The local VR host's Display menu persists `live_monitor` in the primary `settings.ini`:
+0 Off (default), 1 Above players, 2 Spectator window. The monitor works with one or
+two racers. Above players reserves the upper half of the shared window for
+the broadcast and places one full-width player view or two side-by-side player views below it,
+regardless of the usual split orientation. The separate resizable spectator window
+does not wait for VSync; only the primary renderer waits, as with separate player
+windows. If using separate player windows, the monitor also has its own window.
+Both layouts use the same scanline-synchronized receive-only instance. Solo mode
+links one master and the monitor, with racer count 1 and relay ID 0, without a hidden
+slave or a synthetic racer block. The board loops the master's published block into
+its own receive slot and copies the same pre-tick snapshot and master status to the
+monitor. The ROM-backed test runs another 7,000 frames in this mode, requiring actual
+broadcast polygons and matching player positions during a race. Reversed CPU and
+board-delivery order must match RAM, audio, link state and sampled pixels here too.
+Joining or removing
+Player 2 rebuilds the transport and reboots the coordinated session, retaining the
+monitor, its isolated saves, and its layout.
+
+The monitor's NVRAM, EEPROM, settings and GPU-start marker live exclusively in
+`live-monitor/`, with no fallback to either player's saves. Its host role forces LIVE
+through the checksum-preserving EEPROM helper. It never receives player bindings,
+controller assignment, scripted Start pulses or service-menu inputs. The host keeps
+all three monitor input ports released. Shared display settings apply to the monitor,
+including Picture shape in both layouts. The host fits the entire composition to the
+selected shape before splitting its viewports, rather than applying that shape to each
+cabinet. Every instance derives its rendering aspect from its allocated viewport,
+bounded to 4:3-to-32:9, except full-width stacked views (the monitor and, when solo,
+the player) allow up to 64:9 so their half-height areas can fill even a 32:9
+composition without side bars or stretching.
+The machine renderer accepts this wider aspect; other host views retain their 32:9 cap.
+With the broadcast above, each racer's half-width, half-height
+area retains the composition's ratio (8:4.5 for a 16:9 composition). Narrower areas
+preserve 4:3 with black bars, without stretching or cropping. The spectator window
+applies the selected shape independently. Fit window
+uses each whole window's aspect within those same bounds. It remains muted at the emulated volume stage, its audio
+buffer is discarded every frame, and the final mixer still includes only the one or
+two players with the original gain/divisor. There is deliberately no audible
+commentary option: player audio only is the chosen policy.
+
+LIVE's course-selection camera differs from the racing cabinets' `TRACK_SELECT_CAMERA`.
+The VR scene classifier also checks role 3 and phase `0x10`, keeping this painted
+screen centered at its original proportions instead of stretching its opaque
+background underneath unscaled foreground tiles. The race still widens normally.
+The ROM-backed monitor regression compares every central selection-screen pixel
+against 4:3 at 16:9/32:9 and 1x/2x. It also checks that the LIVE logo and camera label
+move to the left edge with identical pixels, not horizontal scaling.
+The commentator uses a separate viewport centered at `(405, 59)`, with bounds
+`327..482` by `7..112`. VR's video traits anchor that viewport to the right edge:
+the renderer translates both its projection center and clip bounds together, keeping
+the portrait aligned with the already edge-pinned name and speech tiles. The regression
+compares the complete portrait window against 4:3 at 16:9, 64:27 and 32:9, at 1x/2x.
+
+Changing between the two enabled layouts replaces only presentation resources, not
+the running machines. Enabling/disabling requires a coordinated linked reset, stated
+in the menu. Closing the spectator window disables the monitor and performs the same
+reset without quitting or removing a player. Normal reset/removal/disconnection back
+to solo saves and removes Player 2 while keeping the monitor. Pause, menu,
+fast-forward and reset are shared with the players.
+
+`make test-vr-live-monitor-desktop` exercises both layouts, settings-menu changes,
+isolated role-3 saves and autosave, no monitor controls, spectator-window closure,
+return-to-solo/rejoin, and shared GPU/filter/scale rendering. The graphics unit test
+also checks the stacked viewport partition at odd and minimal window dimensions.
 
 ### Checking linked attract timing
 
