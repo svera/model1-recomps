@@ -6,6 +6,7 @@
 #include "../games/game.h"
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -49,7 +50,7 @@ struct control_profile
 	std::array<bool, C_COUNT> p1_only{};              // controls player 2 doesn't have (hidden on their pages)
 	std::array<uint8_t, 2> start_bits{};              // each player's start button in the system byte
 	bool hold_start = false;                         // keep Start pressed after its initial pulse
-	bool steering_curve = false;
+	bool steering_exponent = false;
 	std::array<std::array<SDL_Scancode, C_COUNT>, 2> keys{};   // the defaults, per player
 	std::array<int, C_COUNT> pad;                     // (PAD_NONE until set)
 	std::vector<int> pad_actions;                     // the pad buttons page's, in order (those with bits play)
@@ -90,7 +91,7 @@ struct player_controls
 		game::host_axis::none, game::host_axis::none, game::host_axis::none, game::host_axis::none
 	};
 	std::string pad_choice = "auto";   // "auto" (the next free pad), "none", or a pad's GUID
-	bool exponential_steering = false;
+	int steering_exponent = 10;
 
 	static player_controls defaults(int player, const control_profile &profile)
 	{
@@ -126,11 +127,20 @@ struct player_controls
 		}
 		auto c = kv.find(p + "pad");
 		if (c != kv.end()) pad_choice = c->second;
-		if (profile.steering_curve) {
-			const auto curve = kv.find(p + "steering_curve");
-			if (curve != kv.end()) {
+		if (profile.steering_exponent) {
+			const auto exponent = kv.find(p + "steering_exponent");
+			if (exponent != kv.end()) {
+				int value = 0;
+				const auto result = std::from_chars(exponent->second.data(),
+					exponent->second.data() + exponent->second.size(), value);
+				if (result.ec == std::errc{} && result.ptr == exponent->second.data() + exponent->second.size() &&
+					value >= 10 && value <= 40)
+					steering_exponent = value;
+				else fprintf(stderr, "controls: invalid %ssteering_exponent '%s'; expected 10 through 40\n",
+					p.c_str(), exponent->second.c_str());
+			} else if (const auto curve = kv.find(p + "steering_curve"); curve != kv.end()) {
 				if (curve->second == "linear" || curve->second == "exponential")
-					exponential_steering = curve->second == "exponential";
+					steering_exponent = curve->second == "exponential" ? 20 : 10;
 				else fprintf(stderr, "controls: invalid %ssteering_curve '%s'; expected linear or exponential\n",
 					p.c_str(), curve->second.c_str());
 			}
@@ -141,8 +151,8 @@ struct player_controls
 	{
 		const char *p = player ? "p2_" : "p1_";
 		fprintf(f, "%spad = %s\n", p, pad_choice.c_str());
-		if (profile.steering_curve)
-			fprintf(f, "%ssteering_curve = %s\n", p, exponential_steering ? "exponential" : "linear");
+		if (profile.steering_exponent)
+			fprintf(f, "%ssteering_exponent = %d\n", p, steering_exponent);
 		for (int a = 0; a < C_COUNT; a++)
 			if (profile.visible(a))
 				fprintf(f, "%skey_%s = %s\n", p, profile.key_name(a), key[a] ? SDL_GetScancodeName(key[a]) : "none");

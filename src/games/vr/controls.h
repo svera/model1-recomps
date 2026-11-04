@@ -3,6 +3,7 @@
 #pragma once
 #include "../../host/controls.h"
 #include "profile.h"
+#include <cmath>
 #include <cstdlib>
 
 namespace game::vr {
@@ -57,19 +58,21 @@ public:
 
 	static constexpr int REPEAT_DELAY = 14, REPEAT_EVERY = 5;   // frames
 
-	static uint8_t exponential(uint8_t analog)
+	static uint8_t exponential(uint8_t analog, int exponent_tenths = 20)
 	{
+		exponent_tenths = std::clamp(exponent_tenths, 10, 40);
 		const int delta = int(analog) - 128;
 		const int range = delta < 0 ? 128 : 127;
-		const int magnitude = (delta * delta + range / 2) / range;
+		const double normalized = double(std::abs(delta)) / range;
+		const int magnitude = int(std::lround(range * std::pow(normalized, exponent_tenths / 10.0)));
 		return uint8_t(128 + (delta < 0 ? -magnitude : magnitude));
 	}
 
-	uint8_t update(screen s, bool left, bool right, uint8_t analog, bool exponential_steering = false)
+	uint8_t update(screen s, bool left, bool right, uint8_t analog, int exponent_tenths = 10)
 	{
 		if (s == screen::none) {
 			current = screen::none;
-			return left != right ? (left ? 0 : 255) : exponential_steering ? exponential(analog) : analog;
+			return left != right ? (left ? 0 : 255) : exponential(analog, exponent_tenths);
 		}
 		if (s != current) {
 			current = s;
@@ -118,7 +121,7 @@ inline const control_profile CONTROLS = [] {
 	c.bits[C_DOWN] = SHIFT_DOWN;
 	c.start_bits = { 0x10, 0x10 };   // one Start button
 	c.hold_start = true;            // hold for manual transmission on course selection
-	c.steering_curve = true;
+	c.steering_exponent = true;
 	auto &k1 = c.keys[0], &k2 = c.keys[1];
 	k1[C_UP] = SDL_SCANCODE_X; k1[C_DOWN] = SDL_SCANCODE_Z; k1[C_LEFT] = SDL_SCANCODE_LEFT; k1[C_RIGHT] = SDL_SCANCODE_RIGHT;
 	k1[C_ACCELERATOR] = SDL_SCANCODE_UP; k1[C_BRAKE] = SDL_SCANCODE_DOWN; k1[C_START] = SDL_SCANCODE_1;

@@ -110,6 +110,10 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     player2_settings = (data / "two-cabinets/2/settings.ini").read_text()
     assert "p1_key_start = T" in player2_settings
 
+    steering_menu = run([], "10:escape,12:down,14:down,16:down,18:return,20:return,22:down,24:down,26:down,28:return,30:right,32:escape,34:escape,36:escape,38:escape,40:close")
+    assert "1 cabinet(s) running, 0/0 link exchanges" in steering_menu
+    assert "p1_steering_exponent = 11" in (data / "settings.ini").read_text()
+
     cancelled = run(["--split-screen"], "10:1,10:t,10:f3,40:status,60:close")
     assert "join requested" in cancelled and "cabinet 2 compiled" not in cancelled
     assert re.search(r"cabinets=1 .*join=0 role=0", cancelled)

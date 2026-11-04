@@ -20,6 +20,9 @@ struct menu_item
 	bool heading = false;                 // a section's title (with info: not selectable)
 	bool sub = false;                     // a row belonging to the one above it (indented)
 	std::function<std::string()> below;   // a line under the row when not empty (a mistake to put right)
+	std::function<int()> slider_value;
+	std::function<void(int)> set_slider_value;
+	int slider_min = 0, slider_max = 0, slider_step = 1;
 };
 
 struct menu_page
@@ -82,6 +85,7 @@ private:
 	void move(int d);
 	void select(int i);
 	void change(int d);
+	void slider_changed(int index, int value);
 	void click_change(int d);   // (a mouse click on a choice)
 	void activate();
 	void clear();

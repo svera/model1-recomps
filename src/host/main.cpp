@@ -339,7 +339,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 					return k.dpad && pad && b != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(pad, b);
 				};
 				value = game_part.analog_key_input(m, int(channel), held(k.low), held(k.high), value,
-					ctl[p].exponential_steering);
+					ctl[p].steering_exponent);
 			}
 			m.set_analog_input(int(channel), profile.analog_port(channel, value));
 		}
@@ -1632,14 +1632,30 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	auto analog_axes_page = [&](int player) {
 		const auto &io = game::get_io_profile(controls.title);
 		menu_page page{player ? "Player 2 analog axes" : "Player 1 analog axes", "", {}};
-		if (controls.steering_curve)
-			page.items.push_back({"Steering curve",
-				"Linear keeps the original response. Exponential (quadratic) softens small stick movements while retaining full-lock steering. Pedals, keys, D-pad and course/initials selection are unchanged.",
-				[&, player] { return bindings[player].exponential_steering ? "Exponential" : "Linear"; },
+		if (controls.steering_exponent) {
+			auto exponent_text = [&](int exponent) {
+				return std::to_string(exponent / 10) + "." + std::to_string(exponent % 10) + "x";
+			};
+			menu_item steering{ "Steering response",
+				"Sets the steering stick exponent: 1.0x is linear, 2.0x is the former exponential setting, and higher values make small movements gentler. Keys, pedals, D-pad and menu navigation are unchanged.",
+				[&, player] { return exponent_text(bindings[player].steering_exponent); },
 				[&, player](int direction) {
-					if (direction % 2) bindings[player].exponential_steering = !bindings[player].exponential_steering;
+					bindings[player].steering_exponent =
+						std::clamp(bindings[player].steering_exponent + direction, 10, 40);
 					controls_changed(player);
-				}});
+				}};
+			steering.slider_value = [&, player] { return bindings[player].steering_exponent; };
+			steering.set_slider_value = [&, player](int value) {
+				bindings[player].steering_exponent = value;
+				if (player < cabinet_count) {
+					cabinets[player]->config.ctl[0] = bindings[player];
+					cabinets[player]->settings_dirty = true;
+				}
+			};
+			steering.slider_min = 10;
+			steering.slider_max = 40;
+			page.items.push_back(std::move(steering));
+		}
 		for (size_t channel = 0; channel < io.analog_controls.size(); channel++) {
 			if (io.analog_controls[channel].empty()) continue;
 			page.items.push_back({std::string(io.analog_controls[channel]), "Select and move a stick axis or squeeze a trigger.",
@@ -3986,14 +4002,27 @@ int main(int argc, char **argv)
 	auto analog_axes_page = [&](int p) {
 		const auto &profile = game::get_io_profile(m.title());
 		menu_page pg{ p ? "Player 2 analog axes" : "Player 1 analog axes", "", {} };
-		if (controls.steering_curve)
-			pg.items.push_back({ "Steering curve",
-				"Linear keeps the original response. Exponential (quadratic) softens small stick movements while retaining full-lock steering. Pedals, keys, D-pad and course/initials selection are unchanged.",
-				[&, p] { return cfg.ctl[p].exponential_steering ? "Exponential" : "Linear"; },
-				[&, p](int d) {
-					if (d % 2) cfg.ctl[p].exponential_steering = !cfg.ctl[p].exponential_steering;
+		if (controls.steering_exponent) {
+			auto exponent_text = [](int exponent) {
+				return std::to_string(exponent / 10) + "." + std::to_string(exponent % 10) + "x";
+			};
+			menu_item steering{ "Steering response",
+				"Sets the steering stick exponent: 1.0x is linear, 2.0x is the former exponential setting, and higher values make small movements gentler. Keys, pedals, D-pad and menu navigation are unchanged.",
+				[&, p] { return exponent_text(cfg.ctl[p].steering_exponent); },
+				[&, p](int direction) {
+					cfg.ctl[p].steering_exponent =
+						std::clamp(cfg.ctl[p].steering_exponent + direction, 10, 40);
 					cfg_dirty = true;
-				} });
+				} };
+			steering.slider_value = [&, p] { return cfg.ctl[p].steering_exponent; };
+			steering.set_slider_value = [&, p](int value) {
+				cfg.ctl[p].steering_exponent = value;
+				cfg_dirty = true;
+			};
+			steering.slider_min = 10;
+			steering.slider_max = 40;
+			pg.items.push_back(std::move(steering));
+		}
 		for (size_t channel = 0; channel < profile.analog_controls.size(); channel++) {
 			if (profile.analog_controls[channel].empty() || profile.analog_player[channel] != p) continue;
 			pg.items.push_back({ std::string(profile.analog_controls[channel]),

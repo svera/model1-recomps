@@ -2,6 +2,8 @@
 #include <RmlUi/Core.h>
 #include "RmlUi_Platform_SDL.h"
 #include "RmlUi_Renderer_SDL.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 namespace {
@@ -42,7 +44,17 @@ struct menu_listener : Rml::EventListener
 			const menu_item &it = menu->m_stack.back().items[i];
 			Rml::Element *t = ev.GetTargetElement();
 			if (it.activate) menu->activate();
-			else if (it.change) menu->click_change(t && t->IsClassSet("back") ? -1 : +1);   // (the "<" steps back)
+			else if (it.change && !it.set_slider_value)
+				menu->click_change(t && t->IsClassSet("back") ? -1 : +1);   // (the "<" steps back)
+		} else if (ev.GetId() == Rml::EventId::Change) {
+			Rml::Element *target = ev.GetTargetElement();
+			if (target && target->IsClassSet("slider")) {
+				const menu_item &it = menu->m_stack.back().items[i];
+				if (it.set_slider_value) {
+					const int value = int(std::lround(ev.GetParameter<float>("value", float(it.slider_min))));
+					menu->slider_changed(i, value);
+				}
+			}
 		}
 	}
 };
@@ -134,6 +146,7 @@ bool game_menu::init(SDL_Window *win, SDL_Renderer *ren, const std::string &asse
 	m->listener.menu = this;
 	m->doc->AddEventListener(Rml::EventId::Mouseover, &m->listener);
 	m->doc->AddEventListener(Rml::EventId::Click, &m->listener);
+	m->doc->AddEventListener(Rml::EventId::Change, &m->listener);
 	return true;
 }
 
@@ -212,7 +225,15 @@ void game_menu::build()
 		const menu_item &it = p.items[i];
 		rml += "<div class=\"row" + std::string(it.info ? " info" : "") + (it.heading ? " heading" : "") + (it.sub ? " sub" : "") + (int(i) == m_sel ? " selected" : "") +
 			   "\" id=\"r" + std::to_string(i) + "\"><span class=\"label\">" + escape(it.label) + "</span>";
-		if (it.value) {
+		if (it.set_slider_value) {
+			rml += "<input type=\"range\" class=\"slider\" id=\"s" + std::to_string(i) +
+				"\" min=\"" + std::to_string(it.slider_min) +
+				"\" max=\"" + std::to_string(it.slider_max) +
+				"\" step=\"" + std::to_string(it.slider_step) +
+				"\" value=\"" + std::to_string(it.slider_value()) + "\"/>";
+			rml += "<span class=\"slider-value\" id=\"v" + std::to_string(i) + "\">" +
+				escape(it.value()) + "</span>";
+		} else if (it.value) {
 			rml += "<span class=\"value\">";
 			const bool arrows = it.change && !(m_capture && int(i) == m_sel);   // (not while it's being typed into)
 			if (arrows) rml += "<span class=\"arrow back\">&lt;&nbsp;&nbsp;</span>";
@@ -308,6 +329,19 @@ void game_menu::change(int d)
 	if (!f) return;
 	f(d);
 	refresh();
+}
+
+void game_menu::slider_changed(int index, int value)
+{
+	if (m_stack.empty() || index < 0 || size_t(index) >= m_stack.back().items.size()) return;
+	const menu_item &it = m_stack.back().items[index];
+	if (!it.set_slider_value || !it.value) return;
+	const auto set_value = it.set_slider_value;
+	const auto display_value = it.value;
+	set_value(std::clamp(value, it.slider_min, it.slider_max));
+	if (m_open && m->doc)
+		if (Rml::Element *element = m->doc->GetElementById("v" + std::to_string(index)))
+			element->SetInnerRML(escape(display_value()));
 }
 
 // A binding back to none: Delete on a keyboard, Y on a pad, with its row selected (not Esc or

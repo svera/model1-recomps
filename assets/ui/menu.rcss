@@ -93,6 +93,39 @@ div { display: block; }
 .row .arrow { color: #8fa3d6; }
 .row.selected .arrow { color: #0b1430; }
 
+.row .slider {
+	width: 126dp;
+	height: 24dp;
+	margin: 3dp 8dp 3dp 0;
+}
+
+.row .slider slidertrack {
+	height: 6dp;
+	background-color: #3a4a78;
+}
+
+.row .slider sliderprogress {
+	height: 6dp;
+	background-color: #ffd23f;
+}
+
+.row .slider sliderbar {
+	width: 14dp;
+	height: 18dp;
+	background-color: #dfe7fb;
+}
+
+.row.selected .slider sliderprogress { background-color: #0b1430; }
+.row.selected .slider sliderbar { background-color: #0b1430; }
+
+.row .slider-value {
+	width: 42dp;
+	color: #ffd23f;
+	text-align: right;
+}
+
+.row.selected .slider-value { color: #0b1430; }
+
 .row.info {
 	height: 26dp;
 	line-height: 26dp;

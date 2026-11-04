@@ -44,7 +44,7 @@ public:
 
 	// Digital bindings for an analog channel, after reading the pad's analog axis.
 	virtual uint8_t analog_key_input(model1 &, int channel, bool low, bool high, uint8_t value,
-		bool exponential_steering = false)
+		int steering_exponent = 10)
 	{
 		return low != high ? (low ? 0 : 255) : value;
 	}
