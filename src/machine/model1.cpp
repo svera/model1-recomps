@@ -585,16 +585,12 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	constexpr uint32_t KEY = 0xff000000;
 	layer_cache &c = m_layer_cache[layer & 7];
 	const int tw = SCREEN_W + 2 * m_ext;
-<<<<<<< HEAD
-	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw ||
-		(m_tile_slide_interpolating && m_tile_slide_layer == layer)) {
-=======
 	std::array<float, SCREEN_H> slide_rows;
 	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
 	const double slide_time = smooth_slide ? m_draw_time : -1;
 	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
-		c.px.width() != tw || c.slide_time != slide_time) {
->>>>>>> origin/main
+		c.px.width() != tw || c.slide_time != slide_time ||
+		(m_tile_slide_interpolating && m_tile_slide_layer == layer)) {
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
@@ -792,13 +788,10 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 {
 	static const int skip = getenv("M1_TILE_SKIP") ? strtol(getenv("M1_TILE_SKIP"), nullptr, 16) : 0;
 	if (skip & (1 << layer)) return;
-<<<<<<< HEAD
-	const bool slide_motion = m_tile_slide_interpolating && m_tile_slide_layer == layer;
-	if (m_scale == 1 && m_ext == 0 && !slide_motion) {
-=======
 	std::array<float, SCREEN_H> slide_rows;
-	if (m_scale == 1 && m_ext == 0 && !smooth_tile_slide(layer, slide_rows)) {
->>>>>>> origin/main
+	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
+	const bool slide_motion = m_tile_slide_interpolating && m_tile_slide_layer == layer;
+	if (m_scale == 1 && m_ext == 0 && !smooth_slide && !slide_motion) {
 		m_tiles.m_ox = 0;
 		m_tiles.draw(bitmap, cliprect, layer, 0, flags);
 		return;

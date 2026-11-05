@@ -32,7 +32,7 @@ struct model1_video_test
 		latest.mode = 0x1c;
 		latest.rows[0] = 110;
 		latest.rows[1] = 2;
-		latest.rows[2] = 140;
+		latest.rows[2] = 300;
 		float scroll = 0;
 		assert(m.tile_slide_scroll(0, 0x1c, 4.5, scroll) && std::fabs(scroll - 105) < 0.001f);
 		assert(m.tile_slide_scroll(0, 0x1c, 5.5, scroll) && std::fabs(scroll - 115) < 0.001f);

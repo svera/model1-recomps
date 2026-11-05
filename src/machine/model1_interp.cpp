@@ -361,7 +361,7 @@ void model1::record_frame()
 		// The tile-pair game's height still changes during the next frame's CPU work.
 		sm.next_v = m_video->sky_scroll->layout != game::sky_camera::format::tile_pair;
 	}
-	tile_slide_sample &slide = m_tile_slide_hist[m_frame % SKY_HIST];
+	tile_slide_scroll_sample &slide = m_tile_slide_hist[m_frame % SKY_HIST];
 	slide.frame = m_frame;
 	slide.mode = m_ram_b[0x1138];
 	for (int y = 0; y < SCREEN_H; y++) slide.rows[y] = m_tiles.tile_r(0x4000 + y);
@@ -385,11 +385,11 @@ bool model1::tile_slide_scroll(int row, uint8_t mode, double now, float &scroll)
 {
 	if (row < 0 || row >= SCREEN_H || !m_frame || !std::isfinite(now) || now < 0) return false;
 	const uint64_t newest = m_frame - 1;
-	const tile_slide_sample &latest = m_tile_slide_hist[newest % SKY_HIST];
+	const tile_slide_scroll_sample &latest = m_tile_slide_hist[newest % SKY_HIST];
 	if (latest.frame != newest || latest.mode != mode) return false;
-	auto at = [&](uint64_t frame) -> const tile_slide_sample * {
+	auto at = [&](uint64_t frame) -> const tile_slide_scroll_sample * {
 		if (frame > newest || newest - frame >= SKY_HIST) return nullptr;
-		const tile_slide_sample &sample = m_tile_slide_hist[frame % SKY_HIST];
+		const tile_slide_scroll_sample &sample = m_tile_slide_hist[frame % SKY_HIST];
 		return sample.frame == frame && sample.mode == mode ? &sample : nullptr;
 	};
 	auto step = [&](int from, int to) {
@@ -405,7 +405,7 @@ bool model1::tile_slide_scroll(int row, uint8_t mode, double now, float &scroll)
 	const uint64_t frame = uint64_t(std::floor(time));
 	const double fraction = time - frame;
 	if (frame < newest) {
-		const tile_slide_sample *a = at(frame), *b = at(frame + 1);
+		const tile_slide_scroll_sample *a = at(frame), *b = at(frame + 1);
 		if (!a || !b) return false;
 		const int from = a->rows[row] & 0x1ff, delta = step(from, b->rows[row] & 0x1ff);
 		scroll = wrap(from + (std::abs(delta) <= MAX_SLIDE_STEP ? delta * fraction : 0));
@@ -414,7 +414,7 @@ bool model1::tile_slide_scroll(int row, uint8_t mode, double now, float &scroll)
 	const int current = latest.rows[row] & 0x1ff;
 	scroll = float(current);
 	if (fraction > 0 && newest > 0) {
-		if (const tile_slide_sample *before = at(newest - 1)) {
+		if (const tile_slide_scroll_sample *before = at(newest - 1)) {
 			const int delta = step(before->rows[row] & 0x1ff, current);
 			if (std::abs(delta) <= MAX_SLIDE_STEP) scroll = wrap(current + delta * fraction);
 		}
@@ -433,6 +433,11 @@ void model1::smooth_screen_update(double now)
 		[&](const game::tile_slide &s) { return s.mode == mode && s.distance > 0; });
 	if (slide == m_video->wide_tile_slides.end() ||
 		!(m_tiles.tile_r(0x5000 + (slide->layer >> 1)) & 0x8000)) {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		return;
+	}
+	std::array<float, SCREEN_H> slide_rows;
+	if (m_replaying && m_wide_frame && smooth_tile_slide(slide->layer, slide_rows)) {
 		screen_update(m_bitmap, m_bitmap.cliprect());
 		return;
 	}
@@ -644,11 +649,8 @@ void model1::keep_still()
 	s.logic_prev = m_logic_prev;
 	s.cut_frame = m_cut_frame;
 	std::copy(std::begin(m_sky_hist), std::end(m_sky_hist), s.sky_hist);
-<<<<<<< HEAD
 	std::copy(std::begin(m_tile_slide_hist), std::end(m_tile_slide_hist), s.tile_slide_hist);
-=======
 	s.tile_slides = m_tile_slides;
->>>>>>> origin/main
 	s.tile_ram = m_tiles.tile_ram;
 	if (s.char_gen != m_tiles.char_gen || s.char_ram.size() != m_tiles.char_ram.size()) {
 		s.char_ram = m_tiles.char_ram;
@@ -676,11 +678,8 @@ void model1::swap_still()
 	std::swap(m_logic_prev, s.logic_prev);
 	std::swap(m_cut_frame, s.cut_frame);
 	std::swap_ranges(std::begin(m_sky_hist), std::end(m_sky_hist), s.sky_hist);
-<<<<<<< HEAD
 	std::swap_ranges(std::begin(m_tile_slide_hist), std::end(m_tile_slide_hist), s.tile_slide_hist);
-=======
 	m_tile_slides.swap(s.tile_slides);
->>>>>>> origin/main
 	m_tiles.swap_rams(s.tile_ram, s.char_ram);
 	m_tiles_updated = ~0ull;                         // decoded again from the RAMs now in place
 	std::swap_ranges(std::begin(m_pens), std::end(m_pens), s.pens.begin());

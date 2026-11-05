@@ -432,8 +432,8 @@ private:
 	struct sky_sample { int frame = -1; uint16_t h = 0, v = 0; float hx = 0, vy = 0, nx = 0, ny = 0; bool next_h = false, next_v = false; int lands_h = 0, lands_v = 0; };
 	sky_sample m_sky_hist[SKY_HIST];
 	// Per-line scroll history for the registered tile slides.
-	struct tile_slide_sample { uint64_t frame = ~0ull; uint8_t mode = 0; std::array<uint16_t, SCREEN_H> rows{}; };
-	tile_slide_sample m_tile_slide_hist[SKY_HIST];
+	struct tile_slide_scroll_sample { uint64_t frame = ~0ull; uint8_t mode = 0; std::array<uint16_t, SCREEN_H> rows{}; };
+	tile_slide_scroll_sample m_tile_slide_hist[SKY_HIST];
 	struct sky_scroll { uint16_t h = 0, v = 0; float hx = 0, vy = 0; };
 	sky_scroll sky_scroll_from_ram(bool between) const;   // what the game's routine writes, from what it reads
 	void sky_settled(int &h, int &v) const;              // where the sky lands for the camera in RAM now
@@ -1054,11 +1054,8 @@ private:
 		logic_frame logic[2], logic_prev;
 		int cut_frame = -1;
 		sky_sample sky_hist[SKY_HIST];
-<<<<<<< HEAD
-		tile_slide_sample tile_slide_hist[SKY_HIST];
-=======
+		tile_slide_scroll_sample tile_slide_hist[SKY_HIST];
 		tile_slide_history tile_slides;
->>>>>>> origin/main
 		std::vector<uint16_t> tile_ram, char_ram, palette, color_xlat;
 		uint64_t char_gen = ~0ull;
 		std::array<uint32_t, 0x2000> pens{};
