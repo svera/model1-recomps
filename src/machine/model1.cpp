@@ -725,7 +725,10 @@ void model1::prepare_layers()
 	for (int l : LAYERS) {
 		const int flags = l == 6 ? segas24_tile::DRAW_OPAQUE : 0;
 		const layer_cache &c = m_layer_cache[l];
-		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) todo[n++] = l;
+		std::array<float, SCREEN_H> slide_rows;
+		const double slide_time = smooth_tile_slide(l, slide_rows) ? m_draw_time : -1;
+		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
+			c.px.width() != tw || c.slide_time != slide_time) todo[n++] = l;
 	}
 	if (n < 2) return;
 	m_work.layers += n;

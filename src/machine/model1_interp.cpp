@@ -290,10 +290,13 @@ bool model1::smooth_tile_slide(int layer, std::array<float, SCREEN_H> &rows) con
 	const auto &a = history[next - 1], &b = history[next];
 	const float alpha = float(std::clamp((m_draw_time - a.frame) / (b.frame - a.frame), 0.0, 1.0));
 	for (int y = 0; y < SCREEN_H; y++) {
-		const int from = a.rows[y] & 0x1ff, to = b.rows[y] & 0x1ff;
+		const int from = a.rows[y] & 0x1ff;
+		int delta = (b.rows[y] & 0x1ff) - from;
+		if (delta > 256) delta -= 512;
+		else if (delta < -256) delta += 512;
 		// A map switch or reset is not a slide through all the intervening columns.
-		rows[y] = ((a.rows[y] ^ b.rows[y]) & 0xfe00) || std::abs(to - from) > 64
-			? float(latest.rows[y] & 0x1ff) : from + (to - from) * alpha;
+		rows[y] = ((a.rows[y] ^ b.rows[y]) & 0xfe00) || std::abs(delta) > 128
+			? float(latest.rows[y] & 0x1ff) : from + delta * alpha;
 	}
 	return true;
 }
