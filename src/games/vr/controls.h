@@ -61,10 +61,15 @@ public:
 	static uint8_t exponential(uint8_t analog, int exponent_tenths = 20)
 	{
 		exponent_tenths = std::clamp(exponent_tenths, 10, 40);
+		if (exponent_tenths == 10) return analog;
 		const int delta = int(analog) - 128;
 		const int range = delta < 0 ? 128 : 127;
-		const double normalized = double(std::abs(delta)) / range;
-		const int magnitude = int(std::lround(range * std::pow(normalized, exponent_tenths / 10.0)));
+		const int distance = std::abs(delta);
+		constexpr int deadzone = 8;
+		if (distance <= deadzone) return 128;
+		const double normalized = double(distance - deadzone) / (range - deadzone);
+		const double response = 1.0 - std::pow(1.0 - normalized, exponent_tenths / 10.0);
+		const int magnitude = int(std::lround(range * response));
 		return uint8_t(128 + (delta < 0 ? -magnitude : magnitude));
 	}
 

@@ -16,15 +16,19 @@ static void steering_exponent()
 	assert(wheel_t::exponential(128, 20) == 128);
 	assert(wheel_t::exponential(255, 20) == 255);
 	assert(wheel_t::exponential(64, 10) == 64);
-	assert(wheel_t::exponential(64, 20) == 96);
-	assert(wheel_t::exponential(64, 40) == 120);
-	assert(wheel_t::exponential(192, 20) == 160);
+	assert(wheel_t::exponential(64, 20) == 36);
+	assert(wheel_t::exponential(64, 40) == 10);
+	assert(wheel_t::exponential(192, 20) == 219);
+	for (int analog = 120; analog <= 136; analog++)
+		assert(wheel_t::exponential(uint8_t(analog), 40) == 128);
 	int previous = 0;
 	for (int analog = 0; analog <= 255; analog++) {
 		const auto input = uint8_t(analog);
 		const int output = curved.update(screen::none, false, false, input, 20);
 		assert(output >= previous);
-		assert(std::abs(output - 128) <= std::abs(analog - 128));
+		if (std::abs(analog - 128) <= 8) assert(output == 128);
+		if (std::abs(analog - 128) >= 16)
+			assert(std::abs(output - 128) >= std::abs(analog - 128));
 		assert(linear.update(screen::none, false, false, input) == input);
 		assert(curved.update(screen::none, true, false, input, 20) == 0);
 		assert(curved.update(screen::none, false, true, input, 20) == 255);

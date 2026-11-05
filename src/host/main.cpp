@@ -1724,23 +1724,23 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				return std::to_string(exponent / 10) + "." + std::to_string(exponent % 10) + "x";
 			};
 			menu_item steering{ "Steering response",
-				"Sets the steering stick exponent: 1.0x is linear, 2.0x is the former exponential setting, and higher values make small movements gentler. Keys, pedals, D-pad and menu navigation are unchanged.",
+				"Sets steering sensitivity in whole-number steps: 1.0x is linear, and higher values make small stick movements turn more sharply. Keys, pedals, D-pad and menu navigation are unchanged.",
 				[&, player] { return exponent_text(bindings[player].steering_exponent); },
 				[&, player](int direction) {
 					bindings[player].steering_exponent =
-						std::clamp(bindings[player].steering_exponent + direction, 10, 40);
+						std::clamp((bindings[player].steering_exponent + 5) / 10 + direction, 1, 4) * 10;
 					controls_changed(player);
 				}};
-			steering.slider_value = [&, player] { return bindings[player].steering_exponent; };
+			steering.slider_value = [&, player] { return (bindings[player].steering_exponent + 5) / 10; };
 			steering.set_slider_value = [&, player](int value) {
-				bindings[player].steering_exponent = value;
+				bindings[player].steering_exponent = value * 10;
 				if (player < cabinet_count) {
 					cabinets[player]->config.ctl[0] = bindings[player];
 					cabinets[player]->settings_dirty = true;
 				}
 			};
-			steering.slider_min = 10;
-			steering.slider_max = 40;
+			steering.slider_min = 1;
+			steering.slider_max = 4;
 			page.items.push_back(std::move(steering));
 		}
 		for (size_t channel = 0; channel < io.analog_controls.size(); channel++) {
@@ -4161,20 +4161,20 @@ int main(int argc, char **argv)
 				return std::to_string(exponent / 10) + "." + std::to_string(exponent % 10) + "x";
 			};
 			menu_item steering{ "Steering response",
-				"Sets the steering stick exponent: 1.0x is linear, 2.0x is the former exponential setting, and higher values make small movements gentler. Keys, pedals, D-pad and menu navigation are unchanged.",
+				"Sets steering sensitivity in whole-number steps: 1.0x is linear, and higher values make small stick movements turn more sharply. Keys, pedals, D-pad and menu navigation are unchanged.",
 				[&, p] { return exponent_text(cfg.ctl[p].steering_exponent); },
 				[&, p](int direction) {
 					cfg.ctl[p].steering_exponent =
-						std::clamp(cfg.ctl[p].steering_exponent + direction, 10, 40);
+						std::clamp((cfg.ctl[p].steering_exponent + 5) / 10 + direction, 1, 4) * 10;
 					cfg_dirty = true;
 				} };
-			steering.slider_value = [&, p] { return cfg.ctl[p].steering_exponent; };
+			steering.slider_value = [&, p] { return (cfg.ctl[p].steering_exponent + 5) / 10; };
 			steering.set_slider_value = [&, p](int value) {
-				cfg.ctl[p].steering_exponent = value;
+				cfg.ctl[p].steering_exponent = value * 10;
 				cfg_dirty = true;
 			};
-			steering.slider_min = 10;
-			steering.slider_max = 40;
+			steering.slider_min = 1;
+			steering.slider_max = 4;
 			pg.items.push_back(std::move(steering));
 		}
 		for (size_t channel = 0; channel < profile.analog_controls.size(); channel++) {

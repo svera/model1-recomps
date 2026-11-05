@@ -92,7 +92,7 @@ Pad buttons**. Coins are only needed in Arcade play style.
 Open the menu with **Esc** or **View / Select**:
 
 - **Display:** change render scale, antialiasing, screen shape (Fit window, 4:3, 16:10, 16:9, 21:9, or 32:9), background filtering, fullscreen, and frame rate.
-- **Controls > Analog axes:** adjust Virtua Racing's steering response from linear (1.0x) to stronger curves (up to 4.0x). The former exponential setting is 2.0x.
+- **Controls > Analog axes:** adjust Virtua Racing's steering sensitivity in whole-number steps from linear (1.0x) to more responsive curves (2.0x, 3.0x, or 4.0x). Higher settings produce more steering from small stick movements.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** choose your car color, language, course, and difficulty.
   With two players, Language is directly under Game and applies to both players
