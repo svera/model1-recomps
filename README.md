@@ -60,8 +60,7 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 Watch the original arcade broadcast with Virt McPolygon during solo or two-player games,
 above the action or in a window you can move to another display. It follows
 **Display > Picture shape** and is off by default. Enabling or disabling it restarts
-the game; switching layouts does not. **The broadcast is muted; only player audio plays.**
-Enabling it may reduce performance.
+the game; switching layouts does not. Enabling it may reduce performance.
 
 **macOS:** open **Virtua Racing Recomp.app**. If macOS blocks it, allow it through
 **System Settings > Privacy & Security**.
