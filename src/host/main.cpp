@@ -776,6 +776,8 @@ struct local_display
 	SDL_Window *window = nullptr;
 	SDL_Renderer *renderer = nullptr;
 	bool icon_set = false;
+	bool renderer_vulkan = false;
+	int vsync = 0;
 	std::array<SDL_Texture *, 3> glass{};
 	std::array<int, 3> glass_w{}, glass_h{}, glass_kind{};
 };
@@ -786,10 +788,19 @@ struct local_cabinet
 	~local_cabinet()
 	{
 		if (texture) SDL_DestroyTexture(texture);
+		compose.set_3d_targets(gpu_textures.data(), 0);
+		for (auto *&target : gpu_textures) {
+			if (target) SDL_DestroyTexture(target);
+			target = nullptr;
+		}
 		machine.set_gpu3d(nullptr);
+		gpu.reset();
+		compose.release();
 	}
 	model1 machine;
 	std::unique_ptr<gpu3d> gpu;
+	gpu_compose compose;
+	model1::gpu_parts parts;
 	rec::context runtime;
 	std::unique_ptr<game_host> game;
 	settings config;
@@ -797,11 +808,14 @@ struct local_cabinet
 	std::string dir;
 	std::shared_ptr<local_display> display;
 	SDL_Texture *texture = nullptr;
+	std::array<SDL_Texture *, model1::G3_TARGETS> gpu_textures{};
 	int texture_w = 0, texture_h = 0;
+	uint64_t gpu_wrapped = 0;
+	int gpu_texture_w = 0, gpu_texture_h = 0;
 	pad_state pad;
 	input_service_state service;
 	bool settings_dirty = false;
-	bool gpu_enabled = false;
+	bool gpu_enabled = false, gpu_shared = false, compose_enabled = false, composed = false;
 	bool gpu_crashed = false, gpu_retry_pending = false, gpu_marker_owned = false;
 	std::string gpu_notice;
 	uint64_t gpu_failed = 0;
@@ -1079,22 +1093,100 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (!c.display->window) { fprintf(stderr, "two cabinets: window: %s\n", SDL_GetError()); return 1; }
 		c.display->icon_set = set_window_icon(c.display->window);
 		if (!prepare_gpu(c)) return 1;
-		c.display->renderer = SDL_CreateRenderer(c.display->window,
-			c.gpu_crashed && !getenv("SDL_RENDER_DRIVER") ? "software" : nullptr);
+		if (c.gpu_crashed && !getenv("SDL_RENDER_DRIVER"))
+			c.display->renderer = SDL_CreateRenderer(c.display->window, "software");
+#if M1_GPU3D_SDL
+		else if (c.config.renderer3d && !getenv("SDL_RENDER_DRIVER") && !getenv("M1_NO_GPU_RENDERER")) {
+			const bool vulkan_first = !getenv("SDL_GPU_DRIVER") && !c.config.graphics && gpu3d_prefer_vulkan();
+			if (vulkan_first) {
+				SDL_SetHint(SDL_HINT_GPU_DRIVER, "vulkan");
+				c.display->renderer = SDL_CreateRenderer(c.display->window, "gpu");
+				c.display->renderer_vulkan = c.display->renderer != nullptr;
+				if (c.display->renderer)
+					fprintf(stderr, "two cabinets: SDL's gpu renderer: Vulkan (Windows, first): started\n");
+				SDL_ResetHint(SDL_HINT_GPU_DRIVER);
+			}
+			if (!c.display->renderer) c.display->renderer = SDL_CreateRenderer(c.display->window, "gpu");
+			if (!c.display->renderer)
+				fprintf(stderr, "two cabinets: SDL's gpu renderer unavailable (%s); trying SDL's usual renderer\n", SDL_GetError());
+		}
+#endif
+		if (!c.display->renderer) c.display->renderer = SDL_CreateRenderer(c.display->window, nullptr);
 		if (!c.display->renderer) { fprintf(stderr, "two cabinets: renderer: %s\n", SDL_GetError()); return 1; }
 		// One refresh wait per loop, even when the cabinets have separate windows.
 		if (!SDL_SetRenderVSync(c.display->renderer, p == 0 ? 1 : 0))
 			fprintf(stderr, "two cabinets: could not set cabinet %d vsync: %s\n", p + 1, SDL_GetError());
+		c.display->vsync = p == 0 ? 1 : 0;
 		int vsync = 0;
 		if (!SDL_GetRenderVSync(c.display->renderer, &vsync))
 			fprintf(stderr, "two cabinets: could not read cabinet %d vsync: %s\n", p + 1, SDL_GetError());
 		else fprintf(stderr, "two cabinets: cabinet %d vsync %d\n", p + 1, vsync);
 	}
+	auto setup_composition = [&](local_cabinet &c) {
+		auto check = [&] {
+			if (getenv("M1_CPU_2D") || !c.compose.init(c.display->renderer)) return false;
+			std::string why;
+			if (c.compose.self_check(why)) return true;
+			fprintf(stderr, "two cabinets: compositor rejected %s (%s)\n",
+				SDL_GetRendererName(c.display->renderer) ? SDL_GetRendererName(c.display->renderer) : "renderer",
+				why.c_str());
+			return false;
+		};
+		c.compose_enabled = check();
+#if M1_GPU3D_SDL
+		if (!c.compose_enabled && c.display->renderer_vulkan &&
+			!getenv("SDL_GPU_DRIVER") && !getenv("M1_CPU_2D")) {
+			c.compose.release();
+			SDL_DestroyRenderer(c.display->renderer);
+			SDL_SetHint(SDL_HINT_GPU_DRIVER, "direct3d12");
+			c.display->renderer = SDL_CreateRenderer(c.display->window, "gpu");
+			SDL_ResetHint(SDL_HINT_GPU_DRIVER);
+			if (!c.display->renderer) c.display->renderer = SDL_CreateRenderer(c.display->window, nullptr);
+			c.display->renderer_vulkan = false;
+			if (c.display->renderer) SDL_SetRenderVSync(c.display->renderer, c.display->vsync);
+			c.compose_enabled = c.display->renderer && check();
+		}
+		if (!c.compose_enabled && c.display->renderer && SDL_GetRendererName(c.display->renderer) &&
+			!strcmp(SDL_GetRendererName(c.display->renderer), "gpu") && !getenv("M1_CPU_2D")) {
+			c.compose.release();
+			SDL_DestroyRenderer(c.display->renderer);
+			c.display->renderer = SDL_CreateRenderer(c.display->window, nullptr);
+			if (!c.display->renderer) {
+				fprintf(stderr, "two cabinets: compositor fallback renderer: %s\n", SDL_GetError());
+				return false;
+			}
+			SDL_SetRenderVSync(c.display->renderer, c.display->vsync);
+			c.compose_enabled = check();
+		}
+#endif
+		if (c.compose_enabled) {
+			fprintf(stderr, "two cabinets: pictures put together on the GPU (renderer: %s)\n",
+				SDL_GetRendererName(c.display->renderer) ? SDL_GetRendererName(c.display->renderer) : "?");
+			if (c.compose.init_edge()) c.machine.set_gpu_edge(true);
+		} else if (getenv("M1_CPU_2D"))
+			fprintf(stderr, "two cabinets: pictures drawn on the CPU (M1_CPU_2D)\n");
+		else fprintf(stderr, "two cabinets: pictures drawn on the CPU (renderer can't compose them)\n");
+		return c.display->renderer != nullptr;
+	};
+	for (int p = 0; p < cabinet_count; p++)
+		if (!setup_composition(*cabinets[p])) return 1;
+	auto unwrap_gpu_targets = [&](local_cabinet &c) {
+		c.compose.set_3d_targets(c.gpu_textures.data(), 0);
+		for (auto *&target : c.gpu_textures) {
+			if (target) SDL_DestroyTexture(target);
+			target = nullptr;
+		}
+		c.gpu_wrapped = 0;
+		c.gpu_texture_w = c.gpu_texture_h = 0;
+	};
 	auto configure_3d = [&](local_cabinet &c, int requested) {
+		unwrap_gpu_targets(c);
 		c.machine.set_gpu3d(nullptr);
 		c.machine.set_gpu3d_on(false);
+		c.machine.set_gpu3d_target(false);
 		c.gpu.reset();
 		c.gpu_enabled = false;
+		c.gpu_shared = false;
 		if (!requested) { c.gpu_notice.clear(); return true; }
 		if (c.gpu_retry_pending) return true;
 		if (!prepare_gpu(c)) return false;
@@ -1119,13 +1211,29 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		};
 		bool checked = false;
 #if M1_GPU3D_METAL
-		c.gpu = gpu3d_create_metal();
-		checked = check();
+		if (c.compose_enabled && SDL_GetRendererName(c.display->renderer) &&
+			!strcmp(SDL_GetRendererName(c.display->renderer), "metal")) {
+			c.gpu = gpu3d_create_metal_layer(SDL_GetRenderMetalLayer(c.display->renderer));
+			checked = check();
+		}
+		if (!checked) { c.gpu = gpu3d_create_metal(); checked = check(); }
 #elif M1_GPU3D_SDL
 		const bool vulkan_first = !getenv("SDL_GPU_DRIVER") && !c.config.graphics && gpu3d_prefer_vulkan();
+		if (c.compose_enabled && SDL_GetRendererName(c.display->renderer) &&
+			!strcmp(SDL_GetRendererName(c.display->renderer), "gpu") && !getenv("M1_G3_OWN_DEVICE")) {
+			auto *device = SDL_GetGPURendererDevice(c.display->renderer);
+			if (device) {
+				c.gpu = gpu3d_create_sdlgpu_on(device);
+				c.gpu_shared = c.gpu != nullptr;
+				checked = check();
+				if (!checked) c.gpu_shared = false;
+			}
+		}
 		if (vulkan_first) {
-			c.gpu = gpu3d_create_sdlgpu("vulkan");
-			checked = check();
+			if (!checked) {
+				c.gpu = gpu3d_create_sdlgpu("vulkan");
+				checked = check();
+			}
 			if (!checked) fprintf(stderr, "two cabinets: Vulkan failed startup or its picture check; trying Direct3D 12\n");
 		}
 		if (!checked) {
@@ -1144,6 +1252,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			fprintf(stderr, "two cabinets: %s\n", c.gpu_notice.c_str());
 			c.machine.set_gpu3d(nullptr);
 			c.gpu.reset();
+			c.gpu_shared = false;
 			return true;
 		}
 #if M1_GPU3D_SDL
@@ -1153,12 +1262,48 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			fprintf(stderr, "two cabinets: Auto chose CPU for %s (its GPU is drawn on the CPU)\n", c.dir.c_str());
 			c.machine.set_gpu3d(nullptr);
 			c.gpu.reset();
+			c.gpu_shared = false;
 		}
 		c.machine.set_gpu3d_on(c.gpu_enabled);
+		c.machine.set_gpu3d_target(c.gpu_shared && c.compose_enabled);
 		c.gpu_failed = c.machine.m_g3.failed;
 		fprintf(stderr, "two cabinets: cabinet %s 3D renderer: %s\n", c.dir.c_str(),
 			c.gpu_enabled ? c.gpu->name() : "CPU (Auto)");
+		if (c.gpu_shared && c.compose_enabled)
+			fprintf(stderr, "two cabinets: cabinet %s 3D draws directly into renderer textures\n", c.dir.c_str());
 		return true;
+	};
+	auto prepare_gpu_targets = [&](local_cabinet &c) {
+		if (!c.gpu || !c.gpu_shared || !c.compose_enabled || !c.machine.gpu3d_target()) return;
+		const int w = c.machine.frame_w(), h = c.machine.frame_h();
+		if (c.gpu_textures[0] && c.gpu_texture_w == w && c.gpu_texture_h == h &&
+			c.gpu_wrapped == c.gpu->targets_made()) return;
+		unwrap_gpu_targets(c);
+		bool ok = c.gpu->make_targets(w, h, model1::G3_TARGETS);
+		for (int i = 0; ok && i < model1::G3_TARGETS; i++) {
+			SDL_PropertiesID properties = SDL_CreateProperties();
+			if (!properties) { ok = false; break; }
+			ok = SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_ABGR8888) &&
+				SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC) &&
+				SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w) &&
+				SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h) &&
+				SDL_SetPointerProperty(properties, SDL_PROP_TEXTURE_CREATE_GPU_TEXTURE_POINTER, c.gpu->target_handle(i));
+			if (ok) c.gpu_textures[i] = SDL_CreateTextureWithProperties(c.display->renderer, properties);
+			SDL_DestroyProperties(properties);
+			ok = ok && c.gpu_textures[i] != nullptr;
+		}
+		if (ok) ok = c.compose.set_3d_targets(c.gpu_textures.data(), model1::G3_TARGETS);
+		if (!ok) {
+			fprintf(stderr, "two cabinets: no %dx%d renderer textures for the GPU's 3D (%s); using readback\n",
+				w, h, SDL_GetError());
+			unwrap_gpu_targets(c);
+			c.machine.set_gpu3d_target(false);
+			c.gpu_shared = false;
+			return;
+		}
+		c.gpu_wrapped = c.gpu->targets_made();
+		c.gpu_texture_w = w;
+		c.gpu_texture_h = h;
 	};
 	for (int p = 0; p < cabinet_count; p++)
 		if (!configure_3d(*cabinets[p], cabinets[p]->config.renderer3d)) return 1;
@@ -1170,6 +1315,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		auto &c = *cabinets[2];
 		const bool shared = cabinets[0]->config.live_monitor == 1 && layout != cabinet_layout::windows;
 		if (c.display && (c.display == cabinets[0]->display) == shared) return true;
+		if (c.gpu) configure_3d(c, 0);
+		c.compose.release();
+		c.compose_enabled = false;
+		c.machine.set_gpu_edge(false);
+		c.composed = false;
 		if (c.texture) { SDL_DestroyTexture(c.texture); c.texture = nullptr; }
 		if (shared) c.display = cabinets[0]->display;
 		else {
@@ -1178,12 +1328,26 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (hidden ? SDL_WINDOW_HIDDEN : 0));
 			if (!c.display->window) { fprintf(stderr, "Live Monitor: window: %s\n", SDL_GetError()); return false; }
 			c.display->icon_set = set_window_icon(c.display->window);
-			c.display->renderer = SDL_CreateRenderer(c.display->window, nullptr);
+#if M1_GPU3D_SDL
+			if (c.config.renderer3d && !getenv("SDL_RENDER_DRIVER") && !getenv("M1_NO_GPU_RENDERER"))
+			{
+				const bool vulkan_first = !getenv("SDL_GPU_DRIVER") && !c.config.graphics && gpu3d_prefer_vulkan();
+				if (vulkan_first) {
+					SDL_SetHint(SDL_HINT_GPU_DRIVER, "vulkan");
+					c.display->renderer = SDL_CreateRenderer(c.display->window, "gpu");
+					SDL_ResetHint(SDL_HINT_GPU_DRIVER);
+				}
+				if (!c.display->renderer) c.display->renderer = SDL_CreateRenderer(c.display->window, "gpu");
+			}
+#endif
+			if (!c.display->renderer) c.display->renderer = SDL_CreateRenderer(c.display->window, nullptr);
 			if (!c.display->renderer || !SDL_SetRenderVSync(c.display->renderer, 0)) {
 				fprintf(stderr, "Live Monitor: renderer: %s\n", SDL_GetError());
 				return false;
 			}
 		}
+		if (!setup_composition(c)) return false;
+		if (!configure_3d(c, c.config.renderer3d)) return false;
 		fprintf(stderr, "Live Monitor: %s, player audio only (monitor muted)\n", shared ? "above players" : "spectator window");
 		return true;
 	};
@@ -1195,7 +1359,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (rebuild) pair.reset();
 		if (wanted != bool(cabinets[2])) {
 			if (wanted) {
-				if (!create_cabinet(2) || !configure_3d(*cabinets[2], cabinets[2]->config.renderer3d)) return false;
+				if (!create_cabinet(2)) return false;
 				cabinets[2]->game->sync_shared_settings(cabinets[0]->machine);
 			} else cabinets[2].reset();
 		}
@@ -2373,6 +2537,19 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					auto &c = cabinets[p];
 					if (c->texture) SDL_DestroyTexture(c->texture);
 					c->texture = nullptr;
+					if (c->compose_enabled) {
+						unwrap_gpu_targets(*c);
+						c->machine.set_gpu3d(nullptr);
+						c->gpu.reset();
+						c->gpu_enabled = c->gpu_shared = false;
+						c->machine.set_gpu3d_target(false);
+						c->machine.set_gpu_edge(false);
+						c->machine.set_parts_mode(false);
+						c->compose_enabled = false;
+						c->composed = false;
+						c->compose.release();
+						fprintf(stderr, "two cabinets: renderer reset; drawing whole pictures until restart\n");
+					}
 				}
 			}
 		}
@@ -2480,6 +2657,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			for (int p = 0; p < cabinet_count; p++) {
 				auto &c = *cabinets[p];
+				c.machine.set_parts_mode(c.compose_enabled);
 				SDL_Gamepad *selected[2]{pads[p], nullptr};
 				pad_state states[2]{c.pad, {}};
 				const hotkey action = read_inputs(c.machine, selected, states, c.config.ctl, c.game->controls(), *c.game, c.service);
@@ -2575,28 +2753,61 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					p + 1, width, height, picture.x, picture.y, picture.w, picture.h);
 			}
 			const bool shape_changed = std::fabs(c.machine.aspect() - aspect) > 0.001f;
-			if (picture_now < next_picture[p] && c.texture && !shape_changed && !shot_due && !screenshot_pending) continue;
+			if (picture_now < next_picture[p] && (c.texture || c.composed) && !shape_changed && !shot_due && !screenshot_pending) continue;
 			next_picture[p] = next_cabinet_picture(next_picture[p], picture_now, c.config.fps);
 			const uint64_t render_started = perf_enabled ? SDL_GetTicksNS() : 0;
 			if (shape_changed) { c.machine.set_aspect(aspect); c.machine.redraw(); }
-			if (c.machine.smooth()) c.machine.render_smooth(double(c.machine.frame_number() - 1) + frame_clock.fraction());
+			bool composed = false;
+			bool whole_picture = true;
+			if (c.machine.smooth() && c.compose_enabled) {
+				prepare_gpu_targets(c);
+				const double now = double(c.machine.frame_number() - 1) + frame_clock.fraction();
+				const int rendered = c.machine.render_parts(now, c.parts);
+				if (rendered == 0) {
+					updated[p] = false;
+					continue;
+				}
+				if (rendered == 1) {
+					const int aa = c.machine.render_scale() / std::max(1, c.config.scale);
+					composed = c.compose.draw(c.parts, c.machine.frame_w(), c.machine.frame_h(),
+						c.machine.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
+						(aa == 1 || c.compose.resolve(aa, c.machine.frame_w() / aa, c.machine.frame_h() / aa));
+					if (!composed) {
+						fprintf(stderr, "two cabinets: GPU composition failed at %dx (%s); using the CPU for this session\n",
+							c.machine.render_scale(), SDL_GetError());
+						unwrap_gpu_targets(c);
+						c.machine.set_gpu3d_target(false);
+						c.machine.set_parts_mode(false);
+						c.machine.set_gpu_edge(false);
+						c.compose_enabled = false;
+						c.compose.release();
+						c.machine.redraw();
+					} else whole_picture = false;
+				}
+			} else if (c.machine.smooth())
+				c.machine.render_smooth(double(c.machine.frame_number() - 1) + frame_clock.fraction());
 			if (c.gpu_enabled && c.machine.m_g3.failed > c.gpu_failed) {
 				c.machine.set_gpu3d_on(false);
 				c.gpu_enabled = false;
+				c.machine.set_gpu3d_target(false);
+				unwrap_gpu_targets(c);
 				c.gpu_notice = "The GPU failed a game picture check. Drawing on the CPU; the next launch tries again.";
 				fprintf(stderr, "two cabinets: %s\n", c.gpu_notice.c_str());
 			}
-			const int w = c.machine.frame_w(), h = c.machine.frame_h();
-			if (!c.texture || w != c.texture_w || h != c.texture_h) {
-				if (c.texture) SDL_DestroyTexture(c.texture);
-				c.texture = create_cabinet_texture(c.display->renderer, w, h);
-				if (!c.texture) { fprintf(stderr, "two cabinets: texture: %s\n", SDL_GetError()); return 1; }
-				c.texture_w = w; c.texture_h = h;
-				SDL_SetTextureScaleMode(c.texture, c.config.scale > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
-			}
-			if (!SDL_UpdateTexture(c.texture, nullptr, c.machine.frame().data(), w * 4)) {
-				fprintf(stderr, "two cabinets: texture upload: %s\n", SDL_GetError());
-				return 1;
+			c.composed = composed;
+			if (whole_picture || !composed) {
+				const int w = c.machine.frame_w(), h = c.machine.frame_h();
+				if (!c.texture || w != c.texture_w || h != c.texture_h) {
+					if (c.texture) SDL_DestroyTexture(c.texture);
+					c.texture = create_cabinet_texture(c.display->renderer, w, h);
+					if (!c.texture) { fprintf(stderr, "two cabinets: texture: %s\n", SDL_GetError()); return 1; }
+					c.texture_w = w; c.texture_h = h;
+					SDL_SetTextureScaleMode(c.texture, c.config.scale > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+				}
+				if (!SDL_UpdateTexture(c.texture, nullptr, c.machine.frame().data(), w * 4)) {
+					fprintf(stderr, "two cabinets: texture upload: %s\n", SDL_GetError());
+					return 1;
+				}
 			}
 			updated[p] = true;
 			if (perf_enabled) {
@@ -2624,7 +2835,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			for (int view = 0; view < instance_count(); view++) {
 				if (!cabinets[view]) continue;
 				if (cabinets[view]->display != cabinets[p]->display) continue;
-				if (!draw_cabinet(renderer, cabinets[view]->texture, viewports[view], picture_aspects[view])) {
+				auto &cabinet = *cabinets[view];
+				SDL_Texture *picture = cabinet.composed
+					? (cabinet.machine.render_scale() == cabinet.config.scale ? cabinet.compose.target() : cabinet.compose.resolved())
+					: cabinet.texture;
+				if (!draw_cabinet(renderer, picture, viewports[view], picture_aspects[view])) {
 					fprintf(stderr, "two cabinets: draw cabinet %d: %s\n", view + 1, SDL_GetError());
 					return 1;
 				}

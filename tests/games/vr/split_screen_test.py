@@ -57,6 +57,8 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
         else:
             assert selected[1] != "CPU (Auto)", solo
             assert "Auto chose CPU" not in solo
+            if "gpu3d sdl_gpu:" in solo and "pictures put together on the GPU (renderer: gpu)" in solo:
+                assert "3D draws directly into renderer textures" in solo
 
     # Autosaves must survive shutdown without the synchronous final-save test hook.
     for name in ("nvram.sav", "eeprom_93c46.sav"):
