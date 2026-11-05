@@ -21,6 +21,7 @@ struct model1_video_test
 		model1::regions regions;
 		regions.title = game::id{ "vr" };
 		model1 m(std::move(regions));
+		m.set_smooth(true);
 		m.m_ram_b[0x1138] = 0x1c;
 		m.m_tiles.tile_w(0x5000, 0x8000, 0xffff);
 		m.m_tiles.tile_w(0x5004, 0x4000, 0xffff);
@@ -41,7 +42,6 @@ struct model1_video_test
 		m.m_tiles.tile_w(0x4000, 120, 0xffff);
 		m.m_tiles.tile_w(0x4001, 2, 0xffff);
 		m.m_tiles.tile_w(0x4002, 300, 0xffff);
-		m.set_smooth(true);
 		m.m_replaying = true;
 		std::array<float, model1::SCREEN_H> rows;
 		m.m_draw_time = 5;
