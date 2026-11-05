@@ -80,14 +80,14 @@ public:
 
 	std::vector<menu_item> display_menu_items() override
 	{
-		return { { "Draw distance", "Full adds distant static scenery from the full 256-cell course in the renderer, without changing arcade car logic or timing. This can substantially lower performance. Applies to the next scenery list.",
+		return { { "Draw distance", "Full shows distant scenery and cars in player and Live Monitor views. Arcade keeps the original visibility limits. Full can substantially lower performance. Applies to the next display list.",
 			[this] { return extended ? "Full" : "Arcade"; },
 			[this](int d) {
 				extended = (int(extended) + d + 2) % 2;
 				set_extended_draw_distance(ctx->machine, extended);
 				ctx->settings_changed();
 			} },
-			{ "LOD", "Off keeps the highest-detail models at every distance. On uses the arcade's simpler distant models. Scenery keeps its full detail in either mode; Draw distance controls how much scenery is visible. Off can lower performance.",
+			{ "LOD", "Off keeps the highest-detail models within the arcade's visibility range. On uses the arcade's simpler distant models. Full draw distance adds cars beyond that range using their distant models. Scenery keeps its full detail in either mode. Off can lower performance.",
 			[this] { return lod ? "On" : "Off"; },
 			[this](int d) {
 				lod = (int(lod) + d + 2) % 2;
@@ -114,6 +114,10 @@ public:
 	bool sync_shared_settings(model1 &primary) override
 	{
 		bool changed = false;
+		const int language = language_value(primary);
+		if (language < 0)
+			fprintf(stderr, "VR: cannot synchronize language before valid EEPROM settings are available\n");
+		else changed = set_language(ctx->machine, language);
 		for (const auto setting : {machine_setting::course_select, machine_setting::race_type}) {
 			const int value = machine_setting_value(primary, setting);
 			if (value < 0) {
@@ -130,12 +134,12 @@ public:
 private:
 	std::vector<menu_item> build_game_menu_items(bool shared, bool cabinet)
 	{
-		if (!language_before) {
+		if (shared && !language_before) {
 			language_before = language_value(ctx->machine);
 			language_choice = *language_before;
 		}
 		std::vector<menu_item> items;
-		if (cabinet) items = { { "Language", "The game's own text: Japanese or English. Changing it restarts the game when the menu closes.",
+		if (shared) items.push_back({ "Language", "The game's own text for all players and the Live Monitor: Japanese or English. Changing it restarts the game when the menu closes.",
 			[this] {
 				return std::string(language_choice < 0 ? "-" : language_choice ? "English" : "Japanese");
 			},
@@ -145,10 +149,10 @@ private:
 					return;
 				}
 				language_choice = ((language_choice + d) % 2 + 2) % 2;
-			} },
-			{ "Service menu",
+			} });
+		if (cabinet) items.push_back({ "Service menu",
 				"The arcade's own test menu: machine settings, input and sound tests, coin settings and bookkeeping. Use 9 to move and F2 to select. Choose EXIT to return.",
-				{}, {}, [this] { ctx->service_menu(); } } };
+				{}, {}, [this] { ctx->service_menu(); } });
 		if (!machine_before) {
 			std::array<int, 4> values;
 			for (size_t i = 0; i < values.size(); i++)
@@ -231,6 +235,7 @@ public:
 		machine_before.reset();
 		const bool monitor_changed = set_monitor_type(ctx->machine, 0);
 		const bool link_changed = ctx->standalone_cabinet ? set_standalone(ctx->machine) :
+			ctx->link_player == 3 ? set_live_monitor(ctx->machine) :
 			ctx->link_player && set_link_player(ctx->machine, ctx->link_player);
 		bool color_changed = false;
 		if (default_blue_pending && machine_setting_value(ctx->machine, machine_setting::car_color) >= 0) {

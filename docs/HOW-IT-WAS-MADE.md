@@ -97,6 +97,11 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   bridge every car does), so with the turn smoothed it went now ahead, now back on screen; each car whose direction
   from the eye goes at least as evenly as the game drew it as turned with the smoothed camera is left as drawn (eased
   in and out over a few game frames) while the rest of the picture is turned.
+  The Live Monitor's trackside cameras also change zoom. Leaving that at 30 Hz while blending
+  their matrices made shots such as HOME STRAIGHT appear to vibrate. Zoom now follows the same
+  frame pair and fraction, matched by viewport and projection translation so the minimap and
+  commentator retain their own projections. A projection with object-specific zooms is left alone,
+  as are camera cuts and the original 30 Hz rendering.
   VR's sky scroll alternates between the current position and the average of two game frames.
   The port keeps the half-pixels that average drops and calculates the next horizontal scroll from the game's RAM,
   so the sky moves between those positions at render resolution instead of extrapolating whole-pixel steps.
@@ -632,7 +637,7 @@ load/save and simulated sleep. An SDL-GPU host built on macOS also checked curre
 the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
 management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
 
-## VR's extended scenery distance
+## VR's extended draw distance
 
 VR does its distance culling in the V60 program, before submitting objects to the shared renderer. Its routine
 at `FF7C1E` selects visible cells from a 5x5 neighborhood of the camera in a 16x16 course grid, each cell 128 units
@@ -667,6 +672,21 @@ as the world. Additional geometry has its own depth-sort accumulator, leaving th
 inherited sort depths unchanged. Static scenery bypasses the arcade budget and command-buffer limit,
 but does not change which cars the CPU submits. Renderer geometry allocations have explicit bounds
 checks to prevent full-course geometry from overflowing the finite point/quad buffers.
+
+Full distance also adds cars outside the arcade's camera-specific cell mask in player and Live Monitor
+views. The original drawing checks at `FEF9F3`, `FEFDB2` and `FEFE08` remain untouched: admitting cars
+through those CPU loops changes emulated timing. Instead the renderer attaches missing active cars
+to the same world matrix as the extra scenery. It uses each car's complete distant model (`record+A8`)
+and the position, suspension height, yaw, pitch and roll used by `FEFB8F`. Already-visible cars and
+the camera's own player record are excluded, avoiding duplicates. All 16 car records are considered.
+These additional distant cars use the arcade's simpler complete models even with LOD Off; LOD Off
+still preserves full detail inside the original visibility range. Arcade distance adds no cars.
+
+The car-distance regression compares otherwise identical machines with and without only these host
+objects, with LOD and smooth motion on and off. It requires changed rendered pictures alongside exact
+RAM, battery RAM, CPU-register and audio equality, on interpreter and native backends:
+`build/bin/vr_gameplay_test build/vr --car-distance` (or `--car-distance-native`).
+The solo linked-monitor regression also checks that both views receive the additional cars.
 
 The desktop's Display > Draw distance choice defaults to Full, saves the choice in VR's settings, and applies it to
 the next list without restarting. Updated regression assertions cover all 256 camera cells,
@@ -739,9 +759,10 @@ The native desktop menu was also checked through both choices and a saved Arcade
 ## VR's model detail (LOD)
 
 Display > LOD defaults to Off and persists as `lod = off` in settings. Off keeps the near-detail
-car bodies and separate wheels at every distance; On restores the arcade's distance-based
+car bodies and separate wheels throughout the arcade's visibility range; On restores its distance-based
 models. Static scenery already has a single detail level in its course-cell records, so it
-remains full detail in both modes. Draw distance independently controls scenery visibility.
+remains full detail in both modes. Full draw distance additionally shows cars beyond that range
+using their complete distant models, independently of LOD.
 
 The TGP still executes its original program. Only the completed distance results read at
 `FEFBF5` and `FF0D3B`, the two car-rendering detail decisions, are treated as near when LOD is off.
@@ -925,6 +946,159 @@ The local-session renderer enables VSync, matching the original single-player ho
 separate cabinet windows only the primary renderer waits for refresh, avoiding two waits in
 one loop. The desktop regression checks the renderer's reported VSync state and uses explicit
 close events so its event timelines do not depend on the refresh rate.
+
+### Verifying the original Live Monitor
+
+Virtua Racing's service-menu **LINK ID** has four values: **NO LINK**, **MASTER**,
+**SLAVE**, and **LIVE** (0 through 3). LIVE is EEPROM byte `0x0c`, value **3**
+(word 6's high byte), mirrored at work RAM `0x40dc8c`. The service field handler
+at `FC5EC4` cycles these four values; the label table is at `FC8166`. This is not
+the separate monitor-aspect setting. The EEPROM checksum must also remain valid.
+The ROM's link setup at `FE6CBF` translates LIVE to communication-board mode **0**
+(relay), without changing the saved role of 3. Standalone role 0 is not LIVE.
+
+`make test-vr-live-monitor` boots three fresh machines as MASTER, SLAVE, and LIVE,
+using the local extracted ROMs. It changes only in-memory EEPROMs with the normal
+checksum helper, never reading or writing player saves. The racers run the existing
+two-cabinet link protocol in scanline lockstep. `linked_pair` accepts an optional
+third machine as a receive-only relay. At vblank it feeds the same pre-exchange
+snapshots to both racers and the relay through the communication-board HLE;
+the test no longer writes directly into the relay's shared RAM.
+
+Communication-board mode 0 receives both ready racer blocks in slots 1 and 2,
+plus the master's status bytes 6-15. It reports relay ID 0, racer count 2, and
+the normal alive/status flags. It never publishes its own block or calls the
+racing transport, even if its local publish flag is set. An unready or rebooting
+relay does not stall the racers. Invalid source roles fail the relay explicitly;
+reset or re-enabling the board clears that failure. This remains a two-racer local
+HLE, not full communication-board firmware or a network relay transport.
+
+The 7,000-frame probe checks relay ID 0, two racers, distinct moving player positions
+received by the monitor, multiple broadcast camera targets, rendered 3D, and nonzero
+audio output, then independently reboots the relay while the racers keep exchanging.
+Each scheduler call advances all three machines by exactly one frame, with per-scanline
+checks that no machine gets ahead. A second three-machine session executes CPUs in
+reverse order and delivers the relay's data before ticking the racers, still using
+immutable pre-exchange snapshots. Across all 7,900 frames, including monitor reboot,
+both sessions must match each machine's work RAM, battery-backed RAM, remaining CPU
+cycles, frame/scanline counters, link RAM/flags/ticks, camera target, and audio samples.
+Sampled player and monitor pictures must also match pixel for pixel. This verifies
+execution-order independence without adding an execution-order setting to the host.
+`make test-vr-link` also checks the relay protocol without ROMs, including unpublished
+blocks, master-only status, alive flags, invalid roles, and reset/failure recovery.
+Screenshots in `build/vr/live-monitor/` show the original helicopter
+view, **LIVE** banner, and **mr. VIRT MCPOLYGON.** portrait and on-screen commentary
+during a player race. Camera direction and broadcast overlays come from the ROM;
+no custom camera director or commentator was added.
+
+For an interpreter comparison, run:
+
+```
+build/bin/vr_live_monitor_test build/vr build/vr/live-monitor-interpreter --interp
+diff -rq build/vr/live-monitor build/vr/live-monitor-interpreter
+```
+
+The native and interpreter runs produced identical sampled PNGs. Native execution
+still uses interpreter fallbacks, including the LIVE-specific path at `FEE66B`;
+the probe reports fallback calls separately for each machine. Nonzero audio is
+verified, but spoken commentary has not been verified by listening. This establishes
+the ROM's broadcast path through the local link HLE, not complete relay-device
+fidelity.
+
+#### Desktop Live Monitor
+
+The linked attract's "RACE AGAINST OTHER PLAYERS!" notice uses a line-scrolled,
+split-map overlay (phase `07`). Like the results banner (phase `1c`), its text now
+slides from the widescreen edge without clipping at the original 4:3 boundary or
+wrapping extra copies. The settled artwork retains its original size and position.
+The linked ROM regression checks both the player's and monitor's complete notice
+through entry and settling at six aspect ratios, 1x/2x, with matching whole/parts layers.
+
+The local VR host's Display menu persists `live_monitor` in the primary `settings.ini`:
+0 Off (default), 1 Above players, 2 Spectator window. The monitor works with one or
+two racers. Above players reserves the upper half of the shared window for
+the broadcast and places one full-width player view or two side-by-side player views below it,
+regardless of the usual split orientation. The separate resizable spectator window
+does not wait for VSync; only the primary renderer waits, as with separate player
+windows. If using separate player windows, the monitor also has its own window.
+Both layouts use the same scanline-synchronized receive-only instance. Solo mode
+links one master and the monitor, with racer count 1 and relay ID 0, without a hidden
+slave or a synthetic racer block. The board loops the master's published block into
+its own receive slot and copies the same pre-tick snapshot and master status to the
+monitor. The ROM-backed test runs another 15,000 frames in this mode with the existing
+Beginner-course driver, requiring actual broadcast polygons and matching player positions
+(allowing the ROM's sub-unit extrapolation between publications). Reversed CPU and
+board-delivery order must match RAM, audio, link state and sampled pixels here too.
+Joining or removing
+Player 2 rebuilds the transport and reboots the coordinated session, retaining the
+monitor, its isolated saves, and its layout.
+
+The monitor's NVRAM, EEPROM, settings and GPU-start marker live exclusively in
+`live-monitor/`, with no fallback to either player's saves. Its host role forces LIVE
+through the checksum-preserving EEPROM helper. It never receives player bindings,
+controller assignment, scripted Start pulses or service-menu inputs. The host keeps
+all three monitor input ports released. Shared display settings apply to the monitor,
+including Picture shape in both layouts. The host fits the entire composition to the
+selected shape before splitting its viewports, rather than applying that shape to each
+cabinet. Every instance derives its rendering aspect from its allocated viewport,
+bounded to 4:3-to-32:9, except full-width stacked views (the monitor and, when solo,
+the player) allow up to 64:9 so their half-height areas can fill even a 32:9
+composition without side bars or stretching.
+The machine renderer accepts this wider aspect; other host views retain their 32:9 cap.
+With the broadcast above, each racer's half-width, half-height
+area retains the composition's ratio (8:4.5 for a 16:9 composition). Narrower areas
+preserve 4:3 with black bars, without stretching or cropping. The spectator window
+applies the selected shape independently. Fit window
+uses each whole window's aspect within those same bounds. It remains muted at the emulated volume stage, its audio
+buffer is discarded every frame, and the final mixer still includes only the one or
+two players with the original gain/divisor. There is deliberately no audible
+commentary option: player audio only is the chosen policy.
+
+The ROM advances AI rivals independently in the monitor. In a longer solo race, one rival
+slows down in the player's simulation while its monitor counterpart continues at speed,
+eventually separating by over 60 world units. Increasing draw distance cannot fix that.
+For local LIVE racing, the master is now authoritative for AI cars. Before any cabinet
+advances a video frame, the scheduler takes an immutable snapshot of the master's AI records.
+At `FEDD6B`, after the monitor's AI update but before its pose and lap bookkeeping, the
+monitor adopts those records' flags and physics/presentation prefix (`+0x14..+0x1c5`).
+It preserves its own record IDs, linked-list offsets, handlers and camera pointers
+(`+0x04..+0x13`), and the trailing non-AI animation state.
+AI records retain their ordering between the master and observer; the first one or two
+human records are excluded and continue using the original link protocol. This also supplies
+the race data used by the monitor's rankings and minimap, not just polygon transforms.
+Snapshots apply only when both machines are racing on the same course; reset, disconnect
+and other phases clear them. There is no write back to a player and no attract-state
+normalization. This is intentionally a local spectator correction, not a claim about original
+relay hardware fidelity. Unit tests cover every AI slot, immutable snapshots, preserved
+headers, untouched humans/source, and lifecycle guards. ROM tests check every copied payload
+exactly in native and interpreter execution, including the longer auto-driven race.
+That race must keep every AI within 3 world units at video-frame boundaries (measured
+maximum 2.783), allowing one logic-update phase offset but not accumulated divergence.
+
+LIVE's course-selection camera differs from the racing cabinets' `TRACK_SELECT_CAMERA`.
+The VR scene classifier also checks role 3 and phase `0x10`, keeping this painted
+screen centered at its original proportions instead of stretching its opaque
+background underneath unscaled foreground tiles. The race still widens normally.
+The ROM-backed monitor regression compares every central selection-screen pixel
+against 4:3 at 16:9/32:9 and 1x/2x. It also checks that the LIVE logo and camera label
+move to the left edge with identical pixels, not horizontal scaling.
+The commentator uses a separate viewport centered at `(405, 59)`, with bounds
+`327..482` by `7..112`. VR's video traits anchor that viewport to the right edge:
+the renderer translates both its projection center and clip bounds together, keeping
+the portrait aligned with the already edge-pinned name and speech tiles. The regression
+compares the complete portrait window against 4:3 at 16:9, 64:27 and 32:9, at 1x/2x.
+
+Changing between the two enabled layouts replaces only presentation resources, not
+the running machines. Enabling/disabling requires a coordinated linked reset, stated
+in the menu. Closing the spectator window disables the monitor and performs the same
+reset without quitting or removing a player. Normal reset/removal/disconnection back
+to solo saves and removes Player 2 while keeping the monitor. Pause, menu,
+fast-forward and reset are shared with the players.
+
+`make test-vr-live-monitor-desktop` exercises both layouts, settings-menu changes,
+isolated role-3 saves and autosave, no monitor controls, spectator-window closure,
+return-to-solo/rejoin, and shared GPU/filter/scale rendering. The graphics unit test
+also checks the stacked viewport partition at odd and minimal window dimensions.
 
 ### Checking linked attract timing
 

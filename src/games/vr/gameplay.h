@@ -12,6 +12,12 @@ struct gameplay_state : game::gameplay_state
 	bool attract_rank_pending = false;
 	bool standalone_car_color = false;
 	std::array<bool, 256> scenery_selected{};
+	struct observed_car {
+		uint32_t flags = 0;
+		std::array<uint8_t, 0x1c6 - 0x14> race{};
+	};
+	std::array<observed_car, 16> observed_cars{};
+	int observed_racers = 0;
 };
 
 gameplay_callbacks create_gameplay(model1 &machine);
@@ -40,6 +46,7 @@ int machine_setting_value(model1 &machine, machine_setting setting);
 bool set_machine_setting(model1 &machine, machine_setting setting, int value);
 bool set_link_player(model1 &machine, int player);
 bool set_standalone(model1 &machine);
+bool set_live_monitor(model1 &machine);
 bool in_attract_mode(model1 &machine);
 bool in_course_selection(model1 &machine);
 extern const video_traits VIDEO;

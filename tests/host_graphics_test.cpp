@@ -51,6 +51,44 @@ static void compose_checks(SDL_Renderer *renderer)
 
 static void split_screen_checks()
 {
+	for (float aspect : {4.0f / 3, 16.0f / 9, 64.0f / 27, 32.0f / 9}) {
+		const int width = 1920, height = 1440;
+		const int picture_height = int(std::lround(width / aspect));
+		const int top = int(std::lround((height - width / aspect) / 2));
+		for (auto layout : {cabinet_layout::side_by_side, cabinet_layout::top_bottom}) {
+			for (bool above : {false, true}) {
+				const auto first = cabinet_composition_viewport(layout, width, height, 0, aspect, true, above);
+				const auto second = cabinet_composition_viewport(layout, width, height, 1, aspect, true, above);
+				if (above) {
+					const auto monitor = cabinet_composition_viewport(layout, width, height, 2, aspect, true, true);
+					assert(monitor.x == 0 && monitor.y == top && monitor.w == width && monitor.h == picture_height / 2);
+					assert(first.x == 0 && first.y == top + monitor.h && first.w == width / 2);
+					assert(first.h == picture_height - monitor.h);
+					assert(second.x == first.w && second.y == first.y && second.w == first.w && second.h == first.h);
+				} else if (layout == cabinet_layout::side_by_side) {
+					assert(first.x == 0 && first.y == top && first.w == width / 2 && first.h == picture_height);
+					assert(second.x == first.w && second.y == top && second.w == first.w && second.h == first.h);
+				} else {
+					assert(first.x == 0 && first.y == top && first.w == width && first.h == picture_height / 2);
+					assert(second.x == 0 && second.y == top + first.h && second.w == width && second.h == picture_height - first.h);
+				}
+			}
+		}
+		for (auto layout : {cabinet_layout::windows, cabinet_layout::side_by_side, cabinet_layout::top_bottom}) {
+			const auto solo = cabinet_composition_viewport(layout, width, height, 0, aspect, false);
+			assert(solo.x == 0 && solo.y == top && solo.w == width && solo.h == picture_height);
+		}
+	}
+	const auto fitted = cabinet_composition_viewport(cabinet_layout::side_by_side, 1600, 1200, 0, 0);
+	assert(fitted.x == 0 && fitted.y == 0 && fitted.w == 800 && fitted.h == 1200);
+	const auto narrow_picture = cabinet_picture_rect(fitted, 4.0f / 3);
+	assert(narrow_picture.x == 0 && narrow_picture.y == 300 && narrow_picture.w == 800 && narrow_picture.h == 600);
+	const auto empty = cabinet_composition_viewport(cabinet_layout::side_by_side, 0, 0, 0, 0);
+	assert(empty.w == 0 && empty.h == 0);
+	const auto pillarboxed = cabinet_composition_viewport(cabinet_layout::side_by_side, 1600, 900, 1, 4.0f / 3);
+	assert(pillarboxed.x == 800 && pillarboxed.y == 0 && pillarboxed.w == 600 && pillarboxed.h == 900);
+	const auto spectator = cabinet_composition_viewport(cabinet_layout::windows, 1600, 900, 0, 4.0f / 3);
+	assert(spectator.x == 200 && spectator.y == 0 && spectator.w == 1200 && spectator.h == 900);
 	for (int fps : {30, 60, 120}) {
 		const Uint64 period = 1000000000ull / fps;
 		const Uint64 start = 1000000000ull;
@@ -76,6 +114,19 @@ static void split_screen_checks()
 			const auto second = cabinet_viewport(layout, size.x, size.y, 1, false);
 			assert(first.x == 0 && first.y == 0 && first.w == size.x && first.h == size.y);
 			assert(layout == cabinet_layout::windows ? second.w == size.x && second.h == size.y : second.w == 0 && second.h == 0);
+		}
+		for (auto layout : {cabinet_layout::side_by_side, cabinet_layout::top_bottom}) {
+			const auto monitor = cabinet_viewport(layout, size.x, size.y, 2, true, true);
+			const auto first = cabinet_viewport(layout, size.x, size.y, 0, true, true);
+			const auto second = cabinet_viewport(layout, size.x, size.y, 1, true, true);
+			assert(monitor.x == 0 && monitor.y == 0 && monitor.w == size.x && monitor.h == size.y / 2);
+			assert(first.x == 0 && first.y == monitor.h && first.w == size.x / 2 && first.h == size.y - monitor.h);
+			assert(second.x == first.w && second.y == first.y &&
+				second.w == size.x - first.w && second.h == first.h);
+			const auto solo = cabinet_viewport(layout, size.x, size.y, 0, false, true);
+			assert(solo.x == 0 && solo.y == monitor.h && solo.w == size.x && solo.h == size.y - monitor.h);
+			const auto absent = cabinet_viewport(layout, size.x, size.y, 1, false, true);
+			assert(absent.w == 0 && absent.h == 0);
 		}
 		SDL_Texture *textures[2]{};
 		uint32_t colours[2] = {0x00ff0000, 0x000000ff};

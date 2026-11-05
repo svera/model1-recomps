@@ -2318,6 +2318,90 @@ struct model1_video_test
 		assert(m.m_list_owner[0][40] == 0x401700);
 	}
 
+	static void camera_zoom()
+	{
+		model1::regions regions;
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.set_smooth(true);
+		const model1::projection_view world{248, 231, 0, 39, 495, 422};
+		const model1::projection_view inset{405, 363, 327, 310, 482, 415};
+		auto map = world;
+		map[6] = std::bit_cast<uint32_t>(149.0f);
+		map[7] = std::bit_cast<uint32_t>(12.0f);
+		auto frame = [&](float zoom, bool object_specific = false) {
+			model1::logic_frame f;
+			auto word = [&](uint32_t value) {
+				f.list.push_back(uint16_t(value));
+				f.list.push_back(uint16_t(value >> 16));
+			};
+			auto viewport = [&](const auto &view) {
+				word(3); word(0);
+				for (int i = 0; i < 6; i++) word(view[i]);
+				word(0xc); word(view[6]); word(view[7]);
+			};
+			auto projection = [&](float value) {
+				word(9); word(std::bit_cast<uint32_t>(value)); word(std::bit_cast<uint32_t>(value));
+			};
+			auto draw = [&] {
+				word(2);
+				for (int i = 0; i < 10; i++) word(0);
+			};
+			viewport(map);
+			projection(70);
+			draw();
+			projection(zoom);
+			viewport(world);
+			draw();
+			projection(zoom + (object_specific ? 1 : 0));
+			draw();
+			projection(70);
+			viewport(inset);
+			draw();
+			projection(zoom);
+			viewport(world);
+			draw();
+			word(0xf);
+			f.list.resize(0x8000);
+			m.index_objects(f);
+			return f;
+		};
+		m.m_logic[0] = frame(100);
+		m.m_logic[1] = frame(200);
+		m.m_logic[0].frame = 0;
+		m.m_logic[1].frame = 2;
+		for (double fraction : {0.0, 0.25, 0.5, 0.75}) {
+			m.render_smooth(2 + 2 * fraction, false);
+			assert(m.m_blend_zooms.at(world)[0] == 100 + 100 * fraction);
+			assert(m.m_blend_zooms.at(inset)[0] == 70);
+			assert(m.m_blend_zooms.at(map)[0] == 70);
+			assert(m.m_view->zoomx == 4 * (100 + 100 * fraction));
+			assert(m.m_view->zoomy == m.m_view->zoomx);
+		}
+		m.render_smooth(4, false);
+		assert(m.m_blend_zooms.empty());
+		assert(m.m_view->zoomx == 800 && m.m_view->zoomy == 800);
+		m.m_logic[1] = frame(200, true);
+		assert(!m.m_logic[1].zooms.at(world).uniform);
+		m.blend_slots(m.m_logic[0], m.m_logic[1], 0.5);
+		assert(!m.m_blend_zooms.count(world) && m.m_blend_zooms.at(inset)[0] == 70);
+		float x = 200, y = 200;
+		m.m_replaying = true;
+		m.m_blend_cut = true;
+		m.smooth_zoom(inset, x, y);
+		assert(x == 200 && y == 200);
+		m.m_blend_cut = false;
+		m.m_replay_older = true;
+		m.m_replay_extra = false;
+		m.smooth_zoom(inset, x, y);
+		assert(x == 200 && y == 200);
+		m.m_replay_older = false;
+		m.m_replaying = false;
+		m.smooth_zoom(inset, x, y);
+		assert(x == 200 && y == 200);
+		puts("Camera zoom: fractional projection, isolated inset, original endpoints and nonuniform/cut guards passed");
+	}
+
 	static void scenery_motion(const char *dir, bool extended)
 	{
 		model1 m(load_regions(dir, game::id{ "vr" }));
@@ -2666,6 +2750,10 @@ struct model1_video_test
 		assert(m.hud_view_offset(149, 12) == m.m_ext);
 		assert(m.hud_view_offset(-232, 134) == -m.m_ext);
 		assert(m.hud_view_offset(0, -30) == 0);
+		assert(m.hud_view_offset(405, 59, true) == m.m_ext);
+		assert(m.hud_view_offset(248, 191, true) == 0);
+		assert(m.hud_view_offset(405, 59) == 0);
+		assert(m.hud_view_offset(149, 12, true) == 0);
 		assert(m.hud_edge_pinning_active());
 
 		constexpr uint32_t KEY = 0xff000000;
@@ -3778,6 +3866,7 @@ int main(int argc, char **argv)
 	model1_video_test::extra_scenery();
 	model1_video_test::object_fade();
 	model1_video_test::scenery_records();
+	model1_video_test::camera_zoom();
 	model1_video_test::culled_records();
 	model1_video_test::hud_edge_pinning();
 	model1_video_test::wide_direct_overlay();

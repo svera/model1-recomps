@@ -39,4 +39,12 @@ test-vr-two-cabinets: $(BIN)/vr_link_test vr-regions
 	$(BIN)/vr_link_test --in-process build/vr
 test-vr-split-screen: $(BIN)/vr-native vr-regions
 	python3 tests/games/vr/split_screen_test.py $(BIN)/vr-native build/vr
-.PHONY: test-vr-profile test-vr-gameplay test-vr-tgp-track test-vr-link test-vr-link-rom test-vr-two-cabinets test-vr-split-screen
+
+$(BIN)/vr_live_monitor_test: $(OBJ)/tests/games/vr/live_monitor_test.o $(GAMES_LINK) $(call objs,$(RT) $(NATIVE)) $(REC_NONE) $(SLJIT_OBJ) $(CORO_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+test-vr-live-monitor: $(BIN)/vr_live_monitor_test vr-regions
+	$(BIN)/vr_live_monitor_test build/vr build/vr/live-monitor
+test-vr-live-monitor-desktop: $(BIN)/vr-native vr-regions
+	python3 tests/games/vr/live_monitor_desktop_test.py $(BIN)/vr-native build/vr
+.PHONY: test-vr-profile test-vr-gameplay test-vr-tgp-track test-vr-link test-vr-link-rom test-vr-two-cabinets test-vr-split-screen test-vr-live-monitor test-vr-live-monitor-desktop
