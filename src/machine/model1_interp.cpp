@@ -70,6 +70,7 @@ void model1::set_smooth(bool on)
 {
 	if (on == m_smooth) return;
 	m_smooth = on;
+	for (auto &history : m_tile_slides) history.clear();
 	m_logic[0] = m_logic[1] = m_logic_prev = logic_frame{};
 	for (int buffer = 0; buffer < 2; buffer++) {
 		m_list_visibility[buffer].clear();
@@ -241,8 +242,65 @@ void model1::retain_culled_records(logic_frame &frame, const logic_frame &previo
 // Instead of drawing the frame: keep its list when it is a new one. The object count stands in
 // for the polygon count (the clean scene changes go by it); a frame with nothing in 3D is drawn,
 // so a black curtain can be told from a scene being built.
+void model1::record_tile_slides()
+{
+	for (const auto &slide : m_video->wide_tile_slides) {
+		auto &history = m_tile_slides[slide.layer];
+		tile_slide_sample sample;
+		sample.frame = int(m_frame);
+		sample.mode = m_ram_b[0x1138];
+		sample.hscr = m_tiles.tile_r(0x5000 + (slide.layer >> 1));
+		sample.vscr = m_tiles.tile_r(0x5004 + (slide.layer >> 1));
+		sample.ctrl = m_tiles.tile_r(0x5004 + ((slide.layer >> 1) & 2));
+		if (sample.mode != slide.mode) continue;
+		if (!(sample.hscr & 0x8000) || (sample.ctrl & 0x6000) != 0x4000 ||
+			(sample.vscr & 0x8000)) {
+			history.clear();
+			continue;
+		}
+		for (int y = 0; y < SCREEN_H; y++)
+			sample.rows[y] = m_tiles.tile_r(0x4000 + 0x200 * (slide.layer >> 1) + y);
+		if (!history.empty()) {
+			const auto &last = history.back();
+			if (last.mode != sample.mode || last.hscr != sample.hscr ||
+				last.vscr != sample.vscr || last.ctrl != sample.ctrl || last.frame >= sample.frame ||
+				sample.frame - last.frame > 2)
+				history.clear();
+			// Retain the game's two-video-frame cadence, including the final stationary sample.
+			else if (last.rows == sample.rows && sample.frame - last.frame < 2)
+				continue;
+		}
+		history.push_back(sample);
+		if (history.size() > 4) history.erase(history.begin());
+	}
+}
+
+bool model1::smooth_tile_slide(int layer, std::array<float, SCREEN_H> &rows) const
+{
+	if (!m_smooth || !m_replaying || !m_wide_frame) return false;
+	const auto &history = m_tile_slides[layer];
+	if (history.size() < 2) return false;
+	const auto &latest = history.back();
+	if (latest.mode != m_ram_b[0x1138] ||
+		latest.hscr != m_tiles.tile_r(0x5000 + (layer >> 1)) ||
+		latest.vscr != m_tiles.tile_r(0x5004 + (layer >> 1)) ||
+		latest.ctrl != m_tiles.tile_r(0x5004 + ((layer >> 1) & 2))) return false;
+	size_t next = 1;
+	while (next + 1 < history.size() && history[next].frame < m_draw_time) next++;
+	const auto &a = history[next - 1], &b = history[next];
+	const float alpha = float(std::clamp((m_draw_time - a.frame) / (b.frame - a.frame), 0.0, 1.0));
+	for (int y = 0; y < SCREEN_H; y++) {
+		const int from = a.rows[y] & 0x1ff, to = b.rows[y] & 0x1ff;
+		// A map switch or reset is not a slide through all the intervening columns.
+		rows[y] = ((a.rows[y] ^ b.rows[y]) & 0xfe00) || std::abs(to - from) > 64
+			? float(latest.rows[y] & 0x1ff) : from + (to - from) * alpha;
+	}
+	return true;
+}
+
 void model1::record_frame()
 {
+	record_tile_slides();
 	// No new list this frame (the game draws its 3D every other frame at times, as on the name
 	// entry's turning ring): the board keeps showing the last one, so the picture carries on.
 	int objects = m_logic[1].list.empty() ? 0 : m_logic[1].objects;
@@ -496,6 +554,7 @@ void model1::keep_still()
 	s.logic_prev = m_logic_prev;
 	s.cut_frame = m_cut_frame;
 	std::copy(std::begin(m_sky_hist), std::end(m_sky_hist), s.sky_hist);
+	s.tile_slides = m_tile_slides;
 	s.tile_ram = m_tiles.tile_ram;
 	if (s.char_gen != m_tiles.char_gen || s.char_ram.size() != m_tiles.char_ram.size()) {
 		s.char_ram = m_tiles.char_ram;
@@ -523,6 +582,7 @@ void model1::swap_still()
 	std::swap(m_logic_prev, s.logic_prev);
 	std::swap(m_cut_frame, s.cut_frame);
 	std::swap_ranges(std::begin(m_sky_hist), std::end(m_sky_hist), s.sky_hist);
+	m_tile_slides.swap(s.tile_slides);
 	m_tiles.swap_rams(s.tile_ram, s.char_ram);
 	m_tiles_updated = ~0ull;                         // decoded again from the RAMs now in place
 	std::swap_ranges(std::begin(m_pens), std::end(m_pens), s.pens.begin());

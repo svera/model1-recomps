@@ -51,6 +51,7 @@ void model1::reset()
 	m_tgp_cycles = 0;
 	m_cpu_owed = 0;
 	for (auto &c : m_layer_cache) c.frame = ~0ull;   // a new game: nothing drawn is current
+	for (auto &history : m_tile_slides) history.clear();
 	m_shown = m_unshown = false;                      // nor shown
 	m_tiles_updated = ~0ull;
 	m_list_written[0] = m_list_written[1] = ~0ull;
@@ -584,7 +585,11 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	constexpr uint32_t KEY = 0xff000000;
 	layer_cache &c = m_layer_cache[layer & 7];
 	const int tw = SCREEN_W + 2 * m_ext;
-	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) {
+	std::array<float, SCREEN_H> slide_rows;
+	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
+	const double slide_time = smooth_slide ? m_draw_time : -1;
+	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
+		c.px.width() != tw || c.slide_time != slide_time) {
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
@@ -592,10 +597,11 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		const auto slide = std::find_if(slides.begin(), slides.end(), [&](const auto &s) {
 			return s.layer == layer && s.mode == m_ram_b[0x1138] && s.distance > 0;
 		});
-		const bool sliding = m_ext && m_wide_frame && slide != slides.end() &&
+		const bool sliding = (m_ext || smooth_slide) && m_wide_frame && slide != slides.end() &&
 			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
-		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance);
+		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance,
+			smooth_slide ? slide_rows.data() : nullptr);
 		else m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
@@ -613,6 +619,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			c.x0[y] = int16_t(a); c.x1[y] = int16_t(b);
 		}
 		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.wide = m_wide_frame; c.gen++;
+		c.slide_time = slide_time;
 	}
 	return c;
 }
@@ -780,7 +787,8 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 {
 	static const int skip = getenv("M1_TILE_SKIP") ? strtol(getenv("M1_TILE_SKIP"), nullptr, 16) : 0;
 	if (skip & (1 << layer)) return;
-	if (m_scale == 1 && m_ext == 0) {
+	std::array<float, SCREEN_H> slide_rows;
+	if (m_scale == 1 && m_ext == 0 && !smooth_tile_slide(layer, slide_rows)) {
 		m_tiles.m_ox = 0;
 		m_tiles.draw(bitmap, cliprect, layer, 0, flags);
 		return;

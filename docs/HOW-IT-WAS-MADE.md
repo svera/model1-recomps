@@ -1011,6 +1011,14 @@ The linked attract's "RACE AGAINST OTHER PLAYERS!" notice uses a line-scrolled,
 split-map overlay (phase `07`). Like the results banner (phase `1c`), its text now
 slides from the widescreen edge without clipping at the original 4:3 boundary or
 wrapping extra copies. The settled artwork retains its original size and position.
+In smooth-motion mode these overlays also interpolate their per-line scroll positions
+at the delayed presentation time. Scroll samples retain the game's two-video-frame
+cadence, with a stationary endpoint so the text stops at its original position.
+Only the configured linked-notice and results phases use this path; map switches,
+large scroll resets and the original 30 FPS mode are not interpolated. The layer
+cache and GPU composition generations follow the presentation time, and paused
+redraws retain the same scroll history. This applies at 4:3 as well as widescreen;
+positions are rounded to native tile pixels to keep the lettering sharp.
 The linked ROM regression checks both the player's and monitor's complete notice
 through entry and settling at six aspect ratios, 1x/2x, with matching whole/parts layers.
 
