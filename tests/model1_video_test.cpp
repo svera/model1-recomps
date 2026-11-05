@@ -12,9 +12,52 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <tuple>
 
 struct model1_video_test
 {
+	static void tile_slide_interpolation()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		m.set_smooth(true);
+		m.m_ram_b[0x1138] = 0x1c;
+		m.m_tiles.tile_w(0x5000, 0x8000, 0xffff);
+		m.m_tiles.tile_w(0x5004, 0x4000, 0xffff);
+		auto &history = m.m_tile_slides[1];
+		for (const auto [frame, row0, row1, row2] : {
+				std::tuple{ 4, 100, 510, 100 }, std::tuple{ 6, 120, 2, 300 } }) {
+			model1::tile_slide_sample sample;
+			sample.frame = frame;
+			sample.mode = 0x1c;
+			sample.hscr = 0x8000;
+			sample.vscr = 0x4000;
+			sample.ctrl = 0x4000;
+			sample.rows[0] = row0;
+			sample.rows[1] = row1;
+			sample.rows[2] = row2;
+			history.push_back(sample);
+		}
+		m.m_tiles.tile_w(0x4000, 120, 0xffff);
+		m.m_tiles.tile_w(0x4001, 2, 0xffff);
+		m.m_tiles.tile_w(0x4002, 300, 0xffff);
+		m.m_replaying = true;
+		std::array<float, model1::SCREEN_H> rows;
+		m.m_draw_time = 5;
+		assert(m.smooth_tile_slide(1, rows));
+		assert(std::fabs(rows[0] - 110) < 0.001f);
+		assert(std::fabs(rows[1] - 512) < 0.001f);
+		assert(std::fabs(rows[2] - 300) < 0.001f);
+		m.m_draw_time = 5.5;
+		assert(m.smooth_tile_slide(1, rows));
+		assert(std::fabs(rows[0] - 115) < 0.001f);
+		assert(std::fabs(rows[1] - 513) < 0.001f);
+		m.m_ram_b[0x1138] = 0x07;
+		assert(!m.smooth_tile_slide(1, rows));
+		puts("Tile slide interpolation: fractional, wrapped, and discontinuous row scrolls checked");
+	}
+
 	static void cockpit_coverage()
 	{
 		constexpr uint32_t soft = 0x80ffffff, blue = 0x000000ff;
@@ -1703,6 +1746,7 @@ struct model1_video_test
 		m.set_aspect(16.0f / 9);
 		m.reset();
 		m.set_drawing(false);
+		m.set_smooth(true);
 		auto play = game::make_auto_play(game::id{ "vr" }, "qualifying", 12345, false);
 		assert(play);
 		int result_frame = 0;
@@ -1716,6 +1760,13 @@ struct model1_video_test
 			m.run_frame();
 			if (m.work_ram()[0x1138] != 0x1c) continue;
 			if (result_frame++ >= 90) break;
+			if (result_frame <= 30) {
+				std::array<uint16_t, model1::SCREEN_H> scroll_before;
+				for (int y = 0; y < model1::SCREEN_H; y++) scroll_before[y] = m.m_tiles.tile_r(0x4000 + y);
+				model1::gpu_parts parts;
+				assert(m.render_parts(double(m.m_frame - 1) + 0.5, parts) == 2);
+				for (int y = 0; y < model1::SCREEN_H; y++) assert(m.m_tiles.tile_r(0x4000 + y) == scroll_before[y]);
+			}
 			if ((result_frame - 1) % 5) continue;
 			assert(m.m_tiles.tile_r(0x5000) == 0x8000 && m.m_tiles.tile_r(0x5004) == 0x4000);
 			// Read the complete, stationary artwork independently of the animated clipping.
@@ -3704,7 +3755,12 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 2 && std::string(argv[2]) == "--tile-slide-interpolation") {
+		model1_video_test::tile_slide_interpolation();
+		return 0;
+	}
 	model1_video_test::cockpit_coverage();
+	model1_video_test::tile_slide_interpolation();
 	if (argc > 2 && std::string(argv[2]) == "--swa-name-fall") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_name_fall(argv[1], aspect);
 		return 0;

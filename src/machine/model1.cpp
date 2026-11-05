@@ -589,7 +589,8 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
 	const double slide_time = smooth_slide ? m_draw_time : -1;
 	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
-		c.px.width() != tw || c.slide_time != slide_time) {
+		c.px.width() != tw || c.slide_time != slide_time ||
+		(m_tile_slide_interpolating && m_tile_slide_layer == layer)) {
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
@@ -724,7 +725,10 @@ void model1::prepare_layers()
 	for (int l : LAYERS) {
 		const int flags = l == 6 ? segas24_tile::DRAW_OPAQUE : 0;
 		const layer_cache &c = m_layer_cache[l];
-		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) todo[n++] = l;
+		std::array<float, SCREEN_H> slide_rows;
+		const double slide_time = smooth_tile_slide(l, slide_rows) ? m_draw_time : -1;
+		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
+			c.px.width() != tw || c.slide_time != slide_time) todo[n++] = l;
 	}
 	if (n < 2) return;
 	m_work.layers += n;
@@ -788,7 +792,9 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	static const int skip = getenv("M1_TILE_SKIP") ? strtol(getenv("M1_TILE_SKIP"), nullptr, 16) : 0;
 	if (skip & (1 << layer)) return;
 	std::array<float, SCREEN_H> slide_rows;
-	if (m_scale == 1 && m_ext == 0 && !smooth_tile_slide(layer, slide_rows)) {
+	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
+	const bool slide_motion = m_tile_slide_interpolating && m_tile_slide_layer == layer;
+	if (m_scale == 1 && m_ext == 0 && !smooth_slide && !slide_motion) {
 		m_tiles.m_ox = 0;
 		m_tiles.draw(bitmap, cliprect, layer, 0, flags);
 		return;
@@ -828,6 +834,23 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	if (flags & segas24_tile::DRAW_OPAQUE) sides = true;   // (its sides are its own: stretched or filled)
 	const int s = m_scale;
 	const int out_w = bitmap.width();
+	if (slide_motion) {
+		auto fdiv = [](int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
+		parallel_rows(SCREEN_H * s, [&](int Y0, int Y1) {
+			for (int Y = Y0; Y < Y1; Y++) {
+				const int y = Y / s, ox = sky_shift_x(-m_tile_slide_residual[y], s);
+				const uint32_t *src = &tmp->pix(y);
+				uint32_t *dst = &bitmap.pix(Y);
+				for (int X = 0; X < out_w; X++) {
+					const int x = fdiv(X + ox, s);
+					if (x < 0 || x >= tmp->width()) continue;
+					const uint32_t c = src[x];
+					if (c != KEY) dst[X] = blend_layer_pixel(c, dst[X]);
+				}
+			}
+		});
+		return;
+	}
 	// smooth motion: the sky between two game frames, moved by the blended scroll at full resolution
 	float sdx = 0, sdy = 0;
 	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) smooth_sky_shift(sdx, sdy);
