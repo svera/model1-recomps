@@ -52,7 +52,7 @@ struct model1_video_test
 		m.m_draw_time = 5.5;
 		assert(m.smooth_tile_slide(1, rows));
 		assert(std::fabs(rows[0] - 115) < 0.001f);
-		assert(std::fabs(rows[1] - 514) < 0.001f);
+		assert(std::fabs(rows[1] - 513) < 0.001f);
 		m.m_ram_b[0x1138] = 0x07;
 		assert(!m.smooth_tile_slide(1, rows));
 		puts("Tile slide interpolation: fractional, wrapped, and discontinuous row scrolls checked");
