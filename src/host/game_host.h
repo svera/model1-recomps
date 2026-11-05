@@ -30,7 +30,7 @@ struct host_context
 	std::function<void(const std::string &, std::function<bool(const SDL_Event &)>, std::function<void()>)> capture;
 	std::function<void()> refresh_menu;
 	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings
-	int link_player = 0;                     // experimental VR cabinet: 1 master, 2 slave
+	int link_player = 0;                     // local VR role: 1 master, 2 slave, 3 Live Monitor
 	bool standalone_cabinet = false;         // force standalone instead of restoring a saved link role
 };
 

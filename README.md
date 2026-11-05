@@ -42,8 +42,10 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 - Sharper graphics, widescreen and ultrawide views without stretching the HUD.
 - Original arcade motion or smoother 60 / 120 FPS.
 - Full-detail models by default, with an optional LOD toggle for simpler distant models.
+- Full draw distance for scenery and distant cars, including the Live Monitor; Arcade restores the original limits.
 - Keyboard and gamepad support, with customizable controls.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
+- Optional original Live Monitor broadcast above the players or in a spectator window.
 - Saved settings and high scores.
 - Car color, language, difficulty, and course settings.
 
@@ -53,6 +55,12 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 2. Keep **`vr.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
 3. Start the game and select **`vr.zip`** when asked. It remembers your files for next time.
 4. Press **1** on the keyboard or **Start** on your gamepad to play.
+
+**Live Monitor:** choose **Display > Live Monitor > Above players** or **Spectator window**.
+Watch the original arcade broadcast with Virt McPolygon during solo or two-player games,
+above the action or in a window you can move to another display. It follows
+**Display > Picture shape** and is off by default. Enabling or disabling it restarts
+the game; switching layouts does not. Enabling it may reduce performance.
 
 **macOS:** open **Virtua Racing Recomp.app**. If macOS blocks it, allow it through
 **System Settings > Privacy & Security**.
@@ -87,6 +95,8 @@ Open the menu with **Esc** or **View / Select**:
 - **Controls > Analog axes:** adjust Virtua Racing's steering response from linear (1.0x) to stronger curves (up to 4.0x). The former exponential setting is 2.0x.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** choose your car color, language, course, and difficulty.
+  With two players, Language is directly under Game and applies to both players
+  and the Live Monitor. Player submenus keep car color, difficulty and service settings.
 - **Sound:** adjust the audio levels.
 
 Higher graphics settings need a faster computer. If play feels slow, lower the render scale

@@ -23,6 +23,32 @@ constexpr uint32_t SCENERY_READY_PC = 0xff7dc5;
 constexpr uint32_t CAR0_RANK = 0xe23;
 constexpr uint8_t CAR0_ATTRACT_RANK = 15;
 
+std::array<float, 12> record_pose(model1 &machine, uint32_t record, const std::array<int, 3> &angles,
+	float height, float local_height)
+{
+	glm::mat3 rotation(1);
+	for (int axis = 0; axis < 3; axis++) {
+		const int first = 2 - axis, second = (first + 1) % 3;
+		const float angle = angles[axis] * (2.0f * 3.14159265358979323846f / 65536.0f);
+		const float s = std::sin(angle), c = std::cos(angle);
+		const glm::vec3 a = rotation[first], b = rotation[second];
+		rotation[first] = c * a - s * b;
+		rotation[second] = s * a + c * b;
+	}
+	auto number = [&](uint32_t offset) { return std::bit_cast<float>(machine.read32(record + offset)); };
+	const glm::vec3 position = glm::vec3(number(0x1e), number(0x22) + height, number(0x26)) +
+		rotation * glm::vec3(0, local_height, 0);
+	std::array<float, 12> transform;
+	for (int c = 0; c < 3; c++)
+		for (int r = 0; r < 3; r++) transform[c * 3 + r] = rotation[c][r];
+	for (int r = 0; r < 3; r++) transform[9 + r] = position[r];
+	if (!std::all_of(transform.begin(), transform.end(), [](float v) { return std::isfinite(v); })) {
+		fprintf(stderr, "VR draw distance: non-finite pose for record %06x\n", record);
+		std::abort();
+	}
+	return transform;
+}
+
 void prepare_scenery(model1 &machine, gameplay_state &state)
 {
 	const auto &ram = machine.work_ram();
@@ -108,6 +134,31 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 			objects.push_back({ bus.read32(record + 4), polygon, 0 });
 		});
 	}
+	// FEFB8F's distant car: the complete one-piece model, outside the arcade's cell mask.
+	// Do not admit it through the CPU's drawing loop: that changes the race's timing.
+	if (ram[0x1138] == 0x03 || ram[0x1138] == 0x14) {
+		for (uint32_t car = 0x400d00; car <= 0x403280; car += 0x280) {
+			if (!(machine.read32(car) & 0x80000000) || car == machine.read32(0x501320)) continue;
+			const uint32_t cell = machine.read16(car + 0x34);
+			if (cell >= 256) {
+				fprintf(stderr, "VR draw distance: invalid car cell %u for record %06x\n", cell, car);
+				std::abort();
+			}
+			if (machine.read32(0x501ac0 + cell / 32 * 4) & (1u << (cell % 32))) continue;
+			const uint32_t list = machine.read32(car + 0xa8);
+			const uint32_t polygon = read_rom(list, 12);
+			if (!polygon || polygon >= machine.polygon_rom().size() / 4) {
+				fprintf(stderr, "VR draw distance: invalid car polygon %08x for record %06x\n", polygon, car);
+				std::abort();
+			}
+			auto number = [&](uint32_t offset) { return std::bit_cast<float>(machine.read32(car + offset)); };
+			const auto transform = record_pose(machine, car, {
+				int16_t(machine.read16(car + 0x4e) + machine.read16(car + 0x6e)),
+				int16_t(machine.read16(car + 0x4c)), int16_t(machine.read16(car + 0x50))
+			}, number(0x52), 0);
+			objects.push_back({ read_rom(list + 4, 4), polygon, 0, car, transform });
+		}
+	}
 	// The breakable boards' visibility gate also freezes their physics. Draw missing boards
 	// from their saved poses instead of running that handler outside the arcade mask.
 	const uint32_t end = machine.read32(0x501368);
@@ -124,22 +175,10 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 		}
 		if (machine.read32(0x501ac0 + cell / 32 * 4) & (1u << (cell % 32))) continue;
 		auto number = [&](uint32_t offset) { return std::bit_cast<float>(machine.read32(record + offset)); };
-		glm::mat3 rotation(1);
-		for (const auto &[offset, first, second] : std::array<std::array<int, 3>, 3>{ {
-			{ 0x2c, 2, 0 }, { 0x2a, 1, 2 }, { 0x2e, 0, 1 }
-		} }) {
-			const float angle = int16_t(machine.read16(record + offset)) * (2.0f * 3.14159265358979323846f / 65536.0f);
-			const float s = std::sin(angle), c = std::cos(angle);
-			const glm::vec3 a = rotation[first], b = rotation[second];
-			rotation[first] = c * a - s * b;
-			rotation[second] = s * a + c * b;
-		}
-		const glm::vec3 position = glm::vec3(number(0x1e), number(0x22) + number(0x5e), number(0x26)) +
-			rotation * glm::vec3(0, number(0x67), 0);
-		std::array<float, 12> transform;
-		for (int c = 0; c < 3; c++)
-			for (int r = 0; r < 3; r++) transform[c * 3 + r] = rotation[c][r];
-		for (int r = 0; r < 3; r++) transform[9 + r] = position[r];
+		const auto transform = record_pose(machine, record, {
+			int16_t(machine.read16(record + 0x2c)), int16_t(machine.read16(record + 0x2a)),
+			int16_t(machine.read16(record + 0x2e))
+		}, number(0x5e), number(0x67));
 		const uint32_t list = machine.read32(record + 0x4c);
 		objects.push_back({ read_rom(list + 4, 4), read_rom(list, 12), 0, record, transform });
 	}
@@ -155,6 +194,51 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	callbacks.reset = [state] {
 		state->scenery_pending = false;
 		state->attract_rank_pending = true;
+		state->observed_racers = 0;
+	};
+	callbacks.observe = [&machine, state](model1 *source) {
+		state->observed_racers = 0;
+		if (!source || !machine.link() || machine.link()->read(2) != 0 ||
+			machine.work_ram()[0x1138] != 0x14 || source->work_ram()[0x1138] != 0x14 ||
+			machine.read8(0x501934) != source->read8(0x501934)) return;
+		if (source->title() != machine.title() || !source->link() || source->link()->read(2) != 1) {
+			fprintf(stderr, "VR Live Monitor: race source must be the linked master\n");
+			std::abort();
+		}
+		const int racers = source->link()->read(3);
+		if (racers < 1 || racers > 2) {
+			fprintf(stderr, "VR Live Monitor: invalid racer count %d\n", racers);
+			std::abort();
+		}
+		for (int i = racers; i < 16; i++) {
+			const uint32_t car = 0x400d00 + uint32_t(i) * 0x280;
+			if (source->read8(car + 4) != machine.read8(car + 4)) {
+				fprintf(stderr, "VR Live Monitor: master/observer AI identity mismatch at %06x\n", car);
+				std::abort();
+			}
+			state->observed_cars[i].flags = source->read32(car);
+			std::copy_n(source->nvram().begin() + car - 0x400000 + 0x14,
+				state->observed_cars[i].race.size(), state->observed_cars[i].race.begin());
+		}
+		state->observed_racers = racers;
+	};
+	callbacks.read_pc_first = callbacks.read_pc_last = 0xfedd6b;
+	callbacks.read_value = [&machine, state](uint32_t, uint32_t address, uint16_t value) {
+		if (!state->observed_racers || machine.work_ram()[0x1138] != 0x14) return value;
+		const uint32_t car = machine.cpu().reg(25);
+		if (address != car + 0x34 || car < 0x400d00 || car > 0x403280 || (car - 0x400d00) % 0x280)
+			return value;
+		const int index = int((car - 0x400d00) / 0x280);
+		if (index < state->observed_racers) return value;
+		const auto &snapshot = state->observed_cars[index];
+		// FEDD6B runs after AI physics, before FF7B6D builds its pose and FEAB31 updates
+		// lap state. Preserve this cabinet's ID, list links, handler and camera (04..13),
+		// and the non-AI animation state following the physics/presentation prefix.
+		// AI slots have the same ordering on the master and observer, unlike a slave.
+		machine.write32(car, snapshot.flags);
+		std::copy(snapshot.race.begin(), snapshot.race.end(), machine.nvram().begin() + car - 0x400000 + 0x14);
+		const size_t offset = 0x34 - 0x14;
+		return uint16_t(snapshot.race[offset] | uint16_t(snapshot.race[offset + 1]) << 8);
 	};
 	callbacks.frame_end = [&machine, state] {
 		if (state->attract_rank_pending) {
@@ -286,7 +370,9 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		}
 		return records;
 	};
-	callbacks.wide_scene = [](uint32_t camera, bool) {
+	callbacks.wide_scene = [&machine](uint32_t camera, bool) {
+		// LIVE uses a different camera record for the same painted course-selection screen.
+		if (machine.read8(0x40dc8c) == 3 && machine.work_ram()[0x1138] == 0x10) return false;
 		return camera != 0 && camera != TRACK_SELECT_CAMERA;
 	};
 	return callbacks;
@@ -367,6 +453,16 @@ bool set_link_player(model1 &machine, int player)
 	}
 	return edit_eeprom_settings(machine, 5, [&](uint16_t *e) {
 		const uint16_t value = uint16_t((e[6] & 0x00ff) | (player << 8));
+		if (e[6] == value) return false;
+		e[6] = value;
+		return true;
+	});
+}
+
+bool set_live_monitor(model1 &machine)
+{
+	return edit_eeprom_settings(machine, 5, [&](uint16_t *e) {
+		const uint16_t value = uint16_t((e[6] & 0x00ff) | 0x0300);
 		if (e[6] == value) return false;
 		e[6] = value;
 		return true;

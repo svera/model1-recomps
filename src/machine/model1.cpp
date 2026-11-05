@@ -511,7 +511,8 @@ void model1::set_render_scale(int scale)
 
 void model1::set_aspect(float aspect)
 {
-	m_aspect = std::clamp(aspect, 4.0f / 3.0f, 32.0f / 9.0f);
+	// Full-width, half-height stacked views need twice the host composition's aspect.
+	m_aspect = std::clamp(aspect, 4.0f / 3.0f, 64.0f / 9.0f);
 	// the arcade's pixels are slightly wide: 496x384 fills a 4:3 tube
 	float width = SCREEN_H * m_aspect * float(SCREEN_W) / (SCREEN_H * 4.0f / 3.0f);
 	m_ext = std::max(0, int(std::lround((width - SCREEN_W) / 2)));
@@ -587,9 +588,11 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
-		const auto &slide = m_video->wide_tile_slide;
-		const bool sliding = m_ext && m_wide_frame && slide && slide->layer == layer &&
-			slide->mode == m_ram_b[0x1138] && slide->distance > 0 &&
+		const auto &slides = m_video->wide_tile_slides;
+		const auto slide = std::find_if(slides.begin(), slides.end(), [&](const auto &s) {
+			return s.layer == layer && s.mode == m_ram_b[0x1138] && s.distance > 0;
+		});
+		const bool sliding = m_ext && m_wide_frame && slide != slides.end() &&
 			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
 		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance);
@@ -690,10 +693,10 @@ float model1::hud_edge_offset(float left, float right) const
 	return 0;
 }
 
-float model1::hud_view_offset(float x, float y) const
+float model1::hud_view_offset(float x, float y, bool viewport) const
 {
 	if (hud_edge_pinning_active())
-		for (const auto &view : m_video->edge_views)
+		for (const auto &view : viewport ? m_video->edge_viewports : m_video->edge_views)
 			if (x == view.x && y == view.y) return float(view.edge * m_ext);
 	return 0;
 }

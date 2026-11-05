@@ -2305,6 +2305,14 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 		} scope{m_gameplay.render_end, m_probing};
 
 		int list_offset = 0;
+		projection_view viewport{};
+		std::optional<std::array<float, 2>> zoom;
+		auto apply_zoom = [&] {
+			if (!zoom) return;
+			float x = (*zoom)[0], y = (*zoom)[1];
+			smooth_zoom(viewport, x, y);
+			m_view->set_zoom(x * 4, y * 4);
+		};
 		bool retained_drawn = false;
 		for (;;) {
 			int type = readi(list_offset + 0);
@@ -2351,6 +2359,7 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 			}
 			case 3:
 			{
+				for (int i = 0; i < 6; i++) viewport[i] = uint32_t(readi(list_offset + 4 + 2 * i));
 				M1_LOG(LOG_TGP, "VIDEO:   viewport (%d, %d, %d, %d, %d, %d, %d)\n",
 					readi(list_offset + 2),
 					readi16(list_offset + 4), readi16(list_offset + 6), readi16(list_offset + 8),
@@ -2365,7 +2374,9 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				float x2 = readi16(list_offset + 12);
 				float y1 = 383 - (readi16(list_offset + 14) - 39);
 
-				m_view->set_viewport(xc, yc, x1, x2, y1, y2);
+				const float offset = hud_view_offset(xc, yc, true);
+				m_view->set_viewport(xc + offset, yc, x1 + offset, x2 + offset, y1, y2);
+				apply_zoom();
 
 				list_offset += 16;
 				break;
@@ -2425,7 +2436,8 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				break;
 			case 9:
 				M1_LOG(LOG_TGP, "VIDEO:   zoom (%f, %f)\n", readf(list_offset + 2), readf(list_offset + 4));
-				m_view->set_zoom(readf(list_offset + 2) * 4, readf(list_offset + 4) * 4);
+				zoom = {readf(list_offset + 2), readf(list_offset + 4)};
+				apply_zoom();
 				list_offset += 6;
 				break;
 			case 0xa:
@@ -2528,7 +2540,10 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				M1_LOG(LOG_TGP, "VIDEO:   trans (%f, %f)\n", readf(list_offset + 2), readf(list_offset + 4));
 				{
 					const float x = readf(list_offset + 2), y = readf(list_offset + 4);
+					viewport[6] = uint32_t(readi(list_offset + 2));
+					viewport[7] = uint32_t(readi(list_offset + 4));
 					m_view->set_view_translation(x + hud_view_offset(x, y), y);
+					apply_zoom();
 				}
 				list_offset += 6;
 				break;

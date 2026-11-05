@@ -35,6 +35,77 @@ static void local_join_screens()
 	assert(!game::vr::in_course_selection(machine));
 }
 
+static void observed_race()
+{
+	model1::regions a, b;
+	a.title = b.title = game::id{"vr"};
+	model1 master(std::move(a)), monitor(std::move(b));
+	master.enable_link({}, true);
+	monitor.enable_link({}, true);
+	master.link()->write(2, 1);
+	master.work_ram()[0x1138] = monitor.work_ram()[0x1138] = 0x14;
+	const auto callbacks = game::vr::create_gameplay(monitor);
+	const auto state = std::static_pointer_cast<game::vr::gameplay_state>(callbacks.state);
+	for (int racers : {1, 2}) {
+		master.link()->write(3, uint8_t(racers));
+		for (size_t i = 0xd00; i < 0x3500; i++) {
+			master.nvram()[i] = uint8_t(i * 19 + 7);
+			monitor.nvram()[i] = uint8_t(i * 23 + 3);
+		}
+		for (int i = 0; i < 16; i++) {
+			master.write8(0x400d04 + uint32_t(i) * 0x280, uint8_t(i));
+			monitor.write8(0x400d04 + uint32_t(i) * 0x280, uint8_t(i));
+		}
+		const auto original = monitor.nvram(), source = master.nvram();
+		callbacks.observe(&master);
+		assert(state->observed_racers == racers);
+		// The snapshot is immutable even if the source advances before it is drawn.
+		const uint32_t source_position = master.read32(0x40121e);
+		master.write32(0x40121e, 0x12345678);
+		for (int i = 0; i < 16; i++) {
+			const uint32_t car = 0x400d00 + uint32_t(i) * 0x280;
+			monitor.cpu().set_reg(25, car);
+			const auto before = monitor.nvram();
+			assert(callbacks.read_value(0xfedd6b, car + 0x35, 0xabcd) == 0xabcd);
+			assert(monitor.nvram() == before);
+			const auto result = callbacks.read_value(0xfedd6b, car + 0x34, 0xabcd);
+			const size_t offset = car - 0x400000;
+			if (i < racers) {
+				assert(result == 0xabcd && monitor.nvram() == before);
+			} else {
+				assert(result == uint16_t(source[offset + 0x34] | uint16_t(source[offset + 0x35]) << 8));
+				assert(std::equal(source.begin() + offset, source.begin() + offset + 4,
+					monitor.nvram().begin() + offset));
+				assert(std::equal(original.begin() + offset + 4, original.begin() + offset + 0x14,
+					monitor.nvram().begin() + offset + 4));
+				assert(std::equal(source.begin() + offset + 0x14, source.begin() + offset + 0x1c6,
+					monitor.nvram().begin() + offset + 0x14));
+				assert(std::equal(original.begin() + offset + 0x1c6, original.begin() + offset + 0x280,
+					monitor.nvram().begin() + offset + 0x1c6));
+			}
+		}
+		master.write32(0x40121e, source_position);
+		assert(master.nvram() == source);
+		for (uint8_t phase : {0x03, 0x10, 0x12, 0x19, 0x1c, 0x1e}) {
+			monitor.work_ram()[0x1138] = phase;
+			callbacks.observe(&master);
+			assert(state->observed_racers == 0);
+		}
+		monitor.work_ram()[0x1138] = 0x14;
+		monitor.write8(0x501934, 1);
+		callbacks.observe(&master);
+		assert(state->observed_racers == 0);
+		monitor.write8(0x501934, 0);
+		callbacks.observe(&master);
+		assert(state->observed_racers == racers);
+		callbacks.observe(nullptr);
+		assert(state->observed_racers == 0);
+		callbacks.observe(&master);
+		callbacks.reset();
+		assert(state->observed_racers == 0);
+	}
+}
+
 static void scripted_inputs()
 {
 	const auto title = game::id{ "vr" };
@@ -409,7 +480,9 @@ static void animated_scenery_settings()
 	for (bool full : { false, true }) {
 		game::vr::set_extended_draw_distance(machine, full);
 		for (uint32_t pc : { 0xffd77au, 0xffd928u, 0xffdabau, 0xffc1b2u,
-			0xffb0ebu, 0xffb769u, 0xffaac4u, 0xffb679u, 0xffd644u, 0xffdc4du, 0xffd0e2u, 0xffcc8cu, 0u }) {
+			0xffb0ebu, 0xffb769u, 0xffaac4u, 0xffb679u, 0xffd644u, 0xffdc4du, 0xffd0e2u, 0xffcc8cu,
+			0xfef9f3u, 0xfefdb2u, 0xfefe08u, 0xfea9d3u, 0xfedd7au, 0xff4198u, 0xff5ce4u,
+			0xff5da2u, 0xff62deu, 0xff7295u, 0xff72e7u, 0u }) {
 			machine.cpu().pc_ref() = pc;
 			const bool wide_mask = pc == 0xffb0eb || pc == 0xffb769 || pc == 0xffaac4 ||
 				pc == 0xffb679 || pc == 0xffdc4d || pc == 0xffd0e2;
@@ -444,6 +517,122 @@ static void animated_scenery_settings()
 						(pending && caller == 0xff846f && pc == 0xff84a2)) ? 0x7fffffffu : 1234u));
 		}
 		}
+	}
+}
+
+static void car_distance()
+{
+	model1::regions regions;
+	regions.title = game::id{ "vr" };
+	regions.maincpu.resize(0x1000000);
+	regions.polygons.resize(0x2000);
+	for (const auto &[at, value] : std::array<std::pair<uint32_t, uint32_t>, 3>{ {
+		{ 0x7000, 500 }, { 0x7004, 0x40123 }, { 0x7008, 1 }
+	} })
+		for (int b = 0; b < 4; b++) regions.maincpu[at + b] = uint8_t(value >> (b * 8));
+	model1 m(std::move(regions));
+	const auto callbacks = game::vr::create_gameplay(m);
+	m.write32(0x501948, 0x8000);
+	m.cpu().set_reg(31, 0x500100);
+	m.cpu().set_reg(22, 0);
+	m.write32(0x500100, 0xff846f);
+	m.write32(0x501320, 0x400d00);
+	for (uint32_t car = 0x400d00; car <= 0x403280; car += 0x280) {
+		m.write32(car, 0x80000000);
+		m.write32(car + 0xa8, 0x7000);
+		m.write16(car + 0x34, 255);
+		for (const auto &[offset, value] : std::array<std::pair<int, float>, 4>{ {
+			{ 0x1e, 10 }, { 0x22, 20 }, { 0x26, 30 }, { 0x52, 0.5f }
+		} })
+			m.write32(car + offset, std::bit_cast<uint32_t>(value));
+		m.write16(car + 0x4e, 0x2000);
+		m.write16(car + 0x6e, 0x2000);
+	}
+	m.write32(0x400f80, 0); // inactive
+	m.write16(0x401200 + 0x34, 0); // already submitted by the arcade
+	m.write32(0x501ac0, 1);
+	for (bool lod : { false, true })
+	for (bool full : { false, true })
+	for (uint8_t phase : { 0x03, 0x10, 0x14 }) {
+		auto state = std::static_pointer_cast<game::vr::gameplay_state>(callbacks.state);
+		state->lod = lod;
+		state->extended_draw_distance = full;
+		state->scenery_pending = true;
+		m.work_ram()[0x1138] = phase;
+		m.cpu().pc_ref() = 0xff8500;
+		const auto ram = m.work_ram(), nvram = m.nvram(), rom = m.program_rom();
+		uint32_t word = 0;
+		const auto objects = callbacks.matrix_objects(word);
+		assert(objects.size() == (full && phase != 0x10 ? 13 : 0));
+		for (size_t i = 0; i < objects.size(); i++) {
+			const auto &object = objects[i];
+			assert(object.owner == 0x401480 + i * 0x280);
+			assert(object.texture == 0x40123 && object.polygon == 500 && object.transform);
+			const auto &pose = *object.transform;
+			assert(std::fabs(pose[0]) < 0.0001f && std::fabs(pose[2] - 1) < 0.0001f);
+			assert(std::fabs(pose[6] + 1) < 0.0001f && std::fabs(pose[8]) < 0.0001f);
+			assert(pose[9] == 10 && pose[10] == 20.5f && pose[11] == 30);
+		}
+		assert(m.work_ram() == ram && m.nvram() == nvram && m.program_rom() == rom);
+	}
+	puts("VR car distance: all 16 records, visible/inactive/player exclusion, original distant poses and no simulation writes");
+}
+
+struct model1_video_test {
+	static void omit_extra_cars(model1 &machine, int &added)
+	{
+		const auto objects = machine.m_gameplay.matrix_objects;
+		machine.m_gameplay.matrix_objects = [objects, &added](uint32_t &word) {
+			auto extra = objects(word);
+			std::erase_if(extra, [&](const auto &object) {
+				const bool car = object.owner >= 0x400d00 && object.owner <= 0x403280;
+				added += car;
+				return car;
+			});
+			return extra;
+		};
+	}
+};
+
+static void rom_car_distance(const char *dir, bool native)
+{
+	for (bool smooth : { false, true })
+	for (bool lod : { false, true }) {
+		model1 original(load_regions(dir, game::id{ "vr" })), full(load_regions(dir, game::id{ "vr" }));
+		for (model1 *m : { &original, &full }) {
+			game::vr::set_lod(*m, lod);
+			m->set_smooth(smooth);
+			m->reset();
+		}
+		int added = 0;
+		// Isolate the renderer-only car additions: both machines retain identical scenery settings.
+		model1_video_test::omit_extra_cars(original, added);
+		if (native) {
+			rec::hints map;
+			assert(map.read("assets/games/vr/vr_map.txt"));
+			rec::attach(full.cpu(), "vr");
+			assert(rec::build_native(full.program_rom(), map));
+			full.run_cpu = [](int n) { rec::run(n); };
+		}
+		int changed = 0;
+		for (int frame = 0; frame < 3600; frame++) {
+			original.run_frame();
+			full.run_frame();
+			if (smooth) {
+				original.render_smooth(original.frame_number() - 0.5, false);
+				full.render_smooth(full.frame_number() - 0.5, false);
+			}
+			assert(original.work_ram() == full.work_ram() && original.nvram() == full.nvram());
+			for (int r = 0; r <= 32; r++) assert(original.cpu().reg(r) == full.cpu().reg(r));
+			assert(original.m_audio_out == full.m_audio_out);
+			original.m_audio_out.clear();
+			full.m_audio_out.clear();
+			changed += !std::equal(original.frame().data(),
+				original.frame().data() + size_t(original.frame_w()) * original.frame_h(), full.frame().data());
+		}
+		assert(added > 100 && changed > 30);
+		printf("VR car distance (%s, LOD %s, smooth %s): %d additions, %d changed pictures; identical RAM, CPU and audio\n",
+			native ? "native" : "interpreter", lod ? "on" : "off", smooth ? "on" : "off", added, changed);
 	}
 }
 
@@ -977,11 +1166,15 @@ int main(int argc, char **argv)
 	machine_settings(false);
 	machine_settings(true);
 	local_join_screens();
+	observed_race();
 	scripted_inputs();
 	scenery_lists();
 	lod_settings();
 	animated_scenery_settings();
-	if (argc > 2 && (std::string(argv[2]) == "--lod" || std::string(argv[2]) == "--lod-native"))
+	car_distance();
+	if (argc > 2 && (std::string(argv[2]) == "--car-distance" || std::string(argv[2]) == "--car-distance-native"))
+		rom_car_distance(argv[1], std::string(argv[2]) == "--car-distance-native");
+	else if (argc > 2 && (std::string(argv[2]) == "--lod" || std::string(argv[2]) == "--lod-native"))
 		rom_lod(argv[1], std::string(argv[2]) == "--lod-native");
 	else if (argc > 2 && (std::string(argv[2]) == "--language" || std::string(argv[2]) == "--language-native"))
 		rom_language(argv[1], std::string(argv[2]) == "--language-native");

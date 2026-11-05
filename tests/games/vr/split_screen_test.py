@@ -191,16 +191,16 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     saved_controls = run([], "10:t,80:status")
     assert "player 2 join requested" in saved_controls
 
-    before_language = player2_eeprom.read_bytes()
-    game_settings = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,96:right,98:escape,100:escape,102:escape,140:status,160:close", frames=1000)
+    before_language = language(player1_eeprom)
+    game_settings = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:down,96:right,98:escape,100:escape,140:status,160:close", frames=1000)
     assert "reset complete, 2 cabinet(s) running" in game_settings
     assert game_settings.count("cabinet 2 compiled") == 1
     assert re.search(r"cabinets=2 .*role=1", game_settings)
-    assert player2_eeprom.read_bytes() != before_language
+    assert language(player1_eeprom) == language(player2_eeprom) == (0 if before_language else 2)
 
     before_color = player2_eeprom.read_bytes()
     before_player1_color = player1_eeprom.read_bytes()
-    car_color = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,96:down,98:right,100:escape,102:escape,104:escape,140:status,160:close", frames=1000)
+    car_color = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,98:right,100:escape,102:escape,104:escape,140:status,160:close", frames=1000)
     assert "reset complete, 2 cabinet(s) running" in car_color
     assert car_color.count("cabinet 2 compiled") == 1
     assert re.search(r"cabinets=2 .*role=1", car_color)
@@ -209,7 +209,7 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     assert player1_eeprom.read_bytes() == before_player1_color
 
     before_saved_color = player2_eeprom.read_bytes()
-    saved_car_color = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,96:down,98:right,99:save,100:escape,102:escape,104:escape,140:status,160:close", frames=1000)
+    saved_car_color = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,98:right,99:save,100:escape,102:escape,104:escape,140:status,160:close", frames=1000)
     assert "reset complete, 2 cabinet(s) running" in saved_car_color
     assert saved_car_color.count("cabinet 2 compiled") == 1
     assert re.search(r"cabinets=2 .*role=1", saved_car_color)
@@ -225,7 +225,7 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
 
     for _ in range(2):
         expected_race_type = (race_type(player1_eeprom) + 1) % 2
-        shared_race_type = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,94:down,95:down,96:right,97:save,98:escape,100:escape,140:status,160:close", frames=1000)
+        shared_race_type = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,91:down,92:down,94:down,95:down,96:right,97:save,98:escape,100:escape,140:status,160:close", frames=1000)
         assert "reset complete, 2 cabinet(s) running" in shared_race_type
         assert re.search(r"cabinets=2 .*role=1", shared_race_type)
         assert race_type(player1_eeprom) == expected_race_type
@@ -234,7 +234,7 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
 
     for _ in range(4):
         expected_course = (machine_setting(player1_eeprom, 0) + 1) % 4
-        shared_course = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,91:down,92:down,94:down,95:down,96:right,97:save,98:escape,100:escape,140:status,160:close", frames=1000)
+        shared_course = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,91:down,92:down,93:down,94:down,95:down,96:right,97:save,98:escape,100:escape,140:status,160:close", frames=1000)
         assert "reset complete, 2 cabinet(s) running" in shared_course
         assert re.search(r"cabinets=2 .*role=1", shared_course)
         assert machine_setting(player1_eeprom, 0) == expected_course
@@ -243,7 +243,7 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
 
     # Shared settings are absent from each player's page: Difficulty follows Car color.
     before_difficulty = machine_setting(player2_eeprom, 8)
-    difficulty = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,96:down,98:down,100:right,102:escape,104:escape,106:escape,160:close", frames=1000)
+    difficulty = run([], "10:t,80:escape,82:down,84:down,86:down,88:down,90:return,92:down,93:down,94:return,98:down,100:right,102:escape,104:escape,106:escape,160:close", frames=1000)
     assert "reset complete, 2 cabinet(s) running" in difficulty
     assert machine_setting(player2_eeprom, 8) == (before_difficulty + 1) % 4
     assert machine_setting(player1_eeprom, 0) == expected_course
