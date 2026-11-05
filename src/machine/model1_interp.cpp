@@ -364,6 +364,10 @@ void model1::record_frame()
 		// The tile-pair game's height still changes during the next frame's CPU work.
 		sm.next_v = m_video->sky_scroll->layout != game::sky_camera::format::tile_pair;
 	}
+	tile_slide_scroll_sample &slide = m_tile_slide_hist[m_frame % SKY_HIST];
+	slide.frame = m_frame;
+	slide.mode = m_ram_b[0x1138];
+	for (int y = 0; y < SCREEN_H; y++) slide.rows[y] = m_tiles.tile_r(0x4000 + y);
 	m_render_done = 0;            // the list's uploads are made at the next vblank, as when frames are skipped
 	m_last_quads = objects;
 	if (objects == 0) {
@@ -378,6 +382,97 @@ void model1::record_frame()
 			m_frame_parts = false;
 		}
 	}
+}
+
+bool model1::tile_slide_scroll(int row, uint8_t mode, double now, float &scroll) const
+{
+	if (row < 0 || row >= SCREEN_H || !m_frame || !std::isfinite(now) || now < 0) return false;
+	const uint64_t newest = m_frame - 1;
+	const tile_slide_scroll_sample &latest = m_tile_slide_hist[newest % SKY_HIST];
+	if (latest.frame != newest || latest.mode != mode) return false;
+	auto at = [&](uint64_t frame) -> const tile_slide_scroll_sample * {
+		if (frame > newest || newest - frame >= SKY_HIST) return nullptr;
+		const tile_slide_scroll_sample &sample = m_tile_slide_hist[frame % SKY_HIST];
+		return sample.frame == frame && sample.mode == mode ? &sample : nullptr;
+	};
+	auto step = [&](int from, int to) {
+		int d = to - from;
+		return d - 512 * int(std::lround(float(d) / 512));
+	};
+	auto wrap = [](double value) {
+		value = std::fmod(value, 512.0);
+		return float(value < 0 ? value + 512.0 : value);
+	};
+	constexpr int MAX_SLIDE_STEP = 128;
+	const double time = std::min(now, double(newest + 1));
+	const uint64_t frame = uint64_t(std::floor(time));
+	const double fraction = time - frame;
+	if (frame < newest) {
+		const tile_slide_scroll_sample *a = at(frame), *b = at(frame + 1);
+		if (!a || !b) return false;
+		const int from = a->rows[row] & 0x1ff, delta = step(from, b->rows[row] & 0x1ff);
+		scroll = wrap(from + (std::abs(delta) <= MAX_SLIDE_STEP ? delta * fraction : 0));
+		return true;
+	}
+	const int current = latest.rows[row] & 0x1ff;
+	scroll = float(current);
+	if (fraction > 0 && newest > 0) {
+		if (const tile_slide_scroll_sample *before = at(newest - 1)) {
+			const int delta = step(before->rows[row] & 0x1ff, current);
+			if (std::abs(delta) <= MAX_SLIDE_STEP) scroll = wrap(current + delta * fraction);
+		}
+	}
+	return true;
+}
+
+void model1::smooth_screen_update(double now)
+{
+	if (!m_smooth || !m_video || !m_video->smooth_frames || m_redrawing) {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		return;
+	}
+	const uint8_t mode = m_ram_b[0x1138];
+	const auto slide = std::find_if(m_video->wide_tile_slides.begin(), m_video->wide_tile_slides.end(),
+		[&](const game::tile_slide &s) { return s.mode == mode && s.distance > 0; });
+	if (slide == m_video->wide_tile_slides.end() ||
+		!(m_tiles.tile_r(0x5000 + (slide->layer >> 1)) & 0x8000)) {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		return;
+	}
+	std::array<float, SCREEN_H> slide_rows;
+	if (m_replaying && m_wide_frame && smooth_tile_slide(slide->layer, slide_rows)) {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		return;
+	}
+	const int base = 0x4000 + 0x200 * (slide->layer >> 1);
+	std::array<uint16_t, SCREEN_H> original{};
+	m_tile_slide_residual.fill(0);
+	bool changed = false;
+	for (int y = 0; y < SCREEN_H; y++) {
+		original[y] = m_tiles.tile_r(base + y);
+		float target = 0;
+		if (!tile_slide_scroll(y, mode, now, target)) continue;
+		const int rounded = int(std::llround(target));
+		const uint16_t interpolated = uint16_t(rounded) & 0x1ff;
+		m_tile_slide_residual[y] = target - rounded;
+		const uint16_t value = uint16_t((original[y] & 0xfe00) | interpolated);
+		if (value != original[y]) {
+			m_tiles.tile_w(base + y, value, 0xffff);
+			changed = true;
+		}
+		changed = changed || std::fabs(m_tile_slide_residual[y]) > 0.001f;
+	}
+	if (!changed) {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		return;
+	}
+	m_tile_slide_interpolating = true;
+	m_tile_slide_layer = slide->layer;
+	screen_update(m_bitmap, m_bitmap.cliprect());
+	m_tile_slide_interpolating = false;
+	m_tile_slide_layer = -1;
+	for (int y = 0; y < SCREEN_H; y++) m_tiles.tile_w(base + y, original[y], 0xffff);
+	m_layer_cache[slide->layer & 7].frame = ~0ull;
 }
 
 // How far the parts moved between two lists of the same parts (each slot's first model the same,
@@ -418,11 +513,11 @@ bool model1::render_smooth(double now, bool shown)
 		m_replaying = false;
 		m_replay_older = false;
 		m_replay_extra = false;
-		screen_update(m_bitmap, m_bitmap.cliprect());
+		smooth_screen_update(now);
 		drawn();
 		return true;
 	}
-	if (m_logic[1].list.empty()) { screen_update(m_bitmap, m_bitmap.cliprect()); drawn(); return true; }
+	if (m_logic[1].list.empty()) { smooth_screen_update(now); drawn(); return true; }
 	const logic_frame &a = m_logic[0], &b = m_logic[1];
 	double alpha = 1;
 	if (!a.list.empty() && b.frame > a.frame) {
@@ -529,7 +624,7 @@ bool model1::render_smooth(double now, bool shown)
 		m_parts = nullptr;
 		m_parts_whole = true;
 	}
-	screen_update(m_bitmap, m_bitmap.cliprect());
+	smooth_screen_update(now);
 	m_render_done = render_done;
 	m_last_quads = quads;
 	m_replaying = false;
@@ -557,6 +652,7 @@ void model1::keep_still()
 	s.logic_prev = m_logic_prev;
 	s.cut_frame = m_cut_frame;
 	std::copy(std::begin(m_sky_hist), std::end(m_sky_hist), s.sky_hist);
+	std::copy(std::begin(m_tile_slide_hist), std::end(m_tile_slide_hist), s.tile_slide_hist);
 	s.tile_slides = m_tile_slides;
 	s.tile_ram = m_tiles.tile_ram;
 	if (s.char_gen != m_tiles.char_gen || s.char_ram.size() != m_tiles.char_ram.size()) {
@@ -585,6 +681,7 @@ void model1::swap_still()
 	std::swap(m_logic_prev, s.logic_prev);
 	std::swap(m_cut_frame, s.cut_frame);
 	std::swap_ranges(std::begin(m_sky_hist), std::end(m_sky_hist), s.sky_hist);
+	std::swap_ranges(std::begin(m_tile_slide_hist), std::end(m_tile_slide_hist), s.tile_slide_hist);
 	m_tile_slides.swap(s.tile_slides);
 	m_tiles.swap_rams(s.tile_ram, s.char_ram);
 	m_tiles_updated = ~0ull;                         // decoded again from the RAMs now in place
