@@ -353,6 +353,7 @@ private:
 		float light[3] = { 0, 0, 0 };                // the list's light vector (command 0xa) where this slot is
 		bool has_light = false;
 		bool above_hud = false;
+		bool screen_space = false;                  // HUD viewport, independent of the world camera
 		uint32_t owner = 0;                          // (video_traits::records) 0: not known, 1: the still world, else its record
 	};
 	using projection_view = std::array<uint32_t, 8>; // viewport and screen-space projection translation
@@ -444,6 +445,16 @@ private:
 	bool m_sky_between = false;                      // the frame between two of the game's
 	uint64_t m_sky_written = ~0ull;                  // the frame they were written in
 	void sky_scroll_written(uint32_t a);
+	struct tile_slide_sample {
+		int frame = 0;
+		uint16_t hscr = 0, vscr = 0, ctrl = 0;
+		uint8_t mode = 0;
+		std::array<uint16_t, SCREEN_H> rows{};
+	};
+	using tile_slide_history = std::array<std::vector<tile_slide_sample>, 8>;
+	tile_slide_history m_tile_slides;
+	void record_tile_slides();
+	bool smooth_tile_slide(int layer, std::array<float, SCREEN_H> &rows) const;
 	void blend_slots(const logic_frame &a, const logic_frame &b, double alpha);
 	void pair_extras(const logic_frame &a, const logic_frame &b, const std::vector<int> &pair);
 	void smooth_turn(logic_frame &lf, const logic_frame &before);
@@ -530,7 +541,7 @@ private:
 	// several pictures a frame and the tiles only change with the frame. With each row's drawn span,
 	// so the scaling skips what's empty (the HUD and text layers are mostly empty).
 	// `sides`: the game filled the widescreen sides (gameplay layer_sides), so no curtain is carried out
-	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; };
+	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; double slide_time = -1; };
 	// the sky layer as last drawn (once a game frame, as the others; its panorama placing every time)
 	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false, m_l4_wide = false; uint64_t m_l4_gen = 0;
 	// The GPU's parts (model1_gpu.cpp)
@@ -1043,7 +1054,11 @@ private:
 		logic_frame logic[2], logic_prev;
 		int cut_frame = -1;
 		sky_sample sky_hist[SKY_HIST];
+<<<<<<< HEAD
 		tile_slide_sample tile_slide_hist[SKY_HIST];
+=======
+		tile_slide_history tile_slides;
+>>>>>>> origin/main
 		std::vector<uint16_t> tile_ram, char_ram, palette, color_xlat;
 		uint64_t char_gen = ~0ull;
 		std::array<uint32_t, 0x2000> pens{};

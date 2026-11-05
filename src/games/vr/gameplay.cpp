@@ -287,6 +287,9 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	callbacks.read32_watch = 0x5011b0;
 	callbacks.read32_watch_end = 0x501adc;
 	callbacks.read32_value = [&machine, state](uint32_t pc, uint32_t address, uint32_t value) {
+		// The LIVE portrait has its own 150-unit reserve check, separate from scenery.
+		// Full-detail cars can exhaust it and suppress the entire inset, but not its text.
+		if (!state->lod && address == 0x5011b0 && pc == 0xff5e33) return 0x7fffffffu;
 		// More detailed cars must not exhaust the arcade's submission budget.
 		if (address == 0x5011b0 && (pc == 0xff848a || pc == 0xff84a2)) {
 			if (!state->lod) return 0x7fffffffu;

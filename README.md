@@ -41,7 +41,7 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 - All three courses, four camera views, and the original arcade racing.
 - Sharper graphics, widescreen and ultrawide views without stretching the HUD.
 - Original arcade motion or smoother 60 / 120 FPS.
-- Full-detail models by default, with an optional LOD toggle for simpler distant models.
+- Full-detail models by default, with an optional LOD toggle for simpler distant models. in Live Monitor, LOD on will restore original Virt McPolygon intermittent disappearance behavior due to polygon budget.
 - Full draw distance for scenery and distant cars, including the Live Monitor; Arcade restores the original limits.
 - Keyboard and gamepad support, with customizable controls.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
