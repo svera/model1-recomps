@@ -430,10 +430,15 @@ private:
 	// this one ends (next_h/next_v: when that axis could be)
 	struct sky_sample { int frame = -1; uint16_t h = 0, v = 0; float hx = 0, vy = 0, nx = 0, ny = 0; bool next_h = false, next_v = false; int lands_h = 0, lands_v = 0; };
 	sky_sample m_sky_hist[SKY_HIST];
+	// Per-line scroll history for the registered tile slides.
+	struct tile_slide_sample { uint64_t frame = ~0ull; uint8_t mode = 0; std::array<uint16_t, SCREEN_H> rows{}; };
+	tile_slide_sample m_tile_slide_hist[SKY_HIST];
 	struct sky_scroll { uint16_t h = 0, v = 0; float hx = 0, vy = 0; };
 	sky_scroll sky_scroll_from_ram(bool between) const;   // what the game's routine writes, from what it reads
 	void sky_settled(int &h, int &v) const;              // where the sky lands for the camera in RAM now
 	bool sky_reaches(const sky_sample &s) const;
+	bool tile_slide_scroll(int row, uint8_t mode, double now, float &scroll) const;
+	void smooth_screen_update(double now);
 	float m_sky_frac_h = 0, m_sky_frac_v = 0;        // the fractions of the scroll last written
 	bool m_sky_read_h = false, m_sky_read_v = false; // and whether those writes were the routine's
 	bool m_sky_between = false;                      // the frame between two of the game's
@@ -564,6 +569,9 @@ private:
 	uint32_t parts_below(int x, int y) const;
 	void parts_end(bitmap_rgb32 &bitmap);
 	layer_cache m_layer_cache[8];
+	bool m_tile_slide_interpolating = false;
+	int m_tile_slide_layer = -1;
+	std::array<float, SCREEN_H> m_tile_slide_residual{};
 	layer_cache &cached_layer(int layer, int flags);
 	void prepare_layers();
 	bool m_layers_together = false;               // prepare_layers: drawing several at once
@@ -1035,6 +1043,7 @@ private:
 		logic_frame logic[2], logic_prev;
 		int cut_frame = -1;
 		sky_sample sky_hist[SKY_HIST];
+		tile_slide_sample tile_slide_hist[SKY_HIST];
 		std::vector<uint16_t> tile_ram, char_ram, palette, color_xlat;
 		uint64_t char_gen = ~0ull;
 		std::array<uint32_t, 0x2000> pens{};

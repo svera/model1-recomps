@@ -29,6 +29,16 @@ int model1::render_parts(double now, gpu_parts &p, bool shown)
 	for (auto &i : p.img) i.px = nullptr;
 	m_last_parts = nullptr;
 	if (!m_smooth || (m_scale == 1 && m_ext == 0)) return render_smooth(now, shown) ? 2 : 0;   // (1x 4:3: the arcade's own)
+	const uint8_t mode = m_ram_b[0x1138];
+	if (m_video && m_video->smooth_frames &&
+		std::any_of(m_video->wide_tile_slides.begin(), m_video->wide_tile_slides.end(),
+			[&](const game::tile_slide &slide) {
+				return slide.mode == mode && slide.distance > 0 &&
+					(m_tiles.tile_r(0x5000 + (slide.layer >> 1)) & 0x8000);
+			})) {
+		m_parts = nullptr;                     // the overlay needs subpixel positioning with the 2D layers
+		return render_smooth(now, shown) ? 2 : 0;
+	}
 	m_parts = &p;
 	m_parts_whole = false;
 	const bool drew = render_smooth(now, shown);
