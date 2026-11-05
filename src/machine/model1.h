@@ -353,6 +353,7 @@ private:
 		float light[3] = { 0, 0, 0 };                // the list's light vector (command 0xa) where this slot is
 		bool has_light = false;
 		bool above_hud = false;
+		bool screen_space = false;                  // HUD viewport, independent of the world camera
 		uint32_t owner = 0;                          // (video_traits::records) 0: not known, 1: the still world, else its record
 	};
 	using projection_view = std::array<uint32_t, 8>; // viewport and screen-space projection translation

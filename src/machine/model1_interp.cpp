@@ -186,6 +186,9 @@ void model1::index_objects(logic_frame &lf)
 			break;
 		case 0xb: {
 			slot sl;
+			for (const auto &view : m_video->edge_viewports)
+				if (int16_t(viewport[0]) == view.x && 383 - (int16_t(viewport[1]) - 39) == view.y)
+					sl.screen_space = true;
 			for (int i = 0; i < 12; i++) sl.mat[i] = rdf(off + 2 + 2 * i);
 			memcpy(sl.light, light, sizeof light);
 			sl.has_light = has_light;
@@ -1747,7 +1750,7 @@ void model1::follow_records(logic_frame &lf, const logic_frame &before)
 		const glm::mat3 steer = glm::mat3_cast(glm::quat(lf.turn[0], lf.turn[1], lf.turn[2], lf.turn[3])) * glm::transpose(raw);
 		constexpr float KEEP = 0.75f;
 		for (const slot &s : lf.slots) {
-			if (s.owner <= 1 || s.polys.empty() || s.mat[11] <= 0) continue;
+			if (s.screen_space || s.owner <= 1 || s.polys.empty() || s.mat[11] <= 0) continue;
 			if (std::any_of(next.begin(), next.end(), [&](const logic_frame::record_way &r) { return r.owner == s.owner; })) continue;
 			logic_frame::record_way r;
 			for (const auto &o : before.follows)
@@ -1800,7 +1803,8 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 	m_blend_cut = camera_cut(ca, cb);
 	auto first = [](const slot &sl) { return sl.polys.empty() ? 0u : sl.polys[0]; };
 	const std::vector<uint32_t> &overlays = m_video->foreground_objects;
-	auto overlay = [&](const slot &sl) { return !sl.polys.empty() && std::find(overlays.begin(), overlays.end(), sl.polys[0]) != overlays.end(); };
+	auto overlay = [&](const slot &sl) { return sl.screen_space ||
+		(!sl.polys.empty() && std::find(overlays.begin(), overlays.end(), sl.polys[0]) != overlays.end()); };
 	using owners_t = std::unordered_map<uint32_t, std::vector<size_t>>;
 	auto by_owner = [](const logic_frame &l) {
 		owners_t o;
@@ -1834,12 +1838,14 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 		}
 		// a screen-space overlay (the SEGA logo): its own copy in the older list, whichever record
 		// drew it (the game hands it from one to another)
-		std::unordered_map<uint32_t, std::vector<size_t>> shown;
-		for (size_t q = 0; q < x.slots.size(); q++) if (overlay(x.slots[q])) shown[first(x.slots[q])].push_back(q);
-		std::unordered_map<uint32_t, size_t> nth_shown;
+		// Inset models use their own camera, even when their writer carries a world record.
+		auto overlay_key = [&](const slot &sl) { return uint64_t(sl.screen_space) << 32 | first(sl); };
+		std::unordered_map<uint64_t, std::vector<size_t>> shown;
+		for (size_t q = 0; q < x.slots.size(); q++) if (overlay(x.slots[q])) shown[overlay_key(x.slots[q])].push_back(q);
+		std::unordered_map<uint64_t, size_t> nth_shown;
 		for (size_t i = 0; i < ny; i++) {
 			if (!overlay(y.slots[i])) continue;
-			const uint32_t f = first(y.slots[i]);
+			const uint64_t f = overlay_key(y.slots[i]);
 			auto m = shown.find(f);
 			const size_t k = nth_shown[f]++;
 			match[i] = m != shown.end() && k < m->second.size() ? int(m->second[k]) : -1;
