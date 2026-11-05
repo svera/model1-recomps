@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <tuple>
 
 struct model1_video_test
 {
@@ -20,37 +21,41 @@ struct model1_video_test
 		model1::regions regions;
 		regions.title = game::id{ "vr" };
 		model1 m(std::move(regions));
-		m.m_frame = 6;
-		auto &before = m.m_tile_slide_hist[4];
-		before.frame = 4;
-		before.mode = 0x1c;
-		before.rows[0] = 100;
-		before.rows[1] = 510;
-		before.rows[2] = 100;
-		auto &latest = m.m_tile_slide_hist[5];
-		latest.frame = 5;
-		latest.mode = 0x1c;
-		latest.rows[0] = 110;
-		latest.rows[1] = 2;
-		latest.rows[2] = 140;
-		float scroll = 0;
-		assert(m.tile_slide_scroll(0, 0x1c, 4.5, scroll) && std::fabs(scroll - 105) < 0.001f);
-		assert(m.tile_slide_scroll(0, 0x1c, 5.5, scroll) && std::fabs(scroll - 115) < 0.001f);
-		assert(m.tile_slide_scroll(1, 0x1c, 4.5, scroll) && std::fabs(scroll) < 0.001f);
-		assert(m.tile_slide_scroll(1, 0x1c, 4.4, scroll) && std::fabs(scroll - 511.6f) < 0.001f);
-		assert(m.tile_slide_scroll(2, 0x1c, 4.5, scroll) && std::fabs(scroll - 100) < 0.001f);
-		assert(!m.tile_slide_scroll(0, 0x07, 4.5, scroll));
 		m.m_ram_b[0x1138] = 0x1c;
 		m.m_tiles.tile_w(0x5000, 0x8000, 0xffff);
 		m.m_tiles.tile_w(0x5004, 0x4000, 0xffff);
-		m.m_tiles.tile_w(0x4000, 110, 0xffff);
+		auto &history = m.m_tile_slides[1];
+		for (const auto [frame, row0, row1, row2] : {
+				std::tuple{ 4, 100, 510, 100 }, std::tuple{ 6, 120, 2, 300 } }) {
+			model1::tile_slide_sample sample;
+			sample.frame = frame;
+			sample.mode = 0x1c;
+			sample.hscr = 0x8000;
+			sample.vscr = 0x4000;
+			sample.ctrl = 0x4000;
+			sample.rows[0] = row0;
+			sample.rows[1] = row1;
+			sample.rows[2] = row2;
+			history.push_back(sample);
+		}
+		m.m_tiles.tile_w(0x4000, 120, 0xffff);
+		m.m_tiles.tile_w(0x4001, 2, 0xffff);
+		m.m_tiles.tile_w(0x4002, 300, 0xffff);
 		m.set_smooth(true);
-		m.set_render_scale(2);
-		m.smooth_screen_update(4.25);
-		assert(m.m_tiles.tile_r(0x4000) == 110);
-		assert(std::fabs(m.m_tile_slide_residual[0] + 0.5f) < 0.001f);
-		assert(m.m_layer_cache[1].frame == ~0ull && !m.m_tile_slide_interpolating);
-		puts("Tile slide interpolation: intermediate, wrapped, and discontinuous row scrolls checked");
+		m.m_replaying = true;
+		std::array<float, model1::SCREEN_H> rows;
+		m.m_draw_time = 5;
+		assert(m.smooth_tile_slide(1, rows));
+		assert(std::fabs(rows[0] - 110) < 0.001f);
+		assert(std::fabs(rows[1] - 512) < 0.001f);
+		assert(std::fabs(rows[2] - 300) < 0.001f);
+		m.m_draw_time = 5.5;
+		assert(m.smooth_tile_slide(1, rows));
+		assert(std::fabs(rows[0] - 115) < 0.001f);
+		assert(std::fabs(rows[1] - 514) < 0.001f);
+		m.m_ram_b[0x1138] = 0x07;
+		assert(!m.smooth_tile_slide(1, rows));
+		puts("Tile slide interpolation: fractional, wrapped, and discontinuous row scrolls checked");
 	}
 
 	static void cockpit_coverage()
