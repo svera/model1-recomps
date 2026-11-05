@@ -588,9 +588,11 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
-		const auto &slide = m_video->wide_tile_slide;
-		const bool sliding = m_ext && m_wide_frame && slide && slide->layer == layer &&
-			slide->mode == m_ram_b[0x1138] && slide->distance > 0 &&
+		const auto &slides = m_video->wide_tile_slides;
+		const auto slide = std::find_if(slides.begin(), slides.end(), [&](const auto &s) {
+			return s.layer == layer && s.mode == m_ram_b[0x1138] && s.distance > 0;
+		});
+		const bool sliding = m_ext && m_wide_frame && slide != slides.end() &&
 			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
 		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance);

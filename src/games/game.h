@@ -255,7 +255,7 @@ struct video_traits
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera
 	std::vector<hud_view> edge_viewports;       // HUD viewport centers; move their clip bounds together
 	std::vector<hud_tile_range> hud_tile_groups; // artwork kept separate from nearby centered prompts
-	std::optional<tile_slide> wide_tile_slide; // non-wrapping overlay, travelling from the wide screen's edge
+	std::vector<tile_slide> wide_tile_slides; // non-wrapping overlays, travelling from the wide screen's edge
 	// polygon ROM addresses below this are the scenery a moving model's shadow falls on, which
 	// above 1x has its shadows kept off the models (0: no such split, shadows drawn as the arcade)
 	uint32_t scenery_polys_end = 0;

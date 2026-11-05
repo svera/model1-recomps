@@ -1007,6 +1007,13 @@ fidelity.
 
 #### Desktop Live Monitor
 
+The linked attract's "RACE AGAINST OTHER PLAYERS!" notice uses a line-scrolled,
+split-map overlay (phase `07`). Like the results banner (phase `1c`), its text now
+slides from the widescreen edge without clipping at the original 4:3 boundary or
+wrapping extra copies. The settled artwork retains its original size and position.
+The linked ROM regression checks both the player's and monitor's complete notice
+through entry and settling at six aspect ratios, 1x/2x, with matching whole/parts layers.
+
 The local VR host's Display menu persists `live_monitor` in the primary `settings.ini`:
 0 Off (default), 1 Above players, 2 Spectator window. The monitor works with one or
 two racers. Above players reserves the upper half of the shared window for

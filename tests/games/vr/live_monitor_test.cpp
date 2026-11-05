@@ -21,6 +21,63 @@ using machines_type = std::array<std::unique_ptr<model1>, 3>;
 
 struct model1_video_test
 {
+	static int linked_notice(model1 &m)
+	{
+		if (m.work_ram()[0x1138] != 0x07 || m.tile_word(0x5000) != 0x8000 ||
+			m.tile_word(0x5004) != 0x4000) return 0;
+		std::array<uint16_t, model1::SCREEN_H> scroll;
+		for (int y = 0; y < model1::SCREEN_H; y++) {
+			scroll[y] = m.tile_word(0x4000 + y);
+			m.tile_write(0x4000 + y, 0);
+		}
+		m.m_tiles.update(m.m_pens);
+		bitmap_rgb32 artwork;
+		artwork.allocate(1024, model1::SCREEN_H);
+		artwork.fill(model1::KEY);
+		m.m_tiles.m_ox = 256;
+		m.m_tiles.draw_wide(artwork, 1, 0, 256);
+		m.m_tiles.m_ox = 0;
+		for (int y = 0; y < model1::SCREEN_H; y++) m.tile_write(0x4000 + y, scroll[y]);
+		const float original_aspect = m.aspect();
+		int side_pixels = 0, settled_pixels = 0;
+		for (float aspect : {4.0f / 3, 16.0f / 10, 16.0f / 9, 64.0f / 27, 32.0f / 9, 64.0f / 9}) {
+			m.set_aspect(aspect);
+			m.redraw();
+			const auto &cached = m.cached_layer(1, 0).px;
+			// Bottom notices are separately edge-pinned; the linked-play artwork is above them.
+			for (int y = 0; y < 336; y++) {
+				const int shift = scroll[y] + (scroll[y] * m.m_ext + 240) / 480;
+				for (int x = 0; x < cached.width(); x++) {
+					const int source = x - m.m_ext - shift;
+					const uint32_t expected = source >= 0 && source < 512
+						? artwork.pix(y, 256 + source) : model1::KEY;
+					assert(cached.pix(y, x) == expected);
+					if (expected == model1::KEY) continue;
+					side_pixels += scroll[y] && x >= m.m_ext + model1::SCREEN_W;
+					settled_pixels += !scroll[y];
+				}
+			}
+			bitmap_rgb32 combined;
+			uint64_t key = 0, gen = 0;
+			m.parts_composite(combined, key, gen, {1});
+			assert(std::equal(cached.data(), cached.data() + size_t(cached.width()) * cached.height(), combined.data()));
+			for (int scale : {1, 2}) {
+				m.set_render_scale(scale);
+				bitmap_rgb32 whole;
+				whole.allocate(cached.width() * scale, cached.height() * scale);
+				whole.fill(model1::KEY);
+				m.draw_tiles(whole, whole.cliprect(), 1, 0);
+				for (int y = 0; y < whole.height(); y++)
+					for (int x = 0; x < whole.width(); x++)
+						assert(whole.pix(y, x) == cached.pix(y / scale, x / scale));
+			}
+			m.set_render_scale(1);
+		}
+		m.set_aspect(original_aspect);
+		m.redraw();
+		return (side_pixels > 0 ? 1 : 0) | (settled_pixels > 0 ? 2 : 0);
+	}
+
 	struct observed_race {
 		std::array<int, 16> copies{};
 		int corrected = 0;
@@ -299,6 +356,36 @@ int main(int argc, char **argv)
 		assert_same_state(machines, reference);
 		for (int p = 0; p < 3; p++) assert(machines[p]->frame_number() == frames[p] + 1);
 	};
+	std::array<int, 2> notice_checks{};
+	for (int frame = 0; frame < 2800; frame++) {
+		for (int p : {0, 2}) {
+			machines[p]->set_drawing(frame >= 2100);
+			reference[p]->set_drawing(frame >= 2100);
+		}
+		run_both();
+		if (frame >= 2100 && frame % 10 == 0)
+			for (int p : {0, 2}) {
+				const int checked = model1_video_test::linked_notice(*machines[p]);
+				assert(checked == model1_video_test::linked_notice(*reference[p]));
+				notice_checks[p / 2] |= checked;
+			}
+		for (auto &machine : machines) machine->m_audio_out.clear();
+		for (auto &machine : reference) machine->m_audio_out.clear();
+	}
+	assert(notice_checks[0] == 3 && notice_checks[1] == 3);
+	puts("Linked notice: complete sliding and settled artwork, six aspect ratios, 1x/2x, whole/parts parity");
+	for (int p = 0; p < 3; p++) {
+		machines[p]->reset();
+		machines[p]->forget_camera();
+		reference[p]->reset();
+		reference[p]->forget_camera();
+		machines[p]->set_drawing(false);
+		reference[p]->set_drawing(false);
+		if (native) {
+			runtimes[p].attach(machines[p]->cpu(), "vr");
+			reference_runtimes[p].attach(reference[p]->cpu(), "vr");
+		}
+	}
 	std::array<int, 3> previous_phase{-1, -1, -1};
 	std::array<uint32_t, 3> previous_camera{};
 	std::array<std::deque<std::array<uint32_t, 3>>, 2> positions;
