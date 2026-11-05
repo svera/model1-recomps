@@ -1011,6 +1011,14 @@ The linked attract's "RACE AGAINST OTHER PLAYERS!" notice uses a line-scrolled,
 split-map overlay (phase `07`). Like the results banner (phase `1c`), its text now
 slides from the widescreen edge without clipping at the original 4:3 boundary or
 wrapping extra copies. The settled artwork retains its original size and position.
+In smooth-motion mode these overlays also interpolate their per-line scroll positions
+at the delayed presentation time. Scroll samples retain the game's two-video-frame
+cadence, with a stationary endpoint so the text stops at its original position.
+Only the configured linked-notice and results phases use this path; map switches,
+large scroll resets and the original 30 FPS mode are not interpolated. The layer
+cache and GPU composition generations follow the presentation time, and paused
+redraws retain the same scroll history. This applies at 4:3 as well as widescreen;
+positions are rounded to native tile pixels to keep the lettering sharp.
 The linked ROM regression checks both the player's and monitor's complete notice
 through entry and settling at six aspect ratios, 1x/2x, with matching whole/parts layers.
 
@@ -1087,6 +1095,17 @@ The commentator uses a separate viewport centered at `(405, 59)`, with bounds
 the renderer translates both its projection center and clip bounds together, keeping
 the portrait aligned with the already edge-pinned name and speech tiles. The regression
 compares the complete portrait window against 4:3 at 16:9, 64:27 and 32:9, at 1x/2x.
+Matrices in this HUD viewport are also marked as screen-space during smooth-motion
+indexing. They pair only with inset copies of their models and retain their own camera,
+rather than inheriting the racing camera's turn or record motion at broadcast cuts.
+The ROM-backed regression checks stationary inset matrices at fractional render times,
+including an injected racing-camera jump to exercise older-list extrapolation at a cut.
+The ROM also has a separate submission-budget gate at `FF5E33`: if the consumed
+polygon budget exceeds the limit at `5011B0` minus 150, it skips the portrait
+viewport and all its models, while the name and speech tiles remain visible.
+Full-detail mode bypasses this gate along with the other polygon-budget checks,
+so higher-detail cars cannot suppress the inset. Arcade LOD retains the original
+budget-dependent omission.
 
 Changing between the two enabled layouts replaces only presentation resources, not
 the running machines. Enabling/disabling requires a coordinated linked reset, stated

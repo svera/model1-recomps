@@ -184,6 +184,54 @@ struct model1_video_test
 		m.redraw();
 	}
 
+	static std::array<int, 2> monitor_commentator_smooth(model1 &m, bool force_cut = false)
+	{
+		const auto &a = m.m_logic[0];
+		auto &b = m.m_logic[1];
+		if (b.frame - a.frame != 2 || m.work_ram()[0x1138] != 0x14) return {};
+		const auto camera = b.camera;
+		const int cut_frame = m.m_cut_frame;
+		// Exercise cut extrapolation with real inset models even if sampled broadcast shots don't cut.
+		if (force_cut) b.camera[9] += 1000;
+		std::array<int, 2> checked{};
+		const auto begin = m.m_gameplay.render_begin;
+		m.m_gameplay.render_begin = [&] {
+			if (begin) begin();
+			if (!m.m_replaying || (m.m_replay_older && !m.m_replay_extra)) return;
+			const auto &to = m.m_logic[m.m_replay_older ? 0 : 1];
+			const auto &from = m.m_replay_older ? m.m_logic_prev : a;
+			for (size_t i = 0; i < to.slots.size(); i++) {
+				const auto &slot = to.slots[i];
+				if (!slot.screen_space || slot.polys.empty() || !m.m_blend_ok[i]) continue;
+				for (const auto &old : from.slots) {
+					if (!old.screen_space || old.polys != slot.polys ||
+						!std::equal(std::begin(old.mat), std::end(old.mat), slot.mat)) continue;
+					if (!m.m_replay_older && std::none_of(m.m_logic_prev.slots.begin(), m.m_logic_prev.slots.end(),
+						[&](const auto &previous) {
+							return previous.screen_space && previous.polys == slot.polys &&
+								std::equal(std::begin(previous.mat), std::end(previous.mat), slot.mat);
+						})) continue;
+					for (int k = 0; k < 12; k++) {
+						if (std::fabs(m.m_blend[i][k] - slot.mat[k]) >= 0.0001f)
+							fprintf(stderr, "Portrait frame=%d slot=%zu poly=%x owner=%x older=%d extra=%d axis=%d raw=%g blend=%g\n",
+								to.frame, i, slot.polys[0], slot.owner, m.m_replay_older, m.m_replay_extra,
+								k, slot.mat[k], m.m_blend[i][k]);
+						assert(std::fabs(m.m_blend[i][k] - slot.mat[k]) < 0.0001f);
+					}
+					checked[0]++;
+					checked[1] += m.m_blend_cut && m.m_replay_older && m.m_replay_extra;
+					break;
+				}
+			}
+		};
+		for (double fraction : {0.25, 0.5, 0.75})
+			m.render_smooth(a.frame + 2 + 2 * fraction, false);
+		m.m_gameplay.render_begin = begin;
+		b.camera = camera;
+		m.m_cut_frame = cut_frame;
+		return checked;
+	}
+
 	static void monitor_hud(model1 &m)
 	{
 		const float original_aspect = m.aspect();
@@ -572,6 +620,7 @@ int main(int argc, char **argv)
 		};
 	}
 	int solo_racing = 0, solo_pictures = 0, solo_positions = 0, zoom_pictures = 0;
+	std::array<int, 2> commentator_pictures{};
 	std::array<int, 2> distant_car_pictures{};
 	std::deque<std::array<uint32_t, 3>> solo_history;
 	auto driver = game::make_auto_play(game::id{"vr"}, "qualifying", 12345, false);
@@ -613,6 +662,10 @@ int main(int argc, char **argv)
 		}
 		assert_same_state(machines, reference, true);
 		if (frame % 30 == 0) {
+			const bool force_cut = commentator_pictures[0] > 30 && commentator_pictures[1] == 0;
+			const auto portraits = model1_video_test::monitor_commentator_smooth(*machines[2], force_cut);
+			assert(portraits == model1_video_test::monitor_commentator_smooth(*reference[2], force_cut));
+			for (int i = 0; i < 2; i++) commentator_pictures[i] += portraits[i];
 			const int checked = model1_video_test::monitor_zoom(*machines[2]);
 			assert(checked == model1_video_test::monitor_zoom(*reference[2]));
 			zoom_pictures += checked;
@@ -669,6 +722,9 @@ int main(int argc, char **argv)
 	assert(solo_racing > 120 && solo_pictures > 0 && solo_positions > 120);
 	fprintf(stderr, "Monitor zoom: %d fractional pictures track the ROM's changing projection\n", zoom_pictures);
 	assert(zoom_pictures > 30);
+	fprintf(stderr, "Monitor commentator: %d stationary inset matrices, %d extrapolated through camera cuts\n",
+		commentator_pictures[0], commentator_pictures[1]);
+	assert(commentator_pictures[0] > 30 && commentator_pictures[1] > 0);
 	assert(distant_car_pictures[0] > 100 && distant_car_pictures[1] > 100);
 	fprintf(stderr, "Distant cars: player %d, Live Monitor %d race frames include renderer-only cars\n",
 		distant_car_pictures[0], distant_car_pictures[1]);

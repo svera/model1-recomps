@@ -51,6 +51,7 @@ void model1::reset()
 	m_tgp_cycles = 0;
 	m_cpu_owed = 0;
 	for (auto &c : m_layer_cache) c.frame = ~0ull;   // a new game: nothing drawn is current
+	for (auto &history : m_tile_slides) history.clear();
 	m_shown = m_unshown = false;                      // nor shown
 	m_tiles_updated = ~0ull;
 	m_list_written[0] = m_list_written[1] = ~0ull;
@@ -584,8 +585,11 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	constexpr uint32_t KEY = 0xff000000;
 	layer_cache &c = m_layer_cache[layer & 7];
 	const int tw = SCREEN_W + 2 * m_ext;
-	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw ||
-		(m_tile_slide_interpolating && m_tile_slide_layer == layer)) {
+	std::array<float, SCREEN_H> slide_rows;
+	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
+	const double slide_time = smooth_slide ? m_draw_time : -1;
+	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
+		c.px.width() != tw || c.slide_time != slide_time) {
 		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
 		c.px.fill(KEY);
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
@@ -593,10 +597,11 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		const auto slide = std::find_if(slides.begin(), slides.end(), [&](const auto &s) {
 			return s.layer == layer && s.mode == m_ram_b[0x1138] && s.distance > 0;
 		});
-		const bool sliding = m_ext && m_wide_frame && slide != slides.end() &&
+		const bool sliding = (m_ext || smooth_slide) && m_wide_frame && slide != slides.end() &&
 			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
-		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance);
+		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance,
+			smooth_slide ? slide_rows.data() : nullptr);
 		else m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
@@ -614,6 +619,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			c.x0[y] = int16_t(a); c.x1[y] = int16_t(b);
 		}
 		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.wide = m_wide_frame; c.gen++;
+		c.slide_time = slide_time;
 	}
 	return c;
 }
@@ -718,7 +724,10 @@ void model1::prepare_layers()
 	for (int l : LAYERS) {
 		const int flags = l == 6 ? segas24_tile::DRAW_OPAQUE : 0;
 		const layer_cache &c = m_layer_cache[l];
-		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame || c.px.width() != tw) todo[n++] = l;
+		std::array<float, SCREEN_H> slide_rows;
+		const double slide_time = smooth_tile_slide(l, slide_rows) ? m_draw_time : -1;
+		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
+			c.px.width() != tw || c.slide_time != slide_time) todo[n++] = l;
 	}
 	if (n < 2) return;
 	m_work.layers += n;
@@ -781,8 +790,9 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 {
 	static const int skip = getenv("M1_TILE_SKIP") ? strtol(getenv("M1_TILE_SKIP"), nullptr, 16) : 0;
 	if (skip & (1 << layer)) return;
-	const bool slide_motion = m_tile_slide_interpolating && m_tile_slide_layer == layer;
-	if (m_scale == 1 && m_ext == 0 && !slide_motion) {
+	std::array<float, SCREEN_H> slide_rows;
+	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
+	if (m_scale == 1 && m_ext == 0 && !smooth_slide) {
 		m_tiles.m_ox = 0;
 		m_tiles.draw(bitmap, cliprect, layer, 0, flags);
 		return;
@@ -822,23 +832,6 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	if (flags & segas24_tile::DRAW_OPAQUE) sides = true;   // (its sides are its own: stretched or filled)
 	const int s = m_scale;
 	const int out_w = bitmap.width();
-	if (slide_motion) {
-		auto fdiv = [](int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
-		parallel_rows(SCREEN_H * s, [&](int Y0, int Y1) {
-			for (int Y = Y0; Y < Y1; Y++) {
-				const int y = Y / s, ox = sky_shift_x(-m_tile_slide_residual[y], s);
-				const uint32_t *src = &tmp->pix(y);
-				uint32_t *dst = &bitmap.pix(Y);
-				for (int X = 0; X < out_w; X++) {
-					const int x = fdiv(X + ox, s);
-					if (x < 0 || x >= tmp->width()) continue;
-					const uint32_t c = src[x];
-					if (c != KEY) dst[X] = blend_layer_pixel(c, dst[X]);
-				}
-			}
-		});
-		return;
-	}
 	// smooth motion: the sky between two game frames, moved by the blended scroll at full resolution
 	float sdx = 0, sdy = 0;
 	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) smooth_sky_shift(sdx, sdy);
