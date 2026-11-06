@@ -862,6 +862,72 @@ and the stand-in board's big-endian bytes. Language edits leave the other assign
 alone. ROM-free tests cover both layouts, checksum coverage, invalid choices and U.S. preservation;
 the local-ROM language regression checks reset persistence in interpreter and native execution.
 
+## VR's Standard steering assist
+
+The original wheel input remains available as **Arcade** (formerly Linear).
+**Standard**, now the default for both local players, replaces the earlier
+Exponential-only option with a host-side assist in
+[`src/games/vr/controls.h`](../src/games/vr/controls.h). It combines a nonlinear
+stick response, speed-sensitive range and a timed steering accumulator. This is
+independently chosen tuning, not reverse-engineering of M2's Switch port: neither
+its implementation nor its constants have been verified here.
+
+The calibration matters as much as the curve. The arcade routine at `FE6776`
+subtracts the wheel's center (`0x80`), ignores the first five input units, and
+reaches full steering at a displacement of 80, before the host's 0-255 axis
+reaches either endpoint. Limiting only the raw axis would therefore leave some
+supposedly reduced settings at full in-game lock. Standard instead accumulates
+normalized calibrated steering, then inverts that dead zone and saturation to
+produce the I/O-board input. The arcade physics and calibration routines are not
+modified.
+
+For normalized signed stick input `x` and speed fraction
+`v = clamp(speed_kmh / 320, 0, 1)`, the target is
+`x * abs(x) * (1 - 0.55 * v)`. Thus 30% stick gives about 9% steering at rest;
+the available calibrated range falls from 100% at rest to 45% at 320 km/h and
+above. The host reads the integer speed at `0x400d14`, already used by the
+qualifying driver, rather than assuming a floating-point physics velocity.
+
+Each update moves the accumulator toward the target by at most
+`(6 - 4.2 * v) * dt`, in normalized center-to-full-lock units. It is also clamped
+to the current speed's range, so accelerating cannot retain an old, wider lock.
+`dt` follows the Model 1 board frame duration, `656 * 424 / 16000000` seconds,
+not the display's 30/60/120 FPS setting. Repeated sampling at the same machine
+frame does not advance it. Each cabinet's host owns its own history, cleared
+after boot.
+
+Keyboard and D-pad presses feed -1 or +1 into the same accumulator, taking
+priority over a simultaneous stick deflection. Holding ramps toward the current
+limit; releasing with a centered stick ramps back to zero; reversing ramps
+through center. Short taps separated by releases build intermediate steering
+instead of repeatedly snapping between full lock and center. No separate tap
+detector or PWM oscillator is needed. Arcade retains instant digital steering.
+Pedals are unaffected. Course selection and initials entry bypass the assist,
+retain their original tap/repeat behavior, and clear the steering history.
+
+Both desktop menu paths expose Arcade/Standard. Per-player `steering_curve`
+settings save as `arcade` or `standard`; old `linear` values load as Arcade and
+old `exponential` values load as Standard. Missing settings use Standard.
+[`tests/games/vr/profile_test.cpp`](../tests/games/vr/profile_test.cpp) checks
+calibrated range, monotonicity, symmetry, speed scaling, bounded ramp/release/
+reversal, repeated taps, simultaneous analog/digital input, sampling-rate
+independence, menu bypass, defaults and settings round trips.
+
+Validation run:
+
+```sh
+make -j4 test-vr-profile test-swa-profile test-vf-profile vr-native
+build/bin/vr_profile_test build/vr
+```
+
+The ROM-backed run confirms course taps into a Medium race and `SDK` initials
+saved after a qualifying finish, with Standard enabled for menu input. These
+checks establish the filter's numerical behavior and preserved navigation, not
+handling quality: the scripted qualifying driver does not race through this
+assist. Controller playtesting, corner/drift tuning and comparison with the
+Switch port remain unverified. Standard does not guarantee traction or prevent
+every spin-out.
+
 ## VR's CPU speed
 
 Other cars in VR sometimes jumped sideways. Car
