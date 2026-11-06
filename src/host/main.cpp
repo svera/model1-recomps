@@ -339,7 +339,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 					return k.dpad && pad && b != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(pad, b);
 				};
 				value = game_part.analog_key_input(m, int(channel), held(k.low), held(k.high), value,
-					ctl[p].exponential_steering);
+					ctl[p].standard_steering);
 			}
 			m.set_analog_input(int(channel), profile.analog_port(channel, value));
 		}
@@ -1885,10 +1885,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		menu_page page{player ? "Player 2 analog axes" : "Player 1 analog axes", "", {}};
 		if (controls.steering_curve)
 			page.items.push_back({"Steering curve",
-				"Linear keeps the original response. Exponential (quadratic) softens small stick movements while retaining full-lock steering. Pedals, keys, D-pad and course/initials selection are unchanged.",
-				[&, player] { return bindings[player].exponential_steering ? "Exponential" : "Linear"; },
+				"Arcade keeps the original response. Standard (default) softens small stick movements, ramps keyboard/D-pad steering up and back to center, and progressively limits steering range and sudden changes as speed rises. Pedals and course/initials selection are unchanged.",
+				[&, player] { return bindings[player].standard_steering ? "Standard" : "Arcade"; },
 				[&, player](int direction) {
-					if (direction % 2) bindings[player].exponential_steering = !bindings[player].exponential_steering;
+					if (direction % 2) bindings[player].standard_steering = !bindings[player].standard_steering;
 					controls_changed(player);
 				}});
 		for (size_t channel = 0; channel < io.analog_controls.size(); channel++) {
@@ -4357,10 +4357,10 @@ int main(int argc, char **argv)
 		menu_page pg{ p ? "Player 2 analog axes" : "Player 1 analog axes", "", {} };
 		if (controls.steering_curve)
 			pg.items.push_back({ "Steering curve",
-				"Linear keeps the original response. Exponential (quadratic) softens small stick movements while retaining full-lock steering. Pedals, keys, D-pad and course/initials selection are unchanged.",
-				[&, p] { return cfg.ctl[p].exponential_steering ? "Exponential" : "Linear"; },
+				"Arcade keeps the original response. Standard (default) softens small stick movements, ramps keyboard/D-pad steering up and back to center, and progressively limits steering range and sudden changes as speed rises. Pedals and course/initials selection are unchanged.",
+				[&, p] { return cfg.ctl[p].standard_steering ? "Standard" : "Arcade"; },
 				[&, p](int d) {
-					if (d % 2) cfg.ctl[p].exponential_steering = !cfg.ctl[p].exponential_steering;
+					if (d % 2) cfg.ctl[p].standard_steering = !cfg.ctl[p].standard_steering;
 					cfg_dirty = true;
 				} });
 		for (size_t channel = 0; channel < profile.analog_controls.size(); channel++) {

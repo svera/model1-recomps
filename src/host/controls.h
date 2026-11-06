@@ -90,11 +90,12 @@ struct player_controls
 		game::host_axis::none, game::host_axis::none, game::host_axis::none, game::host_axis::none
 	};
 	std::string pad_choice = "auto";   // "auto" (the next free pad), "none", or a pad's GUID
-	bool exponential_steering = false;
+	bool standard_steering = false;
 
 	static player_controls defaults(int player, const control_profile &profile)
 	{
 		player_controls c;
+		c.standard_steering = profile.steering_curve;
 		for (int a = 0; a < C_COUNT; a++) {
 			c.key[a] = profile.keys[player ? 1 : 0][a];
 			c.pad[a] = profile.pad[a];
@@ -129,9 +130,10 @@ struct player_controls
 		if (profile.steering_curve) {
 			const auto curve = kv.find(p + "steering_curve");
 			if (curve != kv.end()) {
-				if (curve->second == "linear" || curve->second == "exponential")
-					exponential_steering = curve->second == "exponential";
-				else fprintf(stderr, "controls: invalid %ssteering_curve '%s'; expected linear or exponential\n",
+				if (curve->second == "arcade" || curve->second == "linear" ||
+					curve->second == "standard" || curve->second == "exponential")
+					standard_steering = curve->second == "standard" || curve->second == "exponential";
+				else fprintf(stderr, "controls: invalid %ssteering_curve '%s'; expected arcade or standard\n",
 					p.c_str(), curve->second.c_str());
 			}
 		}
@@ -142,7 +144,7 @@ struct player_controls
 		const char *p = player ? "p2_" : "p1_";
 		fprintf(f, "%spad = %s\n", p, pad_choice.c_str());
 		if (profile.steering_curve)
-			fprintf(f, "%ssteering_curve = %s\n", p, exponential_steering ? "exponential" : "linear");
+			fprintf(f, "%ssteering_curve = %s\n", p, standard_steering ? "standard" : "arcade");
 		for (int a = 0; a < C_COUNT; a++)
 			if (profile.visible(a))
 				fprintf(f, "%skey_%s = %s\n", p, profile.key_name(a), key[a] ? SDL_GetScancodeName(key[a]) : "none");

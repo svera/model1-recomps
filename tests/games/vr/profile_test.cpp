@@ -12,45 +12,123 @@ static void steering_curve()
 {
 	using wheel_t = game::vr::menu_steering;
 	wheel_t linear, curved;
-	assert(wheel_t::exponential(0) == 0);
-	assert(wheel_t::exponential(128) == 128);
-	assert(wheel_t::exponential(255) == 255);
-	assert(wheel_t::exponential(64) == 96);
-	assert(wheel_t::exponential(192) == 160);
-	int previous = 0;
-	for (int analog = 0; analog <= 255; analog++) {
-		const auto input = uint8_t(analog);
-		const int output = curved.update(screen::none, false, false, input, true);
-		assert(output >= previous);
-		assert(std::abs(output - 128) <= std::abs(analog - 128));
-		assert(linear.update(screen::none, false, false, input) == input);
-		assert(curved.update(screen::none, true, false, input, true) == 0);
-		assert(curved.update(screen::none, false, true, input, true) == 255);
-		previous = output;
+	auto settled = [](uint8_t analog, float speed) {
+		wheel_t wheel;
+		uint8_t value = 128;
+		for (int frame = 0; frame < 120; frame++)
+			value = wheel.update(screen::none, false, false, analog, true, speed);
+		return value;
+	};
+	assert(wheel_t::calibrated(settled(0, 0)) == -127);
+	assert(settled(128, 0) == 128);
+	assert(wheel_t::calibrated(settled(255, 0)) == 127);
+	assert(wheel_t::calibrated(settled(64, 0)) == -47);
+	assert(wheel_t::calibrated(settled(192, 0)) == 47);
+	assert(wheel_t::calibrated(settled(166, 0)) == 25);   // 30% stick gives about 20% steering
+	for (float speed : { 0.0f, 160.0f, 320.0f, 500.0f }) {
+		int previous = 0;
+		for (int analog = 0; analog <= 255; analog++) {
+			const auto input = uint8_t(analog);
+			const int output = settled(input, speed);
+			assert(output >= previous);
+			assert(std::abs(wheel_t::calibrated(output)) <=
+				int(std::ceil(std::abs(analog - 128) * 127.0 / (analog < 128 ? 128 : 127))) + 1);
+			assert(linear.update(screen::none, false, false, input) == input);
+			assert(linear.update(screen::none, true, false, input) == 0);
+			assert(linear.update(screen::none, false, true, input) == 255);
+			previous = output;
+		}
 	}
 	for (int delta = 0; delta <= 127; delta++)
-		assert(std::abs((128 - wheel_t::exponential(uint8_t(128 - delta))) -
-			(wheel_t::exponential(uint8_t(128 + delta)) - 128)) <= 1);
+		assert(std::abs((128 - settled(uint8_t(128 - delta), 0)) -
+			(settled(uint8_t(128 + delta), 0) - 128)) <= 1);
+	assert(wheel_t::calibrated(settled(255, 80)) == 119);
+	assert(wheel_t::calibrated(settled(255, 160)) == 112);
+	assert(wheel_t::calibrated(settled(255, 320)) == 95);
+	assert(wheel_t::calibrated(settled(0, 320)) == -95);
+	assert(wheel_t::calibrated(settled(192, 320)) == 35);
+	assert(settled(255, 500) == settled(255, 320));
+	int previous_lock = 255;
+	for (int speed = 0; speed <= 400; speed++) {
+		const int lock = settled(255, float(speed));
+		assert(lock <= previous_lock);
+		previous_lock = lock;
+	}
+	// Sudden full lock, reversal and release obey the speed-dependent rate, without overshoot.
+	for (float speed : { 0.0f, 320.0f }) {
+		wheel_t wheel;
+		int previous = 0;
+		const int max_step = int(std::ceil((speed == 0 ? 8.0f : 5.0f) * 2.0f * wheel_t::FRAME_SECONDS * 128));
+		for (uint8_t target : { 255, 0, 128 }) {
+			const int end = wheel_t::calibrated(settled(target, speed));
+			for (int frame = 0; frame < 120; frame++) {
+				const int value = wheel_t::calibrated(wheel.update(screen::none, false, false, target, true, speed));
+				assert(std::abs(value - previous) <= max_step + 2);   // calibration and byte quantization
+				assert(value >= std::min(previous, end) && value <= std::max(previous, end));
+				previous = value;
+			}
+			assert(previous == end);
+		}
+	}
+	wheel_t slow, fast;
+	assert(slow.update(screen::none, false, false, 255, true, 0) == 143);
+	assert(fast.update(screen::none, false, false, 255, true, 320) == 140);
+	assert(fast.update(screen::none, false, false, 255, true, 320, 0) == 140);
+	// Identical elapsed simulation time gives the same result at different sampling rates.
+	for (int hz : { 30, 60, 120 }) {
+		wheel_t wheel;
+		uint8_t value = 128;
+		for (int frame = 0; frame < hz / 10; frame++)
+			value = wheel.update(screen::none, false, false, 255, true, 320, 1.0f / hz);
+		assert(std::abs(int(value) - 171) <= 1);   // half-unit calibration rounding
+	}
+	// Speed changes enforce the new range immediately, while players keep independent histories.
+	for (int frame = 0; frame < 60; frame++) slow.update(screen::none, false, false, 255, true);
+	assert(wheel_t::calibrated(slow.update(screen::none, false, false, 255, true, 320)) == 95);
+	assert(fast.update(screen::none, false, false, 128, true, 320) == 128);
+	assert(slow.update(screen::none, false, false, 0, false) == 0);
+	assert(slow.update(screen::none, false, false, 128, true) == 128);
+	// At top speed the analog stick centers within 120 ms and reverses within 250 ms.
+	wheel_t responsive;
+	for (int frame = 0; frame < 60; frame++)
+		responsive.update(screen::none, false, false, 255, true, 320);
+	int center_frames = 0;
+	while (responsive.update(screen::none, false, false, 128, true, 320) != 128)
+		assert(++center_frames * wheel_t::FRAME_SECONDS < 0.12f);
+	assert((center_frames + 1) * wheel_t::FRAME_SECONDS <= 0.12f);
+	for (int frame = 0; frame < 60; frame++)
+		responsive.update(screen::none, false, false, 255, true, 320);
+	int reverse_frames = 0;
+	while (wheel_t::calibrated(responsive.update(screen::none, false, false, 0, true, 320)) != -95)
+		assert(++reverse_frames * wheel_t::FRAME_SECONDS < 0.25f);
+	assert((reverse_frames + 1) * wheel_t::FRAME_SECONDS <= 0.25f);
 	// Both menu screens must see the uncurved axis, including their repeat thresholds.
 	for (auto s : { screen::course, screen::initials })
 		for (int analog = 0; analog <= 255; analog++)
 			for (int frame = 0; frame < 20; frame++)
 				assert(linear.update(s, false, false, uint8_t(analog)) ==
-					curved.update(s, false, false, uint8_t(analog), true));
+					curved.update(s, false, false, uint8_t(analog), true, 320));
+	assert(curved.update(screen::none, false, false, 128, true, 320) == 128);
 
 	const auto &profile = game::vr::CONTROLS;
 	auto p1 = player_controls::defaults(0, profile);
 	auto p2 = player_controls::defaults(1, profile);
 	assert(profile.steering_curve && !control_profile{}.steering_curve);
-	assert(!p1.exponential_steering && !p2.exponential_steering);
+	assert(p1.standard_steering && p2.standard_steering);
+	p1.load({}, 0, profile);
+	assert(p1.standard_steering);
+	assert(!player_controls{}.standard_steering);
 	const std::map<std::string, std::string> settings{
 		{ "p1_steering_curve", "exponential" }, { "p2_steering_curve", "linear" }
 	};
 	p1.load(settings, 0, profile);
 	p2.load(settings, 1, profile);
-	assert(p1.exponential_steering && !p2.exponential_steering);
+	assert(p1.standard_steering && !p2.standard_steering);
+	p1.standard_steering = false;
+	p1.load({ { "p1_steering_curve", "standard" } }, 0, profile);
+	assert(p1.standard_steering);
 	p1.load({ { "p1_steering_curve", "invalid" } }, 0, profile);
-	assert(p1.exponential_steering);
+	assert(p1.standard_steering);
 	FILE *saved = tmpfile();
 	assert(saved);
 	p1.save(saved, 0, profile);
@@ -66,15 +144,83 @@ static void steering_curve()
 	}
 	assert(!ferror(saved));
 	fclose(saved);
+	assert(restored.at("p1_steering_curve") == "standard");
+	assert(restored.at("p2_steering_curve") == "arcade");
 	p1 = player_controls::defaults(0, profile);
-	p2.exponential_steering = true;
+	p2.standard_steering = true;
 	p1.load(restored, 0, profile);
 	p2.load(restored, 1, profile);
-	assert(p1.exponential_steering && !p2.exponential_steering);
-	p1.load({ { "p1_steering_curve", "linear" } }, 0, profile);
-	assert(!p1.exponential_steering);
-	assert(!player_controls::defaults(0, profile).exponential_steering);
-	printf("VR steering curve: quadratic response, full lock, monotonicity, menu input and per-player settings passed\n");
+	assert(p1.standard_steering && !p2.standard_steering);
+	p1.load({ { "p1_steering_curve", "arcade" } }, 0, profile);
+	assert(!p1.standard_steering);
+	assert(player_controls::defaults(0, profile).standard_steering);
+	printf("VR Standard steering: nonlinear response, speed scaling, slew limits, timing, menus and settings migration passed\n");
+}
+
+static void digital_steering()
+{
+	using wheel_t = game::vr::menu_steering;
+	for (float speed : { 0.0f, 160.0f, 320.0f }) {
+		wheel_t digital;
+		int previous = 0;
+		// Digital ramp and release keep the original, slower rate and narrower range.
+		for (int direction : { 1, -1, 0, 1, 2 }) {
+			const bool left = direction == -1 || direction == 2;
+			const bool right = direction == 1 || direction == 2;
+			const int lock = speed == 0 ? 127 : speed == 160 ? 91 : 57;
+			const int end = direction == 1 ? lock : direction == -1 ? -lock : 0;
+			for (int frame = 0; frame < 60; frame++) {
+				const auto output = digital.update(screen::none, left, right, 128, true, speed);
+				const int value = wheel_t::calibrated(output);
+				if (frame == 0 && direction == 1) assert(value > 0 && value < 127);
+				if (frame == 0 && direction == 0) assert(value < 0);   // release is not instant
+				const int max_step = int(std::ceil((6.0f - 4.2f * speed / 320.0f) * wheel_t::FRAME_SECONDS * 128));
+				assert(std::abs(value - previous) <= max_step + 2);
+				assert(value >= std::min(previous, end) && value <= std::max(previous, end));
+				previous = value;
+			}
+			assert(previous == end);
+		}
+	}
+	wheel_t tapping;
+	int previous_peak = 0;
+	for (int pulse = 0; pulse < 4; pulse++) {
+		int peak = 0;
+		for (int frame = 0; frame < 3; frame++)
+			peak = wheel_t::calibrated(tapping.update(screen::none, false, true, 128, true, 320));
+		const int released = wheel_t::calibrated(tapping.update(screen::none, false, false, 128, true, 320));
+		assert(peak > previous_peak && peak < 57);
+		assert(released > 0 && released < peak);
+		previous_peak = peak;
+	}
+	for (int frame = 0; frame < 60; frame++)
+		assert(tapping.update(screen::none, false, false, 128, true, 320) >= 128);
+	assert(tapping.update(screen::none, false, false, 128, true, 320) == 128);
+	for (int hz : { 30, 60, 120 }) {
+		wheel_t wheel;
+		uint8_t value = 128;
+		for (int frame = 0; frame < hz / 5; frame++)
+			value = wheel.update(screen::none, false, true, 128, true, 320, 1.0f / hz);
+		assert(value == 160);
+	}
+	wheel_t mixed, digital_only;
+	for (int frame = 0; frame < 10; frame++)
+		assert(mixed.update(screen::none, true, false, 255, true, 320) ==
+			digital_only.update(screen::none, true, false, 128, true, 320));
+	assert(wheel_t::calibrated(mixed.update(screen::none, false, false, 255, true, 320)) >
+		wheel_t::calibrated(digital_only.update(screen::none, false, false, 128, true, 320)));
+	assert(mixed.update(screen::none, false, true, 128, false) == 255);
+	assert(mixed.update(screen::none, false, false, 128, true, 320) == 128);
+	for (auto s : { screen::course, screen::initials }) {
+		wheel_t arcade, standard;
+		for (int frame = 0; frame < 100; frame++) {
+			const bool left = frame >= 50, right = frame < 40;
+			assert(arcade.update(s, left, right, 128) ==
+				standard.update(s, left, right, 128, true, 320));
+		}
+		assert(standard.update(screen::none, false, false, 128, true, 320) == 128);
+	}
+	printf("VR digital steering: ramp, release, reversal, tapping, timing and menu bypass passed\n");
 }
 
 // Taps on course selection: the game's own wheel reading is the host's formula, and each tap is one course.
@@ -94,7 +240,7 @@ static void pad_courses(const char *dir)
 		const int s = selecting ? selecting_frames++ : -1;
 		// right, right (Expert), then left (Medium), which the script confirms
 		const bool right = s == 2 || s == 4, left = s == 14;
-		const uint8_t value = wheel.update(selecting ? screen::course : screen::none, left, right, 0x80);
+		const uint8_t value = wheel.update(selecting ? screen::course : screen::none, left, right, 0x80, true, 320);
 		assert(m.set_analog_input(0, value));
 		for (size_t c = 1; c < input.analog.size(); c++)
 			if (input.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(input.analog[c])));
@@ -137,7 +283,7 @@ static void pad_initials(const char *dir)
 			const bool tap = !tapped && letter != want;
 			tapped = tap;
 			taps += tap;
-			input.analog[0] = last = wheel.update(screen::initials, tap && want < letter, tap && want > letter, 0x80);
+			input.analog[0] = last = wheel.update(screen::initials, tap && want < letter, tap && want > letter, 0x80, true, 320);
 		}
 		for (size_t c = 0; c < input.analog.size(); c++)
 			if (input.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(input.analog[c])));
@@ -157,6 +303,7 @@ static void pad_initials(const char *dir)
 int main(int argc, char **argv)
 {
 	steering_curve();
+	digital_steering();
 	using wheel_t = game::vr::menu_steering;
 	game::vr::menu_steering wheel;
 	// racing: the keys steer fully, the stick passes through
