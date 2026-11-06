@@ -109,6 +109,9 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   vblanks a frame by design, and its timing (the attract mode, the race clock) counts game frames.
 - **Widescreen.** In fights the 3D view opens out to the sides and the stage sky is drawn from its whole panorama. The
   title and player select get painted side columns, drawn for this port.
+  VR's selection screens continue their own 64x32 brick pattern into the sides instead of wrapping
+  hidden tile-map columns, which contain mismatched joints, stray blue tiles and duplicate course artwork.
+  The original 4:3 picture is unchanged.
 - **Antialiasing** (an edge filter, or 2x/3x supersampling), scanline and CRT filters, and hi-res stage skies built
   from the game's own panoramas.
 - **Pacing and a load governor.** The game runs on its own clock, trimmed to keep the sound queued. If a machine can't

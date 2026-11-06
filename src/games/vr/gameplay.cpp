@@ -380,6 +380,27 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		if (machine.read8(0x40dc8c) == 3 && machine.work_ram()[0x1138] == 0x10) return false;
 		return camera != 0 && camera != TRACK_SELECT_CAMERA;
 	};
+	callbacks.layer_sides = [&machine](int layer, uint32_t *pixels, int width, int height, int ext) {
+		if (layer != 4 || machine.tile_word(0x5002) || machine.tile_word(0x5006)) return false;
+		// Selection screens paint a 64x32 brick repeat, but the hidden map columns contain
+		// edge tiles and a blue block. Recognize an unobscured repeat below the course maps.
+		static constexpr uint16_t bricks[4][8] = {
+			{ 0x3781, 0x3782, 0x3783, 0x3784, 0x3785, 0x3784, 0x3785, 0x3780 },
+			{ 0x3787, 0x3787, 0x3788, 0x3785, 0x3784, 0x3785, 0x3784, 0x3786 },
+			{ 0x3785, 0x3784, 0x3785, 0x3789, 0x378a, 0x378b, 0x378c, 0x3784 },
+			{ 0x3784, 0x3785, 0x3784, 0x378d, 0x378e, 0x378e, 0x378f, 0x3785 },
+		};
+		for (int y = 0; y < 4; y++)
+			for (int x = 0; x < 8; x++)
+				if (machine.tile_word(0x2000 + (24 + y) * 64 + x) != bricks[y][x]) return false;
+		for (int y = 0; y < height; y++) {
+			const uint32_t *source = pixels + (192 + (y & 31)) * width + ext;
+			uint32_t *row = pixels + y * width;
+			for (int x = 0; x < ext; x++) row[x] = source[(x - ext) & 63];
+			for (int x = ext + model1::SCREEN_W; x < width; x++) row[x] = source[(x - ext) & 63];
+		}
+		return true;
+	};
 	return callbacks;
 }
 

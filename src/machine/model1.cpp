@@ -608,7 +608,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		else m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
-		if ((flags & segas24_tile::DRAW_OPAQUE) && !extend_backdrops())
+		if (flags & segas24_tile::DRAW_OPAQUE)
 			fill_backdrop_sides(c.px, layer, flags);
 		c.sides = sliding || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext));
@@ -750,6 +750,11 @@ void model1::prepare_layers()
 void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
+	if (extend_backdrops()) {
+		if (layer >= 0 && m_gameplay.layer_sides)
+			m_gameplay.layer_sides(layer, pixels.data(), pixels.width(), pixels.height(), m_ext);
+		return;
+	}
 	if (!m_ext || !m_wide_frame || stretch_backdrops()) return;
 	auto background = [&](const bitmap_rgb32 &b, int x0, int x1, uint32_t colour) {
 		std::unordered_map<uint32_t, int> counts;
@@ -823,7 +828,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			else m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;
-			if (!extend_backdrops()) fill_backdrop_sides(m_tile_tmp, layer, flags);
+			fill_backdrop_sides(m_tile_tmp, layer, flags);
 			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_wide = m_wide_frame; m_l4_gen++;
 		}
 		if (sky) find_sky();

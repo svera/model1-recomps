@@ -1,4 +1,5 @@
 #include "../src/machine/model1.h"
+#include "../src/machine/linked_pair.h"
 #include "../src/games/vr/gameplay.h"
 #include "../src/games/swa/gameplay.h"
 #include "../src/games/script.h"
@@ -16,6 +17,100 @@
 
 struct model1_video_test
 {
+	static void vr_menu_backdrops(const char *dir)
+	{
+		auto check = [](model1 &m) {
+			m.m_tiles.update(m.m_pens);
+			bitmap_rgb32 arcade;
+			arcade.allocate(model1::SCREEN_W, model1::SCREEN_H);
+			arcade.fill(model1::KEY);
+			m.m_tiles.m_ox = 0;
+			m.m_tiles.draw(arcade, arcade.cliprect(), 4, 0, segas24_tile::DRAW_OPAQUE);
+			for (float aspect : { 4.0f / 3, 16.0f / 9, 32.0f / 9, 64.0f / 9 })
+				for (int scale : { 1, 2 }) {
+					m.set_aspect(aspect);
+					m.set_render_scale(scale);
+					m.redraw();
+					assert(!m.m_ext || !m.m_wide_frame);
+					const int ext = m.m_ext, w = model1::SCREEN_W + 2 * ext;
+					const auto &cached = m.cached_layer(4, segas24_tile::DRAW_OPAQUE).px;
+					bitmap_rgb32 expected;
+					expected.allocate(w, model1::SCREEN_H);
+					for (int y = 0; y < model1::SCREEN_H; y++)
+						for (int x = -ext; x < model1::SCREEN_W + ext; x++) {
+							const uint32_t want = x >= 0 && x < model1::SCREEN_W
+								? arcade.pix(y, x) : arcade.pix(192 + (y & 31), x & 63);
+							expected.pix(y, x + ext) = want;
+							assert(cached.pix(y, x + ext) == want);
+						}
+					if (ext) {
+						bitmap_rgb32 wrapped;
+						wrapped.allocate(w, model1::SCREEN_H);
+						wrapped.fill(model1::KEY);
+						m.m_tiles.m_ox = ext;
+						m.m_tiles.draw_wide(wrapped, 4, segas24_tile::DRAW_OPAQUE, ext);
+						m.m_tiles.m_ox = 0;
+						assert(memcmp(wrapped.data(), expected.data(), size_t(w) * model1::SCREEN_H * 4) != 0);
+					}
+					m.m_bitmap.fill(model1::KEY);
+					m.draw_tiles(m.m_bitmap, m.m_bitmap.cliprect(), 4, segas24_tile::DRAW_OPAQUE);
+					model1::gpu_parts parts;
+					m.m_parts = &parts;
+					m.parts_layer(4, segas24_tile::DRAW_OPAQUE, cached, false, 0, 0);
+					m.m_parts = nullptr;
+					std::vector<uint32_t> composed;
+					model1::compose_cpu(parts, w * scale, model1::SCREEN_H * scale, composed);
+					for (int y = 0; y < model1::SCREEN_H * scale; y++)
+						for (int x = 0; x < w * scale; x++) {
+							const uint32_t want = expected.pix(y / scale, x / scale);
+							assert(m.m_bitmap.pix(y, x) == want);
+							assert(composed[size_t(y) * w * scale + x] == want);
+						}
+				}
+		};
+		model1 m(load_regions(dir, game::id{ "vr" }));
+		m.reset();
+		m.set_drawing(false);
+		auto script = game::make_auto_play(game::id{ "vr" }, "", 12345, false);
+		assert(script);
+		for (int f = 1; f <= 3120; f++) {
+			const auto in = script->frame(f, m);
+			for (size_t c = 0; c < in.analog.size(); c++)
+				if (in.analog[c] >= 0) assert(m.set_analog_input(c, uint8_t(in.analog[c])));
+			for (size_t p = 0; p < in.pressed.size(); p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
+			m.run_frame();
+		}
+		assert(m.work_ram()[0x1138] == 0x10);
+		check(m);
+
+		model1 second(load_regions(dir, game::id{ "vr" }));
+		second.reset();
+		second.set_drawing(false);
+		for (int f = 0; f < 900; f++) second.run_frame();
+		for (auto [machine, player] : { std::pair{ &m, 1 }, std::pair{ &second, 2 } }) {
+			assert(game::vr::set_coin_setting(*machine, game::vr::FREE_PLAY));
+			assert(game::vr::set_link_player(*machine, player));
+			machine->reset();
+			machine->set_drawing(false);
+		}
+		linked_pair pair(m, second);
+		for (int f = 0; f <= 1200; f++) {
+			for (model1 *machine : { &m, &second }) {
+				machine->m_inputs[0] = uint8_t(~(f >= 900 && f < 906 ? 0x10 : 0));
+				assert(machine->set_analog_input(0, 0x80));
+				assert(machine->set_analog_input(1, machine == &m && f >= 1050 ? 0xff : 0x30));
+				assert(machine->set_analog_input(2, 0x30));
+			}
+			pair.run_frame();
+			if (f == 1200) {
+				assert(m.work_ram()[0x1138] == 0x10 && second.work_ram()[0x1138] == 0x10);
+				check(m);
+				check(second);
+			}
+		}
+		puts("VR menu backdrops: solo and linked selection, seamless brick sides, unchanged 4:3 centre, CPU/parts at 1x/2x");
+	}
+
 	static void tile_slide_interpolation()
 	{
 		model1::regions regions;
@@ -3889,6 +3984,10 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 2 && std::string(argv[2]) == "--vr-menu-backdrops") {
+		model1_video_test::vr_menu_backdrops(argv[1]);
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--tile-slide-interpolation") {
 		model1_video_test::tile_slide_interpolation();
 		return 0;
@@ -4094,6 +4193,7 @@ int main(int argc, char **argv)
 			for (bool extended : { false, true })
 				model1_video_test::logo(argv[1], smooth, extended);
 	if (argc > 1) {
+		model1_video_test::vr_menu_backdrops(argv[1]);
 		model1_video_test::trackside_distance(argv[1], false);
 		model1_video_test::trackside_distance(argv[1], false, true, false, true);
 		for (bool full : { false, true })
