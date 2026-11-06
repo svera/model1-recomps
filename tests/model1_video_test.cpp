@@ -1323,6 +1323,108 @@ struct model1_video_test
 		}
 	}
 
+	static void acropolis_boats(const char *dir, bool native, bool smooth, bool lod)
+	{
+		model1 arcade(load_regions(dir, game::id{ "vr" })), m(load_regions(dir, game::id{ "vr" }));
+		for (model1 *machine : { &arcade, &m }) {
+			machine->reset();
+			for (int f = 0; f < 900; f++) machine->run_frame();
+			assert(game::vr::set_machine_setting(*machine, game::vr::machine_setting::course_select, 3));
+			machine->reset();
+			machine->set_smooth(smooth);
+			machine->set_aspect(32.0f / 9);
+			game::vr::set_lod(*machine, lod);
+		}
+		game::vr::set_extended_draw_distance(arcade, false);
+		if (native) {
+			rec::hints map;
+			assert(map.read("assets/games/vr/vr_map.txt"));
+			rec::attach(m.cpu(), "vr");
+			assert(rec::build_native(m.program_rom(), map));
+			m.run_cpu = [](int n) { rec::run(n); };
+		}
+		int calls = 0, outside = 0, matrices = 0, inside_pixels = 0, outside_pixels = 0, late_pixels = 0;
+		std::array<std::vector<std::vector<uint32_t>>, 2> simulation;
+		int index = 0;
+		for (model1 *machine : { &arcade, &m }) {
+			const int side = index++;
+			const auto written = machine->m_gameplay.work_ram_written;
+			machine->m_gameplay.work_ram_written = [&, machine, side, written](uint16_t mask) {
+				written(mask);
+				if (!(mask & 0xff) || machine->cpu().pc() != 0xff7dc5) return;
+				auto &snapshot = simulation[side].emplace_back();
+				for (uint32_t car = 0x400d00; car < 0x403500; car += 0x280)
+					for (uint32_t field : { 0x1eu, 0x22u, 0x26u, 0x30u, 0x3cu, 0x44u, 0x191u, 0x1abu })
+						snapshot.push_back(machine->read32(car + field));
+			};
+		}
+		size_t compared = 0;
+		const auto read = m.m_gameplay.read32_value;
+		m.m_gameplay.read32_value = [&](uint32_t pc, uint32_t address, uint32_t value) {
+			const uint32_t result = read(pc, address, value);
+			if (pc == 0xffbf7b) {
+				calls++;
+				const uint32_t cell = m.read16(m.cpu().reg(25) + 0x34);
+				assert(cell < 256 && result == 0xffffffffu);
+				if (!(value & (1u << (cell % 32)))) outside++;
+			}
+			return result;
+		};
+		const auto matrix = m.m_gameplay.matrix_objects;
+		m.m_gameplay.matrix_objects = [&](uint32_t &word) {
+			if (m.cpu().pc() == 0xff8500 && m.read32(m.cpu().reg(31)) == 0xffc0a1)
+				matrices++;
+			return matrix(word);
+		};
+		std::set<uint32_t> polygons;
+		for (int i = 0; i < 10; i++) polygons.insert(m.read32(m.read32(0xffc12e + i * 4)));
+		assert(polygons.size() == 5);
+		const auto object = m.m_gameplay.object;
+		for (int f = 1; f <= 1800; f++) {
+			arcade.run_frame();
+			m.run_frame();
+			const size_t common = std::min(simulation[0].size(), simulation[1].size());
+			while (compared < common) {
+				assert(simulation[0][compared] == simulation[1][compared]);
+				compared++;
+			}
+			if (f % 4 != 1 || (smooth && m.m_logic[1].frame != m.frame_number() - 1)) continue;
+			if (smooth) m.render_smooth(double(m.frame_number()) - .5);
+			const size_t n = size_t(m.frame_w()) * m.frame_h();
+			const std::vector<uint32_t> picture(m.frame().data(), m.frame().data() + n);
+			bool original_visible = false;
+			m.m_gameplay.object = [&](uint32_t owner, uint32_t texture, uint32_t poly, uint32_t size, const float *data) {
+				auto effect = object(owner, texture, poly, size, data);
+				if (polygons.count(poly)) {
+					assert(owner >= 0x407900 && owner < 0x410000);
+					assert(m.read32(owner + 0xa) == 0xffbf6c);
+					const uint32_t cell = m.read16(owner + 0x34);
+					assert(cell < 256);
+					original_visible = (m.read32(0x501aa0 + cell / 32 * 4) & (1u << (cell % 32))) != 0;
+					effect.hidden = true;
+				}
+				return effect;
+			};
+			m.redraw();
+			int changed = 0;
+			for (size_t i = 0; i < n; i++) if (picture[i] != m.frame().data()[i]) changed++;
+			if (changed > 4) {
+				if (original_visible) inside_pixels++;
+				else {
+					outside_pixels++;
+					if (f >= 1200 && f <= 1600) late_pixels++;
+				}
+			}
+			m.m_gameplay.object = object;
+		}
+		printf("Acropolis boats (%s, smooth %s, LOD %s): %d calls, %d outside mask, %d matrix writes, %d in-mask and %d distant pixel samples (%d near final curve), %zu matching simulation updates\n",
+			native ? "native" : "interpreter", smooth ? "on" : "off", lod ? "on" : "off",
+			calls, outside, matrices, inside_pixels, outside_pixels, late_pixels, compared);
+		assert(calls > 100 && outside > 100 && matrices == calls * 20); // Ten matrices, two 16-bit writes each.
+		assert(inside_pixels > 5 && outside_pixels > 5 && late_pixels > 0 && compared > 500);
+		if (native) assert(rec::fallback_count() == 0);
+	}
+
 	static void attract_scenery(const char *dir, bool full, bool smooth, bool lod, bool native)
 	{
 		model1 m(load_regions(dir, game::id{ "vr" }));
@@ -2726,7 +2828,7 @@ struct model1_video_test
 		puts("Model 1 widescreen direct overlay checks passed");
 	}
 
-	// widescreen, SWA: an opaque layer isn't stretched; its sides continue a plain edge's colour, else black
+	// widescreen, SWA: a wide scene's opaque layer isn't stretched; its sides continue a plain edge's colour, else black
 	static void unstretched_backdrops()
 	{
 		constexpr uint32_t KEY = 0xff000000;
@@ -2758,6 +2860,38 @@ struct model1_video_test
 		vr.title = game::id{ "vr" };
 		assert(model1(std::move(vr)).stretch_backdrops());
 		puts("Model 1 unstretched widescreen backdrop checks passed");
+	}
+
+	static void narrow_screen_backdrops()
+	{
+		constexpr int h = 20;
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.m_wide_frame = false;
+		assert(m.extend_backdrops());
+
+		for (int i = 0; i < 0x2000; i++) m.m_pens[i] = i;
+		for (int i = 0; i < 16; i++) {
+			m.m_tiles.char_w(16 + i, 0x1111, 0xffff);
+			m.m_tiles.char_w(32 + i, 0x2222, 0xffff);
+		}
+		for (int e = 0; e < 0x1000; e++) {
+			m.m_tiles.tile_w(0x2000 + e, 1, 0xffff);
+			m.m_tiles.tile_w(0x3000 + e, 2, 0xffff);
+		}
+		m.m_tiles.tile_w(0x5002, 0x200 | h, 0xffff);
+		m.m_tiles.tile_w(0x5006, 0x4000, 0xffff);
+		m.m_tiles.update(m.m_pens);
+
+		const auto &backdrop = m.cached_layer(4, segas24_tile::DRAW_OPAQUE).px;
+		const int ext = m.m_ext;
+		for (int x = -ext; x < 496 + ext; x++) {
+			const uint32_t expected = (x < h || x >= 512 + h) ? 1 : 2;
+			assert(backdrop.pix(100, x + ext) == expected);
+		}
+		puts("Model 1 narrow-screen tiled backdrop checks passed");
 	}
 
 	// A split-mode layer pair (SWA's opening starfield) drawn wide: the two maps sit side by side as
@@ -3761,6 +3895,7 @@ int main(int argc, char **argv)
 	}
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();
+	model1_video_test::narrow_screen_backdrops();
 	if (argc > 2 && std::string(argv[2]) == "--swa-name-fall") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_name_fall(argv[1], aspect);
 		return 0;
@@ -3857,6 +3992,13 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	model1_video_test::trackside_collisions();
+	if (argc > 2 && std::string(argv[2]) == "--acropolis-boats") {
+		for (bool native : { false, true })
+			for (bool smooth : { false, true })
+				for (bool lod : { false, true })
+					model1_video_test::acropolis_boats(argv[1], native, smooth, lod);
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--direction-signs") {
 		for (bool native : { false, true })
 			for (bool smooth : { false, true }) {

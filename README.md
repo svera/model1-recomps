@@ -91,17 +91,20 @@ Under **Controls > Player 1 > Analog axes > Steering curve**, **Arcade** (former
 Linear) keeps the original response. **Standard** (the default) replaces Exponential with a nonlinear
 stick curve, speed-sensitive steering range, and an anti-snap rate limiter.
 It retains full steering range at low speed and progressively reduces it at high
-speed. Keyboard/D-pad steering uses the same timed accumulator: holding a direction
+speed. Keyboard/D-pad steering uses a more strongly smoothed timed accumulator: holding a direction
 ramps toward the speed-limited lock, releasing smoothly returns to center, and
 repeated taps build intermediate steering angles. Reversing direction also ramps
 through center. Arcade retains instant digital steering. Pedals, course selection
 and initials entry are unchanged. Each local player has their own setting; saved Exponential settings
 automatically migrate to Standard. Saved Linear settings remain Arcade.
 
-Standard is an independently tuned assist, not a guarantee against spin-outs. Its signed-square curve
-is scaled from 100% calibrated steering range at rest to 45% at 320 km/h and above,
-with steering travel limited from 6 to 1.8 normalized units per second over the
-same speed range (center to full lock is one unit). The assist accounts for the
+Standard is an independently tuned assist, not a guarantee against spin-outs.
+The analog stick blends linear and signed-square response equally, with 100%
+calibrated steering range at rest and 75% at 320 km/h and above. Analog steering
+travel is limited from 8 to 5 normalized units per second over the same speed
+range, with twice the rate for centering and countersteering. Keyboard/D-pad inputs retain
+the stronger 100%-to-45% range scaling and 6-to-1.8 units-per-second smoothing,
+including on release (center to full lock is one unit). The assist accounts for the
 arcade wheel's dead zone and early full-lock saturation. Timing follows simulation
 frames, not the display frame rate; the arcade physics and calibration are unchanged.
 
@@ -110,6 +113,7 @@ frames, not the display frame rate; the arcade physics and calibration are uncha
 Open the menu with **Esc** or **View / Select**:
 
 - **Display:** change render scale, antialiasing, screen shape (Fit window, 4:3, 16:10, 16:9, 21:9, or 32:9), background filtering, fullscreen, and frame rate.
+- **Display > CRT colours / Brightness / Gamma:** adjust the picture's colours and tones without changing the menus. These require SDL's GPU renderer (Metal on macOS, Vulkan or Direct3D 12 elsewhere); unsupported renderers show “not with this renderer”. Defaults leave the original picture unchanged.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** choose your car color, language, course, and difficulty.
   With two players, Language is directly under Game and applies to both players
@@ -217,7 +221,7 @@ Open the menu with **Esc** or **View / Select**:
 - **Display > Widescreen cockpit:** On (default) continues the cockpit's canopy struts and side
   consoles to the edges of a 16:9 or wider screen, following their lines instead of stretching
   the panel. Off leaves the sides open. Other 2D art, such as the notices and the Rankings,
-  keeps its 4:3 proportions.
+  keeps its 4:3 proportions; tiled backgrounds on 4:3 screens continue across the selected shape.
 - **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** invert flight Y, and the arcade's difficulty (player, enemy, timer) and attract
   sound settings. Changing one of these restarts the game when the menu closes.

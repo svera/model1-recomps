@@ -7,6 +7,7 @@
 #include <filesystem>
 #include "png.h"
 #include "menu.h"
+#include "crt_colours.h"
 #include "backgrounds.h"
 #include "scene_sync.h"
 #include "gpu_compose.h"
@@ -413,6 +414,7 @@ bool write_marker(const std::string &path, const char *text)
 struct settings
 {
 	int scale = 2, aspect = 0, volume = 100, music = 100, effects = 100, aa = 1, filter = 0;
+	int crt_colours = 0, brightness = 100, gamma = 100;   // the picture's colours: an arcade monitor's (crt::PRESETS), the player's brightness and gamma (%)
 	int renderer3d = 2;     // the 3D's renderer: 0 the CPU, 1 the GPU, 2 Auto (whichever is quicker here)
 	int graphics = 0;   // Windows GPU driver, from the next start: Auto or Direct3D 12
 	int fps = 120;
@@ -445,6 +447,9 @@ struct settings
 		num("music_volume", music, 0, 100);
 		num("effects_volume", effects, 0, 100);
 		num("screen_filter", filter, 0, 2);
+		num("crt_colours", crt_colours, 0, crt::N_PRESETS - 1);
+		num("brightness", brightness, crt::BRIGHT_MIN, crt::BRIGHT_MAX);
+		num("gamma", gamma, crt::GAMMA_MIN, crt::GAMMA_MAX);
 		flag("fullscreen", fullscreen);
 		flag("frame_timings", timings);
 		flag("arcade_mode", arcade);
@@ -498,6 +503,7 @@ struct settings
 		fprintf(f, "live_monitor = %d\n", live_monitor);
 		if (graphics) fprintf(f, "graphics = %d\n", graphics);
 		game.save_settings(f);
+		fprintf(f, "crt_colours = %d\nbrightness = %d\ngamma = %d\n", crt_colours, brightness, gamma);
 		if (!auto_3d.empty()) fprintf(f, "auto_3d = %s\nauto_3d_build = %s\n", auto_3d.c_str(), BUILD);
 		if (!roms_folder.empty()) fprintf(f, "roms_folder = %s\n", roms_folder.c_str());
 		for (int p = 0; p < 2; p++) ctl[p].save(f, p, game.controls());
@@ -769,12 +775,14 @@ struct local_display
 {
 	~local_display()
 	{
+		crt_paint.release();
 		for (auto *texture : glass) if (texture) SDL_DestroyTexture(texture);
 		if (renderer) SDL_DestroyRenderer(renderer);
 		if (window) SDL_DestroyWindow(window);
 	}
 	SDL_Window *window = nullptr;
 	SDL_Renderer *renderer = nullptr;
+	crt::Colours crt_paint;
 	bool icon_set = false;
 	bool renderer_vulkan = false;
 	int vsync = 0;
@@ -859,6 +867,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			c.game->load_settings(cabinets[0]->game->shared_display_settings());
 			c.config.scale = shared.scale; c.config.aspect = shared.aspect; c.config.fps = shared.fps;
 			c.config.aa = shared.aa; c.config.smooth_bg = shared.smooth_bg; c.config.filter = shared.filter;
+			c.config.crt_colours = shared.crt_colours;
+			c.config.brightness = shared.brightness; c.config.gamma = shared.gamma;
 			c.config.renderer3d = shared.renderer3d;
 			c.config.graphics = shared.graphics;
 			c.config.arcade = shared.arcade;
@@ -1701,6 +1711,54 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					cabinets[p]->settings_dirty = true;
 				}
 			}});
+		page.items.push_back({"CRT colours",
+			"The colours as an arcade monitor showed them. Off keeps the game's original colours.",
+			[&] {
+				const auto &c = *cabinets[0];
+				return std::string(crt::PRESETS[c.config.crt_colours].name) +
+					(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
+						? " (not with this renderer)" : "");
+			},
+			[&](int direction) {
+				const int choice = wrap_choice(cabinets[0]->config.crt_colours + direction, crt::N_PRESETS);
+				for (int p = 0; p < instance_count(); p++) {
+					if (!cabinets[p]) continue;
+					cabinets[p]->config.crt_colours = choice;
+					cabinets[p]->settings_dirty = true;
+				}
+			}});
+		page.items.push_back({"Brightness", "The picture's brightness; 100% is the game's own.",
+			[&] {
+				const auto &c = *cabinets[0];
+				return std::to_string(c.config.brightness) + "%" +
+					(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
+						? " (not with this renderer)" : "");
+			},
+			[&](int direction) {
+				const int value = std::clamp(cabinets[0]->config.brightness + 5 * direction,
+					crt::BRIGHT_MIN, crt::BRIGHT_MAX);
+				for (int p = 0; p < instance_count(); p++) {
+					if (!cabinets[p]) continue;
+					cabinets[p]->config.brightness = value;
+					cabinets[p]->settings_dirty = true;
+				}
+			}});
+		page.items.push_back({"Gamma", "The middle tones; 100% is the game's own.",
+			[&] {
+				const auto &c = *cabinets[0];
+				return std::to_string(c.config.gamma) + "%" +
+					(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
+						? " (not with this renderer)" : "");
+			},
+			[&](int direction) {
+				const int value = std::clamp(cabinets[0]->config.gamma + 5 * direction,
+					crt::GAMMA_MIN, crt::GAMMA_MAX);
+				for (int p = 0; p < instance_count(); p++) {
+					if (!cabinets[p]) continue;
+					cabinets[p]->config.gamma = value;
+					cabinets[p]->settings_dirty = true;
+				}
+			}});
 		page.items.push_back({"Show FPS", "Show the displayed frame rate in the corner.",
 			[&] { return std::string(cabinets[0]->config.show_fps ? "On" : "Off"); },
 			[&](int) {
@@ -2032,7 +2090,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	auto main_page = [&] {
 		menu_page page{"", "", {}};
 		page.items.push_back({"Resume", "Return to the game.", {}, {}, [&] { join_overlay.close(); }});
-		page.items.push_back({"Display", "Render scale, antialiasing, aspect ratio, frame rate and fullscreen.",
+		page.items.push_back({"Display", "Render scale, antialiasing, aspect ratio, CRT colours, frame rate and fullscreen.",
 			{}, {}, [&] { join_overlay.push(display_page()); }});
 		page.items.push_back({"Sound", "Overall volume, music and effects.", {}, {}, [&] { join_overlay.push(sound_page()); }});
 		page.items.push_back({"Controls", "Configure each player's controller and keyboard.", {}, {},
@@ -2195,10 +2253,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		auto &first = *cabinets[0];
 		int width = 0, height = 0;
-		if (!SDL_GetRenderOutputSize(renderer, &width, &height) ||
-			(first.texture && !draw_cabinet(renderer, first.texture, {0, 0, width, height}, first.machine.aspect()))) {
+		if (!SDL_GetRenderOutputSize(renderer, &width, &height)) {
 			fprintf(stderr, "two cabinets: current picture: %s\n", SDL_GetError());
 			return false;
+		}
+		if (first.texture) {
+			const SDL_FRect dst = cabinet_picture_rect({0, 0, width, height}, first.machine.aspect());
+			if (!first.display->crt_paint.draw(renderer, first.texture, &dst, first.config.crt_colours,
+				first.config.brightness, first.config.gamma)) {
+				fprintf(stderr, "two cabinets: current picture: %s\n", SDL_GetError());
+				return false;
+			}
 		}
 		join_overlay.render();
 		if (!SDL_RenderPresent(renderer)) {
@@ -2532,6 +2597,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					if (!set_fullscreen(!(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN))) return 1;
 				}
 			} else if (event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+				for (int p = 0; p < instance_count(); p++)
+					if (cabinets[p] && cabinets[p]->display)
+						cabinets[p]->display->crt_paint.lost();
 				for (int p = 0; p < instance_count(); p++) {
 					if (!cabinets[p]) continue;
 					auto &c = cabinets[p];
@@ -2839,7 +2907,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				SDL_Texture *picture = cabinet.composed
 					? (cabinet.machine.render_scale() == cabinet.config.scale ? cabinet.compose.target() : cabinet.compose.resolved())
 					: cabinet.texture;
-				if (!draw_cabinet(renderer, picture, viewports[view], picture_aspects[view])) {
+				const SDL_FRect dst = cabinet_picture_rect(viewports[view], picture_aspects[view]);
+				if (!cabinet.display->crt_paint.draw(renderer, picture, &dst,
+					cabinet.config.crt_colours, cabinet.config.brightness, cabinet.config.gamma)) {
 					fprintf(stderr, "two cabinets: draw cabinet %d: %s\n", view + 1, SDL_GetError());
 					return 1;
 				}
@@ -3921,6 +3991,9 @@ int main(int argc, char **argv)
 	const char *FILTER_NAMES[] = { "Off", "Scanlines", "CRT" };
 	SDL_Texture *glass = nullptr;
 	int glass_w = 0, glass_h = 0, glass_kind = 0;
+	// CRT colours, brightness and gamma (crt_colours.h): the game's picture drawn through them as it goes to the window
+	crt::Colours crt_paint;
+	bool crt_on = false;   // (any of them set: the menu says when this renderer can't)
 	auto draw_filter = [&] {
 		SDL_FRect r;
 		if (!cfg.filter || !SDL_GetRenderLogicalPresentationRect(ren, &r)) return;
@@ -4205,6 +4278,18 @@ int main(int argc, char **argv)
 			"Scanlines adds the dark lines between the arcade monitor's rows. CRT adds those, the monitor's red, green and blue stripes, and slightly darker corners. The lines need a large window or fullscreen to show.",
 			[&] { return std::string(FILTER_NAMES[cfg.filter]); },
 			[&](int d) { cfg.filter = wrap(cfg.filter + d, 3); cfg_dirty = true; } });
+		p.items.push_back({ "CRT colours",
+			"The colours as an arcade monitor showed them, as Supermodel's CRT colours. Sega arcade is a Japanese cabinet's: bluer whites and richer colours. The others are a Sony studio monitor and the TV standards of Japan, the US and Europe. Off: the game's colours as they are.",
+			[&] { return std::string(crt::PRESETS[cfg.crt_colours].name) + (crt_on && crt_paint.failed() ? " (not with this renderer)" : ""); },
+			[&](int d) { cfg.crt_colours = wrap(cfg.crt_colours + d, crt::N_PRESETS); cfg_dirty = true; } });
+		p.items.push_back({ "Brightness",
+			"The picture's brightness, for your screen: 100% is the game's own. Brighter lifts the whole picture (the brightest parts stay white).",
+			[&] { return std::to_string(cfg.brightness) + "%" + (crt_on && crt_paint.failed() ? " (not with this renderer)" : ""); },
+			[&](int d) { cfg.brightness = std::clamp(cfg.brightness + 5 * d, crt::BRIGHT_MIN, crt::BRIGHT_MAX); cfg_dirty = true; } });
+		p.items.push_back({ "Gamma",
+			"The middle tones, for your screen: 100% is the game's own. Higher brings the dark parts up without washing out the blacks or the whites; lower makes them deeper.",
+			[&] { return std::to_string(cfg.gamma) + "%" + (crt_on && crt_paint.failed() ? " (not with this renderer)" : ""); },
+			[&](int d) { cfg.gamma = std::clamp(cfg.gamma + 5 * d, crt::GAMMA_MIN, crt::GAMMA_MAX); cfg_dirty = true; } });
 		p.items.push_back({ "Show FPS", "Shows the frame rate in the top right corner.",
 			[&] { return on_off(cfg.show_fps); },
 			[&](int) { cfg.show_fps = !cfg.show_fps; cfg_dirty = true; if (!cfg.show_fps) menu.set_fps(""); } });
@@ -4451,7 +4536,7 @@ int main(int argc, char **argv)
 	auto main_page = [&] {
 		menu_page p{ "", "", {} };
 		p.items.push_back({ "Resume", "Back to the game.", {}, {}, [&] { menu.close(); } });
-		p.items.push_back({ "Display", "Sharpness, antialiasing, screen shape, background and screen filters, frame rate and fullscreen.",
+		p.items.push_back({ "Display", "Sharpness, antialiasing, screen shape, CRT colours, background and screen filters, frame rate and fullscreen.",
 							{}, {}, [&] { menu.push(display_page()); } });
 		p.items.push_back({ "Sound", "The overall, music and effects volumes.", {}, {}, [&] { menu.push(sound_page()); } });
 		p.items.push_back({ "Game", game_part.has_play_style() ? "Play style and reset." : "Reset the game.",
@@ -4790,6 +4875,7 @@ int main(int argc, char **argv)
 				// picture on show goes up again, drawn whole.
 				gc.reset();
 				if (e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
+					crt_paint.lost();
 					if (g3_tex[0]) {   // (the 3D's textures went with the device: back to the CPU from now on)
 						fprintf(stderr, "the 3D on the GPU: the renderer's device was reset: its pictures come back to the CPU from now on\n");
 						g3_unwrap();
@@ -5160,8 +5246,13 @@ int main(int argc, char **argv)
 		SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
 		SDL_RenderClear(ren);
 		// A game can suppress a transition without hiding the host menu.
-		if (!game_part.hide_frame())
-			SDL_RenderTexture(ren, show_target ? (aa_now() > 1 && gc.resolved() ? gc.resolved() : gc.target()) : tex, nullptr, nullptr);
+		if (!game_part.hide_frame() &&
+			!crt_paint.draw(ren, show_target ? (aa_now() > 1 && gc.resolved() ? gc.resolved() : gc.target()) : tex,
+				nullptr, cfg.crt_colours, cfg.brightness, cfg.gamma)) {
+			fprintf(stderr, "CRT colours: picture draw failed: %s\n", SDL_GetError());
+			return 1;
+		}
+		crt_on = cfg.crt_colours || cfg.brightness != 100 || cfg.gamma != 100;
 		draw_filter();
 		menu.render();
 		static const int shot_at = getenv("M1_SHOT_AT") ? atoi(getenv("M1_SHOT_AT")) : -1;   // testing: the window at that pass too
@@ -5297,6 +5388,7 @@ int main(int argc, char **argv)
 	g3_unwrap();                         // (the renderer's wraps of its textures go first)
 	m.set_gpu3d(nullptr);
 	g3.reset();                          // (its device goes before SDL does)
+	crt_paint.release();
 	if (gpu_check) fprintf(stderr, "gpu check: %d pictures put together on the GPU checked, %d differ\n", gpu_checked, gpu_differ);
 	gc.release();                          // (its textures go before the renderer)
 	save_recording("quit");

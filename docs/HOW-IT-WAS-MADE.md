@@ -712,6 +712,14 @@ results. Scene-enable checks, stored masks, stored budgets and object command si
 Only these props' drawing calls bypass the submission-budget comparison, even with LOD On.
 Each part's matrix is attributed to its R25 record rather than a stale car record for smooth motion.
 
+Acropolis's ten sailboats share a render-only narrow-mask check at `FFBF7B`. Full overrides
+that read and the submission-budget check for caller `FFC0A1`, with R25 matrix ownership
+so smooth motion pairs the fleet's parts with their scenery record. Arcade retains the original culling.
+`build/bin/model1_video_test build/vr --acropolis-boats` selects Expert-only attract mode and
+checks all ten boat submissions and visible boat pixels in ultrawide near the final lakeside curve on both
+CPU backends, with LOD and smooth motion independently on and off. It also compares car
+simulation state with Arcade distance at matched completed scenery lists.
+
 `build/bin/model1_video_test build/vr --attract-scenery` runs 6,000 attract frames per configuration
 on the interpreter and native backend, covering both distance settings and smooth/detail modes.
 The original three-part check at `FFD928` covers the large wheel, not the windmills; checking its
@@ -883,25 +891,41 @@ modified.
 
 For normalized signed stick input `x` and speed fraction
 `v = clamp(speed_kmh / 320, 0, 1)`, the target is
-`x * abs(x) * (1 - 0.55 * v)`. Thus 30% stick gives about 9% steering at rest;
-the available calibrated range falls from 100% at rest to 45% at 320 km/h and
+`x * (0.5 + 0.5 * abs(x)) * (1 - 0.25 * v)`. Thus 30% stick gives about
+19.5% steering at rest; the available calibrated range falls from 100% at rest to 75% at 320 km/h and
 above. The host reads the integer speed at `0x400d14`, already used by the
 qualifying driver, rather than assuming a floating-point physics velocity.
 
 Each update moves the accumulator toward the target by at most
-`(6 - 4.2 * v) * dt`, in normalized center-to-full-lock units. It is also clamped
+`(8 - 3 * v) * dt`, in normalized center-to-full-lock units. Analog centering
+and countersteering (a smaller-magnitude target or one across center) use twice
+that rate. It is also clamped
 to the current speed's range, so accelerating cannot retain an old, wider lock.
 `dt` follows the Model 1 board frame duration, `656 * 424 / 16000000` seconds,
 not the display's 30/60/120 FPS setting. Repeated sampling at the same machine
 frame does not advance it. Each cabinet's host owns its own history, cleared
 after boot.
 
-Keyboard and D-pad presses feed -1 or +1 into the same accumulator, taking
+Keyboard and D-pad presses feed -1 or +1 into the accumulator, taking
 priority over a simultaneous stick deflection. Holding ramps toward the current
 limit; releasing with a centered stick ramps back to zero; reversing ramps
 through center. Short taps separated by releases build intermediate steering
 instead of repeatedly snapping between full lock and center. No separate tap
 detector or PWM oscillator is needed. Arcade retains instant digital steering.
+Digital inputs retain the original stronger tuning: range `1 - 0.55 * v` and
+rate `6 - 4.2 * v`, with no centering/countersteering boost. This digital mode
+persists after release until centered, so lifting a button cannot accidentally
+switch to the faster analog return. A non-neutral analog input takes over when
+no single digital direction is held; entering a menu, booting or selecting
+Arcade clears that history.
+
+The initial shared signed-square curve, 45% top-speed range and slow reversal
+felt too rigid during the user's analog-stick playtesting. The lighter analog
+tuning above addresses that feedback without weakening the digital filter.
+At 320 km/h, half stick now yields about 28% steering rather than 11%, and tests
+require centering within 120 ms and a full opposite-lock reversal within 250 ms.
+Those are filter timings, not measurements of the car's yaw or tire response.
+
 Pedals are unaffected. Course selection and initials entry bypass the assist,
 retain their original tap/repeat behavior, and clear the steering history.
 
@@ -924,8 +948,9 @@ The ROM-backed run confirms course taps into a Medium race and `SDK` initials
 saved after a qualifying finish, with Standard enabled for menu input. These
 checks establish the filter's numerical behavior and preserved navigation, not
 handling quality: the scripted qualifying driver does not race through this
-assist. Controller playtesting, corner/drift tuning and comparison with the
-Switch port remain unverified. Standard does not guarantee traction or prevent
+assist. The revised analog tuning still needs controller playtesting and
+corner/drift tuning; comparison with the Switch port remains unverified.
+Standard does not guarantee traction or prevent
 every spin-out.
 
 ## VR's CPU speed

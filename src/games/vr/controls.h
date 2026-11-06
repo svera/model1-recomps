@@ -67,16 +67,23 @@ public:
 			current = screen::none;
 			if (!standard_steering) {
 				steering = 0;
+				digital_steering = false;
 				return left != right ? (left ? 0 : 255) : analog;
 			}
+			if (left != right) digital_steering = true;
+			else if (analog != 128 || steering == 0) digital_steering = false;
 			const int delta = int(analog) - 128;
 			const float input = left != right ? (left ? -1.0f : 1.0f) :
 				float(delta) / (delta < 0 ? 128.0f : 127.0f);
 			const float speed = std::clamp(speed_kmh / 320.0f, 0.0f, 1.0f);
-			const float limit = 1.0f - 0.55f * speed;
-			const float target = input * std::abs(input) * limit;
+			const float limit = 1.0f - (digital_steering ? 0.55f : 0.25f) * speed;
+			const float curve = digital_steering ? input : input * (0.5f + 0.5f * std::abs(input));
+			const float target = curve * limit;
 			// Normalized calibrated steering per second, not per rendered frame.
-			const float step = (6.0f - 4.2f * speed) * seconds;
+			float rate = digital_steering ? 6.0f - 4.2f * speed : 8.0f - 3.0f * speed;
+			if (!digital_steering && (target * steering < 0 || std::abs(target) < std::abs(steering)))
+				rate *= 2.0f;
+			const float step = rate * seconds;
 			steering += std::clamp(target - steering, -step, step);
 			// A rising speed must not leave the previous, wider lock available.
 			steering = std::clamp(steering, -limit, limit);
@@ -85,6 +92,7 @@ public:
 			return magnitude == 0 ? 128 : uint8_t(128 + (steering < 0 ? -1 : 1) * (5 + magnitude));
 		}
 		steering = 0;
+		digital_steering = false;
 		if (s != current) {
 			current = s;
 			index = choice(s, 0x80);
@@ -110,6 +118,7 @@ public:
 
 private:
 	float steering = 0;
+	bool digital_steering = false;
 	screen current = screen::none;
 	int index = 0, held = 0, held_direction = 0;
 };

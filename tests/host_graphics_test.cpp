@@ -27,7 +27,45 @@ static SDL_Surface *read_pixels(SDL_Renderer *renderer, const SDL_Rect *rect)
 #undef SDL_RenderReadPixels
 #include "../src/host/cabinet_display.h"
 #include "../src/host/menu.h"
+#include "../src/host/crt_colours.h"
 #include <RmlUi/Core.h>
+
+static void crt_checks(SDL_Renderer *renderer)
+{
+	assert(SDL_GetGPURendererDevice(renderer));
+	auto *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, 1, 1);
+	assert(texture);
+	const uint32_t colour = 0x00808080;
+	assert(SDL_UpdateTexture(texture, nullptr, &colour, sizeof colour));
+	crt::Colours paint;
+	auto sample = [&](int preset, int brightness, int gamma) {
+		assert(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255));
+		assert(SDL_RenderClear(renderer));
+		assert(paint.draw(renderer, texture, nullptr, preset, brightness, gamma));
+		assert(!paint.failed());
+		auto *pixels = SDL_RenderReadPixels(renderer, nullptr);
+		assert(pixels);
+		Uint8 r, g, b, a;
+		assert(SDL_ReadSurfacePixel(pixels, 0, 0, &r, &g, &b, &a));
+		SDL_DestroySurface(pixels);
+		return std::array<int, 3>{r, g, b};
+	};
+	const auto plain = sample(0, 100, 100);
+	assert(plain[0] == 128 && plain[1] == 128 && plain[2] == 128);
+	const auto dimmed = sample(0, 50, 100);
+	assert(dimmed[0] >= 60 && dimmed[0] <= 70);
+	assert(dimmed[0] == dimmed[1] && dimmed[1] == dimmed[2]);
+	const auto gamma = sample(0, 100, 200);
+	assert(gamma[0] > plain[0] && gamma[0] < 255);
+	const uint32_t tinted = 0x00806040;
+	assert(SDL_UpdateTexture(texture, nullptr, &tinted, sizeof tinted));
+	const auto original = sample(0, 100, 100);
+	for (int preset = 1; preset < crt::N_PRESETS; preset++)
+		assert(sample(preset, 100, 100) != original);
+	assert(sample(0, 100, 100) == original);
+	paint.release();
+	SDL_DestroyTexture(texture);
+}
 
 static void compose_checks(SDL_Renderer *renderer)
 {
@@ -336,7 +374,13 @@ int main()
 	compose_checks(renderer);
 	menu_checks(window, renderer);
 	SDL_DestroyRenderer(renderer);
+	renderer = SDL_CreateRenderer(window, "gpu");
+	if (!renderer) fprintf(stderr, "GPU graphics tests: %s\n", SDL_GetError());
+	assert(renderer);
+	compose_checks(renderer);
+	crt_checks(renderer);
+	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
-	printf("Host graphics: split-screen pixels/layouts/letterboxing, persistent notice overlay, compose rounding boundaries, notice timing, menu pause and FPS coexistence passed\n");
+	printf("Host graphics: split-screen pixels/layouts/letterboxing, persistent notice overlay, compose rounding boundaries, notice timing, menu pause, FPS coexistence and GPU CRT colours/brightness/gamma passed\n");
 }

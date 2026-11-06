@@ -341,7 +341,7 @@ private:
 	bitmap_rgb32 m_bitmap;
 	int m_scale = 1;
 	int m_ext = 0;                   // extra arcade pixels each side in widescreen
-	bool m_wide_frame = true;        // this frame uses the extra width (the fight); else 4:3 in the middle
+	bool m_wide_frame = true;        // the scene uses the extra width; else it stays 4:3
 	bool m_camera_wide = true;       // last camera selected a wide scene (before screen art overrides it)
 	struct slot {
 		float mat[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
@@ -501,6 +501,7 @@ private:
 	std::vector<screen_art> m_screens;
 	const screen_art *m_screen_now = nullptr;
 	void draw_screen_sides(bitmap_rgb32 &bitmap);
+	bool extend_backdrops() const { return m_ext && !m_wide_frame && !m_screen_now; }
 	std::vector<uint32_t> m_tile_coord;             // where each m_tile_tmp pixel came from
 	sky_art *m_sky_now = nullptr, *m_sky_last = nullptr;
 	bool m_sky_smooth = false;
