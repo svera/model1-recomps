@@ -603,10 +603,13 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
 		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance,
 			smooth_slide ? slide_rows.data() : nullptr);
+		else if (extend_backdrops() && (flags & segas24_tile::DRAW_OPAQUE))
+			m_tiles.draw_wide(c.px, layer, flags, m_ext);
 		else m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
-		if (flags & segas24_tile::DRAW_OPAQUE) fill_backdrop_sides(c.px, layer, flags);
+		if (flags & segas24_tile::DRAW_OPAQUE)
+			fill_backdrop_sides(c.px, layer, flags);
 		c.sides = sliding || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext));
 		c.x0.assign(SCREEN_H, 0);
@@ -747,6 +750,11 @@ void model1::prepare_layers()
 void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
+	if (extend_backdrops()) {
+		if (layer >= 0 && m_gameplay.layer_sides)
+			m_gameplay.layer_sides(layer, pixels.data(), pixels.width(), pixels.height(), m_ext);
+		return;
+	}
 	if (!m_ext || !m_wide_frame || stretch_backdrops()) return;
 	auto background = [&](const bitmap_rgb32 &b, int x0, int x1, uint32_t colour) {
 		std::unordered_map<uint32_t, int> counts;
@@ -816,7 +824,8 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 				m_tile_coord.assign(size_t(m_tile_tmp.width()) * m_tile_tmp.height(), ~0u);
 				m_tiles.m_coord = m_tile_coord.data();
 			}
-			m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
+			if (extend_backdrops()) m_tiles.draw_wide(m_tile_tmp, layer, flags, m_ext);
+			else m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;
 			fill_backdrop_sides(m_tile_tmp, layer, flags);
@@ -1080,8 +1089,8 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	}
 	clear_moire_marks(bitmap, cliprect);
 	m_last_quads = m_frame_quads;
-	if (m_parts && !(m_ext && !m_wide_frame && !m_screen_now)) parts_end(bitmap);
-	if (m_ext && !m_wide_frame && !m_screen_now) {   // 4:3 screens without a picture's sides: black
+	if (m_parts && !(m_ext && !m_wide_frame && !m_screen_now && !extend_backdrops())) parts_end(bitmap);
+	if (m_ext && !m_wide_frame && !m_screen_now && !extend_backdrops()) {   // 4:3 screens without a picture's sides: black
 		const int l = m_ext * m_scale, r = (m_ext + SCREEN_W) * m_scale;
 		if (m_parts) {
 			gpu_op o;
