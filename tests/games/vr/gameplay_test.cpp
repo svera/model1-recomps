@@ -479,14 +479,15 @@ static void animated_scenery_settings()
 	game::vr::set_lod(machine, true);
 	for (bool full : { false, true }) {
 		game::vr::set_extended_draw_distance(machine, full);
-		for (uint32_t pc : { 0xffd77au, 0xffd928u, 0xffdabau, 0xffc1b2u,
+		for (uint32_t pc : { 0xffd77au, 0xffd928u, 0xffdabau, 0xffc1b2u, 0xffbf7bu, 0xffb57eu,
 			0xffb0ebu, 0xffb769u, 0xffaac4u, 0xffb679u, 0xffd644u, 0xffdc4du, 0xffd0e2u, 0xffcc8cu,
 			0xfef9f3u, 0xfefdb2u, 0xfefe08u, 0xfea9d3u, 0xfedd7au, 0xff4198u, 0xff5ce4u,
 			0xff5da2u, 0xff62deu, 0xff7295u, 0xff72e7u, 0u }) {
 			machine.cpu().pc_ref() = pc;
 			const bool wide_mask = pc == 0xffb0eb || pc == 0xffb769 || pc == 0xffaac4 ||
 				pc == 0xffb679 || pc == 0xffdc4d || pc == 0xffd0e2;
-			const bool narrow_mask = pc == 0xffd77a || pc == 0xffd928 || pc == 0xffdaba || pc == 0xffc1b2;
+			const bool narrow_mask = pc == 0xffd77a || pc == 0xffd928 || pc == 0xffdaba ||
+				pc == 0xffc1b2 || pc == 0xffbf7b;
 			for (uint32_t address = 0x501a9c; address <= 0x501ae0; address += 4) {
 				machine.write32(address, 0x12345678);
 				const bool mask = (narrow_mask && address >= 0x501aa0 && address <= 0x501abc) ||
@@ -502,7 +503,7 @@ static void animated_scenery_settings()
 		for (uint32_t caller : { 0xffd809u, 0xffd85au, 0xffd9e8u, 0xffda21u, 0xffda67u,
 			0xffdb49u, 0xffdb9au, 0xffdbd5u, 0xffb254u, 0xffb81cu, 0xffb859u, 0xffc235u, 0xffc251u,
 			0xffab97u, 0xffb72cu, 0xffddd4u, 0xffddebu, 0xffde6eu, 0xffdedcu, 0xffdf42u,
-			0xffd19cu, 0xffcec9u, 0xff846fu, 0xffd72bu, 0u }) {
+			0xffd19cu, 0xffc0a1u, 0xffb607u, 0xffcec9u, 0xff846fu, 0xffd72bu, 0u }) {
 			machine.write32(0x500100, caller);
 			for (uint32_t pc : { 0xff84a2u, 0xff848au, 0xff8571u }) {
 				machine.cpu().pc_ref() = pc;
@@ -511,7 +512,7 @@ static void animated_scenery_settings()
 					caller == 0xffb254 || caller == 0xffb81c || caller == 0xffb859 || caller == 0xffc235 ||
 					caller == 0xffc251 || caller == 0xffab97 || caller == 0xffb72c ||
 					caller == 0xffddd4 || caller == 0xffddeb || caller == 0xffde6e ||
-					caller == 0xffdedc || caller == 0xffdf42 || caller == 0xffd19c;
+					caller == 0xffdedc || caller == 0xffdf42 || caller == 0xffd19c || caller == 0xffc0a1;
 				assert(machine.read32(0x5011b0) ==
 					(full && ((animated && pc != 0xff8571) ||
 						(pending && caller == 0xff846f && pc == 0xff84a2)) ? 0x7fffffffu : 1234u));

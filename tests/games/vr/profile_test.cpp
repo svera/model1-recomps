@@ -22,16 +22,17 @@ static void steering_curve()
 	assert(wheel_t::calibrated(settled(0, 0)) == -127);
 	assert(settled(128, 0) == 128);
 	assert(wheel_t::calibrated(settled(255, 0)) == 127);
-	assert(wheel_t::calibrated(settled(64, 0)) == -32);
-	assert(wheel_t::calibrated(settled(192, 0)) == 32);
-	assert(wheel_t::calibrated(settled(166, 0)) == 11);   // 30% stick gives about 9% steering
+	assert(wheel_t::calibrated(settled(64, 0)) == -47);
+	assert(wheel_t::calibrated(settled(192, 0)) == 47);
+	assert(wheel_t::calibrated(settled(166, 0)) == 25);   // 30% stick gives about 20% steering
 	for (float speed : { 0.0f, 160.0f, 320.0f, 500.0f }) {
 		int previous = 0;
 		for (int analog = 0; analog <= 255; analog++) {
 			const auto input = uint8_t(analog);
 			const int output = settled(input, speed);
 			assert(output >= previous);
-			assert(std::abs(wheel_t::calibrated(output)) <= std::abs(wheel_t::calibrated(analog)));
+			assert(std::abs(wheel_t::calibrated(output)) <=
+				int(std::ceil(std::abs(analog - 128) * 127.0 / (analog < 128 ? 128 : 127))) + 1);
 			assert(linear.update(screen::none, false, false, input) == input);
 			assert(linear.update(screen::none, true, false, input) == 0);
 			assert(linear.update(screen::none, false, true, input) == 255);
@@ -41,10 +42,11 @@ static void steering_curve()
 	for (int delta = 0; delta <= 127; delta++)
 		assert(std::abs((128 - settled(uint8_t(128 - delta), 0)) -
 			(settled(uint8_t(128 + delta), 0) - 128)) <= 1);
-	assert(wheel_t::calibrated(settled(255, 80)) == 110);
-	assert(wheel_t::calibrated(settled(255, 160)) == 91);
-	assert(wheel_t::calibrated(settled(255, 320)) == 57);
-	assert(wheel_t::calibrated(settled(0, 320)) == -57);
+	assert(wheel_t::calibrated(settled(255, 80)) == 119);
+	assert(wheel_t::calibrated(settled(255, 160)) == 112);
+	assert(wheel_t::calibrated(settled(255, 320)) == 95);
+	assert(wheel_t::calibrated(settled(0, 320)) == -95);
+	assert(wheel_t::calibrated(settled(192, 320)) == 35);
 	assert(settled(255, 500) == settled(255, 320));
 	int previous_lock = 255;
 	for (int speed = 0; speed <= 400; speed++) {
@@ -56,7 +58,7 @@ static void steering_curve()
 	for (float speed : { 0.0f, 320.0f }) {
 		wheel_t wheel;
 		int previous = 0;
-		const int max_step = int(std::ceil((speed == 0 ? 6.0f : 1.8f) * wheel_t::FRAME_SECONDS * 128));
+		const int max_step = int(std::ceil((speed == 0 ? 8.0f : 5.0f) * 2.0f * wheel_t::FRAME_SECONDS * 128));
 		for (uint8_t target : { 255, 0, 128 }) {
 			const int end = wheel_t::calibrated(settled(target, speed));
 			for (int frame = 0; frame < 120; frame++) {
@@ -69,23 +71,37 @@ static void steering_curve()
 		}
 	}
 	wheel_t slow, fast;
-	assert(slow.update(screen::none, false, false, 255, true, 0) == 141);
-	assert(fast.update(screen::none, false, false, 255, true, 320) == 135);
-	assert(fast.update(screen::none, false, false, 255, true, 320, 0) == 135);
+	assert(slow.update(screen::none, false, false, 255, true, 0) == 143);
+	assert(fast.update(screen::none, false, false, 255, true, 320) == 140);
+	assert(fast.update(screen::none, false, false, 255, true, 320, 0) == 140);
 	// Identical elapsed simulation time gives the same result at different sampling rates.
 	for (int hz : { 30, 60, 120 }) {
 		wheel_t wheel;
 		uint8_t value = 128;
-		for (int frame = 0; frame < hz / 5; frame++)
+		for (int frame = 0; frame < hz / 10; frame++)
 			value = wheel.update(screen::none, false, false, 255, true, 320, 1.0f / hz);
-		assert(value == 160);
+		assert(std::abs(int(value) - 171) <= 1);   // half-unit calibration rounding
 	}
 	// Speed changes enforce the new range immediately, while players keep independent histories.
 	for (int frame = 0; frame < 60; frame++) slow.update(screen::none, false, false, 255, true);
-	assert(wheel_t::calibrated(slow.update(screen::none, false, false, 255, true, 320)) == 57);
+	assert(wheel_t::calibrated(slow.update(screen::none, false, false, 255, true, 320)) == 95);
 	assert(fast.update(screen::none, false, false, 128, true, 320) == 128);
 	assert(slow.update(screen::none, false, false, 0, false) == 0);
 	assert(slow.update(screen::none, false, false, 128, true) == 128);
+	// At top speed the analog stick centers within 120 ms and reverses within 250 ms.
+	wheel_t responsive;
+	for (int frame = 0; frame < 60; frame++)
+		responsive.update(screen::none, false, false, 255, true, 320);
+	int center_frames = 0;
+	while (responsive.update(screen::none, false, false, 128, true, 320) != 128)
+		assert(++center_frames * wheel_t::FRAME_SECONDS < 0.12f);
+	assert((center_frames + 1) * wheel_t::FRAME_SECONDS <= 0.12f);
+	for (int frame = 0; frame < 60; frame++)
+		responsive.update(screen::none, false, false, 255, true, 320);
+	int reverse_frames = 0;
+	while (wheel_t::calibrated(responsive.update(screen::none, false, false, 0, true, 320)) != -95)
+		assert(++reverse_frames * wheel_t::FRAME_SECONDS < 0.25f);
+	assert((reverse_frames + 1) * wheel_t::FRAME_SECONDS <= 0.25f);
 	// Both menu screens must see the uncurved axis, including their repeat thresholds.
 	for (auto s : { screen::course, screen::initials })
 		for (int analog = 0; analog <= 255; analog++)
@@ -145,23 +161,25 @@ static void digital_steering()
 {
 	using wheel_t = game::vr::menu_steering;
 	for (float speed : { 0.0f, 160.0f, 320.0f }) {
-		wheel_t digital, analog;
-		// Hold, reverse, release and opposing buttons match the same analog rate limiter.
+		wheel_t digital;
+		int previous = 0;
+		// Digital ramp and release keep the original, slower rate and narrower range.
 		for (int direction : { 1, -1, 0, 1, 2 }) {
 			const bool left = direction == -1 || direction == 2;
 			const bool right = direction == 1 || direction == 2;
-			const uint8_t target = direction == 1 ? 255 : direction == -1 ? 0 : 128;
-			int previous = wheel_t::calibrated(analog.update(screen::none, false, false, 128, true, speed, 0));
+			const int lock = speed == 0 ? 127 : speed == 160 ? 91 : 57;
+			const int end = direction == 1 ? lock : direction == -1 ? -lock : 0;
 			for (int frame = 0; frame < 60; frame++) {
 				const auto output = digital.update(screen::none, left, right, 128, true, speed);
-				assert(output == analog.update(screen::none, false, false, target, true, speed));
 				const int value = wheel_t::calibrated(output);
 				if (frame == 0 && direction == 1) assert(value > 0 && value < 127);
 				if (frame == 0 && direction == 0) assert(value < 0);   // release is not instant
-				assert(std::abs(value - previous) <= 16);
+				const int max_step = int(std::ceil((6.0f - 4.2f * speed / 320.0f) * wheel_t::FRAME_SECONDS * 128));
+				assert(std::abs(value - previous) <= max_step + 2);
+				assert(value >= std::min(previous, end) && value <= std::max(previous, end));
 				previous = value;
 			}
-			if (direction == 0 || direction == 2) assert(previous == 0);
+			assert(previous == end);
 		}
 	}
 	wheel_t tapping;
@@ -189,6 +207,8 @@ static void digital_steering()
 	for (int frame = 0; frame < 10; frame++)
 		assert(mixed.update(screen::none, true, false, 255, true, 320) ==
 			digital_only.update(screen::none, true, false, 128, true, 320));
+	assert(wheel_t::calibrated(mixed.update(screen::none, false, false, 255, true, 320)) >
+		wheel_t::calibrated(digital_only.update(screen::none, false, false, 128, true, 320)));
 	assert(mixed.update(screen::none, false, true, 128, false) == 255);
 	assert(mixed.update(screen::none, false, false, 128, true, 320) == 128);
 	for (auto s : { screen::course, screen::initials }) {

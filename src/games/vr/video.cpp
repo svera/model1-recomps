@@ -25,6 +25,7 @@ const video_traits VIDEO{ .smooth_frames = true,
 	.records = draw_records{ {
 		{ 0xff8500, 25, 0xffab97 }, { 0xff8500, 25, 0xffb72c },
 		{ 0xff8500, 25, 0xffb254 },
+		{ 0xff8500, 25, 0xffc0a1 },
 		{ 0xff8500, 25, 0xffd19c },
 		{ 0xff8500, 25, 0xffcec9 },
 		{ 0xff8500, 25, 0xffb81c }, { 0xff8500, 25, 0xffb859 },
