@@ -712,6 +712,14 @@ results. Scene-enable checks, stored masks, stored budgets and object command si
 Only these props' drawing calls bypass the submission-budget comparison, even with LOD On.
 Each part's matrix is attributed to its R25 record rather than a stale car record for smooth motion.
 
+Acropolis's ten sailboats share a render-only narrow-mask check at `FFBF7B`. Full overrides
+that read and the submission-budget check for caller `FFC0A1`, with R25 matrix ownership
+so smooth motion pairs the fleet's parts with their scenery record. Arcade retains the original culling.
+`build/bin/model1_video_test build/vr --acropolis-boats` selects Expert-only attract mode and
+checks all ten boat submissions and visible boat pixels in ultrawide near the final lakeside curve on both
+CPU backends, with LOD and smooth motion independently on and off. It also compares car
+simulation state with Arcade distance at matched completed scenery lists.
+
 `build/bin/model1_video_test build/vr --attract-scenery` runs 6,000 attract frames per configuration
 on the interpreter and native backend, covering both distance settings and smooth/detail modes.
 The original three-part check at `FFD928` covers the large wheel, not the windmills; checking its

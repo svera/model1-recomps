@@ -305,12 +305,14 @@ gameplay_callbacks create_gameplay(model1 &machine)
 					caller == 0xffb81c || caller == 0xffb859 || caller == 0xffc235 ||
 					caller == 0xffc251 || caller == 0xffab97 || caller == 0xffb72c ||
 					caller == 0xffddd4 || caller == 0xffddeb || caller == 0xffde6e ||
-					caller == 0xffdedc || caller == 0xffdf42 || caller == 0xffd19c) return 0x7fffffffu;
+					caller == 0xffdedc || caller == 0xffdf42 || caller == 0xffd19c ||
+					caller == 0xffc0a1) return 0x7fffffffu;
 			}
 		}
 		// Render-only scenery and flags use the narrow mask; collidable props use the wider one.
 		if (state->extended_draw_distance && address >= 0x501aa0 && address <= 0x501abc &&
-			(pc == 0xffd77a || pc == 0xffd928 || pc == 0xffdaba || pc == 0xffc1b2)) return 0xffffffffu;
+			(pc == 0xffd77a || pc == 0xffd928 || pc == 0xffdaba || pc == 0xffc1b2 ||
+			 pc == 0xffbf7b)) return 0xffffffffu;
 		if (state->extended_draw_distance && address >= 0x501ac0 && address <= 0x501adc &&
 			(pc == 0xffb0eb || pc == 0xffb769 || pc == 0xffaac4 || pc == 0xffb679 ||
 			 pc == 0xffdc4d || pc == 0xffd0e2)) return 0xffffffffu;
