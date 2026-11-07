@@ -42,6 +42,8 @@ static void observed_race()
 	model1 master(std::move(a)), monitor(std::move(b));
 	master.enable_link({}, true);
 	monitor.enable_link({}, true);
+	master.link()->set_cn(1);
+	monitor.link()->set_cn(1);
 	master.link()->write(2, 1);
 	master.work_ram()[0x1138] = monitor.work_ram()[0x1138] = 0x14;
 	const auto callbacks = game::vr::create_gameplay(monitor);
@@ -103,6 +105,38 @@ static void observed_race()
 		callbacks.observe(&master);
 		callbacks.reset();
 		assert(state->observed_racers == 0);
+
+		callbacks.observe(&master);
+		assert(state->observed_racers == racers);
+		master.reset();
+		assert(master.work_ram()[0x1138] == 0x14);
+		assert(master.link()->read(2) == 0 && !master.link()->ready());
+		const auto before_reset_observation = monitor.nvram();
+		callbacks.observe(&master);
+		assert(state->observed_racers == 0);
+		assert(callbacks.read_value(0xfedd6b, 0x4032b4, 0xabcd) == 0xabcd);
+		assert(monitor.nvram() == before_reset_observation);
+		master.link()->set_cn(1);
+		master.link()->write(2, 1);
+		master.link()->write(3, uint8_t(racers));
+		callbacks.observe(&master);
+		assert(state->observed_racers == racers);
+
+		monitor.reset();
+		assert(monitor.work_ram()[0x1138] == 0x14 && !monitor.link()->ready());
+		callbacks.observe(&master);
+		assert(state->observed_racers == 0);
+		monitor.link()->set_cn(1);
+		callbacks.observe(&master);
+		assert(state->observed_racers == racers);
+
+		master.reset();
+		monitor.reset();
+		callbacks.observe(&master);
+		assert(state->observed_racers == 0);
+		master.link()->set_cn(1);
+		master.link()->write(2, 1);
+		monitor.link()->set_cn(1);
 	}
 }
 

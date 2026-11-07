@@ -632,7 +632,8 @@ bool model1::hud_edge_pinning_active() const
 {
 	if (!m_video || !m_video->pin_hud_edges || !m_ext || !m_wide_frame) return false;
 	const uint8_t mode = m_ram_b[0x1138];
-	return mode == 0x03 || mode == 0x07 || mode == 0x12 || mode == 0x14;
+	return mode == 0x03 || mode == 0x07 || mode == 0x12 || mode == 0x14 ||
+		mode == 0x15 || mode == 0x16 || mode == 0x19 || mode == 0x1a;
 }
 
 void model1::pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const

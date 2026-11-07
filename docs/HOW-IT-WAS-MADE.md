@@ -640,6 +640,28 @@ load/save and simulated sleep. An SDL-GPU host built on macOS also checked curre
 the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
 management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
 
+## VR's race-finish HUD placement
+
+Widescreen HUD edge pinning must remain active after racing phase `0x14`.
+The speed readout, position gauge, lap times, position pointer and circuit map
+otherwise return to their centered 4:3 positions while the 3D scene remains wide.
+The shared placement guard now includes race-end phases `0x15` and `0x16`,
+GOAL initialization `0x19`, and the sustained GOAL display `0x1a`.
+Results setup `0x1b`, results `0x1c`, and name entry `0x1e` retain their separate
+layouts; 4:3 rendering is unchanged.
+
+The first fix added only `0x19`, and its ROM test sampled that initialization
+phase. That was insufficient: `FE4E16` advances immediately to `0x1a`, whose
+handler at `FE4E87` keeps displaying GOAL and the race HUD. The corrected
+`--goal` regression checks actual position, speed and lap-time pixels at their
+edge anchors across 133 sustained GOAL frames, as well as the existing GOAL
+animation interpolation. Synthetic video tests cover tiles, direct polygons,
+the pointer and map view offsets across four widescreen aspects and 1x/2x
+render scales, with explicit unchanged 4:3 and non-race layout checks.
+
+Validation: `make test-model1-video` and
+`build/bin/model1_video_test build/vr --goal`.
+
 ## VR's extended draw distance
 
 VR does its distance culling in the V60 program, before submitting objects to the shared renderer. Its routine
@@ -1174,6 +1196,11 @@ normalization. This is intentionally a local spectator correction, not a claim a
 relay hardware fidelity. Unit tests cover every AI slot, immutable snapshots, preserved
 headers, untouched humans/source, and lifecycle guards. ROM tests check every copied payload
 exactly in native and interpreter execution, including the longer auto-driven race.
+Reset clears the communication board while leaving the previous race phase in RAM.
+Observation therefore also waits for both boards to be ready before validating the
+master's cabinet ID; otherwise resetting mid-race can abort on its temporarily zero ID.
+Unit tests cover master-only, monitor-only and coordinated resets. Desktop regressions
+reset solo and two-player races with both monitor layouts and verify reconnection.
 That race must keep every AI within 3 world units at video-frame boundaries (measured
 maximum 2.783), allowing one logic-update phase offset but not accumulated divergence.
 

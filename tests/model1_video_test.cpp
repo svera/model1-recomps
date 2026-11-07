@@ -3113,10 +3113,25 @@ struct model1_video_test
 		assert(unchanged.s.x == old_x);
 		for (float aspect : { 16.0f / 10, 16.0f / 9, 21.0f / 9, 32.0f / 9 })
 			for (int scale : { 1, 2 })
-			for (uint8_t phase : { 0x12, 0x14 }) {
+			for (uint8_t phase : { 0x12, 0x14, 0x15, 0x16, 0x19, 0x1a }) {
 				m.set_aspect(aspect);
 				m.set_render_scale(scale);
 				m.m_ram_b[0x1138] = phase;
+				assert(m.hud_edge_pinning_active());
+				assert(m.hud_view_offset(149, 12) == m.m_ext);
+				assert(m.hud_view_offset(-232, 134) == -m.m_ext);
+				bitmap_rgb32 tiles;
+				tiles.allocate(model1::SCREEN_W + 2 * m.m_ext, model1::SCREEN_H);
+				tiles.fill(KEY);
+				tiles.pix(24, m.m_ext + 20) = 0x000000ff;
+				tiles.pix(24, m.m_ext + 248) = 0x0000ff00;
+				tiles.pix(24, m.m_ext + 400) = 0x00ff0000;
+				m.pin_hud_tiles(tiles, 1);
+				assert(tiles.pix(24, 20) == 0x000000ff);
+				assert(tiles.pix(24, m.m_ext + 20) == KEY);
+				assert(tiles.pix(24, m.m_ext + 248) == 0x0000ff00);
+				assert(tiles.pix(24, 2 * m.m_ext + 400) == 0x00ff0000);
+				assert(tiles.pix(24, m.m_ext + 400) == KEY);
 				m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
 				auto *points = m.m_pointdb.get();
 				auto *quads = m.m_quaddb.get();
@@ -3136,6 +3151,14 @@ struct model1_video_test
 				assert(points[4].fx == original_curtain);
 				assert(points[5].fx - points[4].fx == 496 * scale);
 			}
+		for (uint8_t phase : { 0x10, 0x1b, 0x1c, 0x1e }) {
+			m.m_ram_b[0x1138] = phase;
+			assert(!m.hud_edge_pinning_active());
+		}
+		m.m_ram_b[0x1138] = 0x19;
+		m.set_aspect(4.0f / 3);
+		assert(!m.hud_edge_pinning_active());
+		assert(m.hud_view_offset(149, 12) == 0);
 	}
 
 	static void native_motion(const char *dir)
@@ -3182,7 +3205,8 @@ struct model1_video_test
 		m.reset();
 		auto play = game::make_auto_play(game::id{ "vr" }, "qualifying", 12345, false);
 		assert(play);
-		size_t checked = 0, handoffs = 0;
+		size_t checked = 0, handoffs = 0, goal_hud_frames = 0;
+		std::array<size_t, 3> finish_hud{};
 		for (int f = 1; f <= 20100; f++) {
 			const auto in = play->frame(f, m);
 			for (size_t c = 0; c < in.analog.size(); c++)
@@ -3191,6 +3215,42 @@ struct model1_video_test
 				m.m_inputs[c] = uint8_t(~in.pressed[c]);
 			m.run_frame();
 			if (f < 19900) continue;
+			const auto phase = m.work_ram()[0x1138];
+			if (phase == 0x19 || phase == 0x1a) {
+				if (phase == 0x1a) goal_hud_frames++;
+				assert(m.hud_edge_pinning_active());
+				bitmap_rgb32 original;
+				original.allocate(model1::SCREEN_W + 2 * m.m_ext, model1::SCREEN_H);
+				original.fill(model1::KEY);
+				m.m_tiles.m_ox = m.m_ext;
+				m.m_tiles.draw(original, original.cliprect(), 1, 0, 0);
+				m.m_tiles.m_ox = 0;
+				const auto &cached = m.cached_layer(1, 0).px;
+				for (int y = 0; y < 32; y++)
+					for (int x = 0; x < 100; x++) {
+						const uint32_t value = original.pix(y, m.m_ext + x);
+						if (value == model1::KEY) continue;
+						assert(cached.pix(y, x) == value);
+						finish_hud[0]++;
+					}
+				for (int y = 344; y < model1::SCREEN_H; y++)
+					for (int x = 16; x < 136; x++) {
+						const uint32_t value = original.pix(y, m.m_ext + x);
+						if (value == model1::KEY) continue;
+						assert(cached.pix(y, x) == value);
+						finish_hud[1]++;
+					}
+				for (int y = 0; y < 112; y++)
+					for (int x = 400; x < 480; x++) {
+						const uint32_t value = original.pix(y, m.m_ext + x);
+						if (value == model1::KEY) continue;
+						assert(cached.pix(y, 2 * m.m_ext + x) == value);
+						finish_hud[2]++;
+					}
+				m.pin_hud_tiles(original, 1);
+				assert(std::equal(original.data(),
+					original.data() + size_t(original.width()) * original.height(), cached.data()));
+			}
 			for (double fraction : { .25, .75 }) {
 				m.render_smooth(double(m.frame_number()) - fraction);
 				const auto &a = m.m_logic[0], &b = m.m_logic[1];
@@ -3211,7 +3271,10 @@ struct model1_video_test
 				}
 			}
 		}
-		assert(checked > 100 && handoffs > 0);
+		assert(checked > 100 && handoffs > 0 && goal_hud_frames > 100);
+		for (size_t pixels : finish_hud) assert(pixels > 100);
+		printf("VR finish HUD: %zu GOAL display frames retain position, speed and lap-time edge anchors\n",
+			goal_hud_frames);
 		printf("VR GOAL flying in: %zu smoothed pictures between the game's (%zu handoffs)\n", checked, handoffs);
 	}
 
