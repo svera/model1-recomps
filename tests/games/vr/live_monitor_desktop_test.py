@@ -233,4 +233,18 @@ with tempfile.TemporaryDirectory(prefix="vr-live-monitor-") as directory:
         run("10:2,100:close")
         assert all(language(folder) == expected for folder in folders)
 
+    for mode, name in ((1, "above"), (2, "window")):
+        for start in ("tappads", "2"):
+            set_layout(mode)
+            reset_race = run(
+                f"10:{start},40:tab,800:status,810:f3,850:status,870:close",
+                frames=5000)
+            racers = 1 if start == "tappads" else 2
+            assert re.search(rf"status frame=\d+ cabinets={racers} .*phase=14 ", reset_race)
+            assert "reset complete, 1 cabinet(s) running" in reset_race
+            assert re.search(r"status frame=\d+ cabinets=1 .*phase=03 ", reset_race)
+            assert_monitor(reset_race, name, racers=1)
+            if racers == 2:
+                assert_monitor(reset_race, name, racers=2)
+
 print("Live Monitor desktop layouts, menu persistence, isolated saves and lifecycle passed")

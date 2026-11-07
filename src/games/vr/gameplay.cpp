@@ -201,7 +201,13 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		if (!source || !machine.link() || machine.link()->read(2) != 0 ||
 			machine.work_ram()[0x1138] != 0x14 || source->work_ram()[0x1138] != 0x14 ||
 			machine.read8(0x501934) != source->read8(0x501934)) return;
-		if (source->title() != machine.title() || !source->link() || source->link()->read(2) != 1) {
+		if (source->title() != machine.title() || !source->link()) {
+			fprintf(stderr, "VR Live Monitor: race source must be the linked master\n");
+			std::abort();
+		}
+		// Reset preserves race RAM while clearing the communication board and its cabinet ID.
+		if (!machine.link()->ready() || !source->link()->ready()) return;
+		if (source->link()->read(2) != 1) {
 			fprintf(stderr, "VR Live Monitor: race source must be the linked master\n");
 			std::abort();
 		}
