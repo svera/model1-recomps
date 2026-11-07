@@ -95,17 +95,25 @@ void model1::list_written(int buffer, uint32_t word)
 	}
 	if ((!m_smooth && !m_gameplay.object) || !m_video->records) return;
 	const game::draw_records &r = *m_video->records;
+	if (m_smooth && m_gameplay.draw_camera) {
+		const auto camera = m_gameplay.draw_camera(buffer);
+		m_list_has_camera[buffer] = camera.has_value();
+		if (camera) m_list_camera[buffer] = *camera;
+	}
 	std::vector<uint32_t> &owners = m_list_owner[buffer];
 	if (owners.empty()) owners.assign(0x8000, 0);
 	uint32_t owner = 0;
 	for (const game::matrix_writer &w : r.writers)
 		if (m_maincpu.pc() == w.pc) {
 			if (w.caller && read32(m_maincpu.reg(31)) != w.caller) continue;
-			const uint32_t rec = m_maincpu.reg(w.record_register);
+			uint32_t rec = m_maincpu.reg(w.record_register) + w.record_offset;
+			if (w.indirect) rec = read32(rec);
 			owner = rec >= r.records_from && rec < r.records_to ? rec : 1;
 			if (!m_smooth) break;
-			memcpy(m_list_camera[buffer].data(), &m_ram_b[r.camera - 0x500000], sizeof m_list_camera[buffer]);
-			m_list_has_camera[buffer] = true;
+			if (!m_gameplay.draw_camera) {
+				memcpy(m_list_camera[buffer].data(), &m_ram_b[r.camera - 0x500000], sizeof m_list_camera[buffer]);
+				m_list_has_camera[buffer] = true;
+			}
 			if (m_list_visibility_frame[buffer] != m_frame) {
 				m_list_visibility[buffer].clear();
 				m_list_visibility_frame[buffer] = m_frame;

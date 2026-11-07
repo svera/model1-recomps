@@ -53,6 +53,10 @@ int main()
 	const auto &video = game::get_video(ID);
 	assert(video.centered_scroll_layers == 0x33);
 	assert(video.centered_scroll_y0 == 80 && video.centered_scroll_y1 == 304);
+	assert(video.records && video.records->camera == 0);
+	assert(video.records->records_from == 0x400000 && video.records->records_to == 0x410000);
+	assert(video.records->writers.size() == 6);
+	assert(video.records->writers[0].indirect && video.records->writers[0].record_offset == -6);
 	assert(!gameplay_state{}.lod);
 	assert(gameplay_state{}.extended_draw_distance);
 	assert(lod_result(false, LOD_RESULT_READ, 0x12345678) == 0x43800000);

@@ -792,6 +792,42 @@ and the absence of duplicate submitted records. Paired Arcade/Full machines reta
 work RAM, battery RAM, CPU registers and PC, TGP cycle counts, and original display-list bytes.
 These are nonvisual checks; attract-mode appearance still requires manual validation.
 
+### Wing War's interpolation records and camera
+
+Wing War previously used the generic model-order/proximity interpolation path. Repeated scenery
+models and changes in submission order could be paired with another instance. VR avoids that by
+recording each matrix's object identity and its camera; SWA supplies stationary-model information
+and camera anchors to its generic fitting path. Wing War now uses VR's record-aware path during
+flight scenes, rather than inferring a camera from repeated geometry.
+
+The scenery matrix writers `02FF79` and `02FE99` reference their source ROM record through the
+pointer at `R21 - 6`. They are marked as static world geometry. Moving-object writers `00394E`,
+`003890`, `002682`, and `002A0C` identify their RAM record in R24, so a model change or a reordered
+submission does not pair one object's parts with another object's. The shared `matrix_writer`
+metadata now supports an indirect record pointer; existing games retain direct-register defaults.
+
+Wing War has no identified world-to-view matrix in work RAM. At the high-halfword write of the
+last matrix float (`02FFAE`), the host reads the completed single-piece scenery matrix and removes
+the source record's translation. Its rotation and resulting translation are the camera used for
+that list. The optional `draw_camera` callback supplies it to the existing record-based
+interpolation. Each display-list buffer has its own camera sample. Zero startup matrices and
+samples older than two video frames are not used: aircraft-introduction and other scenes without
+current scenery retain the generic interpolation path. Resets clear camera and record history.
+
+This enables the existing record-based camera-cut guard, camera-turn smoothing, and camera-follow
+handling. Static scenery, including renderer-only Full-distance copies, follows one camera motion;
+extra copies keep their current anchor-relative offsets instead of blending unrelated anchors.
+The arcade simulation, original display-list bytes, and 30 FPS default are unchanged.
+
+`make test-wingwar-interpolation` runs 3,200 attract frames with Arcade and Full distance,
+checking recovered camera poses against completed matrices, stable moving-record pairing,
+static-copy positions under the older camera, finite interpolated matrices, and camera/reset
+fallbacks. Paired interpolated/non-interpolated machines retain identical RAM, CPU state, TGP
+cycles, and original display lists. Synthetic checks reorder two objects with the same model,
+introduce new scenery, and verify that a camera jump disables blending. Shared VR metadata,
+camera smoothing, and visibility-retention checks can be run without pixel comparisons using
+`build/bin/model1_video_test --record-interpolation`. Visual validation remains manual at 60 FPS.
+
 `make test-wingwar-lod` runs the local World set for 1,450 frames in both modes. It checks that both
 reach 3D output, the Advanced I/O BIOS signature remains present, and Off draws more polygons.
 The observed totals were 6,467,959 quads with LOD Off and 1,587,059 with it On. This is a geometry

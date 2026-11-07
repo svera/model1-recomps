@@ -155,6 +155,8 @@ struct gameplay_callbacks
 	// display-list halfword written; the callback may set it to an earlier matrix command of the
 	// same list, whose extras the result then replaces (an empty result removes them).
 	std::function<std::vector<render_object>(uint32_t &)> matrix_objects;
+	// World-to-view camera recovered from completed matrix writes, for games without camera RAM.
+	std::function<std::optional<std::array<float, 12>>(int)> draw_camera;
 	// Snapshot active records when a relevant matrix is written, before visibility advances.
 	std::function<std::vector<game::record_visibility>(uint32_t)> record_visibility;
 	std::function<void()> render_begin;
@@ -210,20 +212,23 @@ struct unset_texture_pen
 // What the game itself says each part of its 3D is, read as it writes its display list (see
 // blend_by_records): each instruction writing a matrix command and the register then holding the
 // record of the thing drawn (records lie in [records_from, records_to); any other value: the still
-// world), and where the camera is in RAM B as the list is written (12 floats: the rotation taking
+// world), and where the camera is in RAM B as the list is written (or gameplay's draw_camera).
+// The camera's 12 floats are the rotation taking
 // the world to the view, by columns, then the view's translation, like a list's matrix).
 struct matrix_writer
 {
 	uint32_t pc;
 	int record_register;
 	uint32_t caller = 0;             // optional return address at SP; first matching writer wins
+	int32_t record_offset = 0;
+	bool indirect = false;          // read the record pointer at register + offset
 };
 
 struct draw_records
 {
 	std::vector<matrix_writer> writers;
 	uint32_t records_from, records_to;
-	uint32_t camera;
+	uint32_t camera;                 // RAM B address; zero when gameplay supplies draw_camera
 };
 
 struct hud_view

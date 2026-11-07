@@ -20,6 +20,12 @@ $(BIN)/wingwar_draw_distance_test: $(OBJ)/tests/games/wingwar/draw_distance_test
 test-wingwar-draw-distance: $(BIN)/wingwar_draw_distance_test wingwar-regions
 	$(BIN)/wingwar_draw_distance_test build/wingwar
 
+$(BIN)/wingwar_interpolation_test: $(OBJ)/tests/games/wingwar/interpolation_test.o $(GAMES_LINK)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+test-wingwar-interpolation: $(BIN)/wingwar_interpolation_test wingwar-regions
+	$(BIN)/wingwar_interpolation_test build/wingwar
+
 $(BIN)/wingwar_boot_test: $(OBJ)/tests/games/wingwar/boot_test.o $(GAMES_LINK)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
@@ -29,4 +35,4 @@ test-wingwar-boot: $(BIN)/wingwar_boot_test wingwar-regions
 test-wingwar-romset: $(BIN)/romset_test wingwar-regions
 	$(BIN)/romset_test wingwar roms/wingwar.zip $(IOBOARD2_ZIP) build/wingwar
 
-.PHONY: test-wingwar-profile test-wingwar-lod test-wingwar-draw-distance test-wingwar-boot test-wingwar-romset
+.PHONY: test-wingwar-profile test-wingwar-lod test-wingwar-draw-distance test-wingwar-interpolation test-wingwar-boot test-wingwar-romset

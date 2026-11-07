@@ -19,6 +19,42 @@ uint32_t rom_word(model1 &machine, uint32_t address, uint32_t bytes = 4)
 	return machine.read32(address);
 }
 
+void capture_camera(model1 &machine, gameplay_state &state, uint32_t word)
+{
+	if (machine.cpu().pc() != 0x02ffae || !(word & 1)) return;
+	const uint32_t cursor = machine.cpu().reg(14);
+	if (cursor < 0x600000 || cursor >= 0x620000 || word < 23) {
+		fprintf(stderr, "Wing War interpolation: invalid camera matrix cursor %08x/%04x\n", cursor, word);
+		std::abort();
+	}
+	const int buffer = int((cursor - 0x600000) >> 16);
+	const uint32_t record = machine.read32(machine.cpu().reg(21) - 6);
+	rom_word(machine, record, 12);
+	std::array<float, 12> camera;
+	for (int i = 0; i < 12; i++)
+		camera[i] = std::bit_cast<float>(machine.read32((cursor & 0xff0000) + (word - 23) * 2 + i * 4));
+	// The startup lists contain zero matrices before the TGP has a camera.
+	const float determinant = camera[0] * (camera[4] * camera[8] - camera[7] * camera[5]) -
+		camera[3] * (camera[1] * camera[8] - camera[7] * camera[2]) +
+		camera[6] * (camera[1] * camera[5] - camera[4] * camera[2]);
+	auto &sample = state.cameras[buffer];
+	sample.frame = machine.frame_number();
+	sample.matrix.reset();
+	if (std::all_of(camera.begin(), camera.begin() + 9, [](float value) { return value == 0; })) return;
+	if (!std::isfinite(determinant) || std::abs(determinant - 1) > 0.01f) {
+		fprintf(stderr, "Wing War interpolation: invalid scenery camera rotation for record %08x\n", record);
+		std::abort();
+	}
+	for (int axis = 0; axis < 3; axis++)
+		for (int k = 0; k < 3; k++)
+			camera[9 + axis] -= camera[k * 3 + axis] * std::bit_cast<float>(rom_word(machine, record + k * 4));
+	if (!std::all_of(camera.begin(), camera.end(), [](float value) { return std::isfinite(value); })) {
+		fprintf(stderr, "Wing War interpolation: non-finite camera for record %08x\n", record);
+		std::abort();
+	}
+	sample.matrix = camera;
+}
+
 std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &state, uint32_t &word)
 {
 	const uint32_t pc = machine.cpu().pc();
@@ -112,8 +148,15 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	gameplay_callbacks callbacks;
 	auto state = std::make_shared<gameplay_state>();
 	callbacks.state = state;
-	callbacks.reset = [state] { state->scenery = {}; };
-	callbacks.matrix_objects = [&machine, state](uint32_t &word) { return scenery_objects(machine, *state, word); };
+	callbacks.reset = [state] { state->scenery = {}; state->cameras = {}; };
+	callbacks.matrix_objects = [&machine, state](uint32_t &word) {
+		capture_camera(machine, *state, word);
+		return scenery_objects(machine, *state, word);
+	};
+	callbacks.draw_camera = [&machine, state](int buffer) -> std::optional<std::array<float, 12>> {
+		const auto &sample = state->cameras[buffer];
+		return machine.frame_number() - sample.frame <= 2 ? sample.matrix : std::nullopt;
+	};
 	callbacks.copro_result = [state](uint32_t pc, uint32_t value) {
 		return lod_result(state->lod, pc, value);
 	};

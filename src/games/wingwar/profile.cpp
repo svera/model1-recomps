@@ -27,8 +27,13 @@ const io_profile IO_PROFILE{
 };
 
 // The line-scrolled aircraft panel shares maps 0 and 2 with the stationary top/bottom artwork.
+// Scenery nodes carry ROM record pointers; moving model writers carry their RAM record in R24.
 const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .default_fps = 30,
 	.stretch_backdrops = false, .centered_scroll_layers = 0x33,
-	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304 };
+	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304,
+	.records = draw_records{ {
+		{ 0x02ff79, 21, 0, -6, true }, { 0x02fe99, 21, 0, -6, true },
+		{ 0x00394e, 24 }, { 0x003890, 24 }, { 0x002682, 24 }, { 0x002a0c, 24 }
+	}, 0x400000, 0x410000, 0 } };
 
 }

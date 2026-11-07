@@ -19,6 +19,11 @@ struct gameplay_state : game::gameplay_state
 		std::unordered_set<uint32_t> submitted;
 	};
 	std::array<scenery_list, 2> scenery;
+	struct camera_sample {
+		std::optional<std::array<float, 12>> matrix;
+		uint64_t frame = 0;
+	};
+	std::array<camera_sample, 2> cameras;
 };
 
 gameplay_callbacks create_gameplay(model1 &machine);

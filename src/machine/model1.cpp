@@ -59,7 +59,10 @@ void model1::reset()
 	m_list_written[0] = m_list_written[1] = ~0ull;
 	m_list_extra[0].clear();
 	m_list_extra[1].clear();
+	m_logic[0] = m_logic[1] = m_logic_prev = logic_frame{};
 	for (int buffer = 0; buffer < 2; buffer++) {
+		m_list_owner[buffer].clear();
+		m_list_has_camera[buffer] = false;
 		m_list_visibility[buffer].clear();
 		m_list_visibility_frame[buffer] = ~0ull;
 	}
