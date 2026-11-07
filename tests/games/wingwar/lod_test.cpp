@@ -13,6 +13,8 @@ int main(int argc, char **argv)
 
 	model1 full_detail(load_regions(argv[1], game::wingwar::ID));
 	model1 arcade_detail(load_regions(argv[1], game::wingwar::ID));
+	game::wingwar::set_extended_draw_distance(full_detail, false);
+	game::wingwar::set_extended_draw_distance(arcade_detail, false);
 	game::wingwar::set_lod(full_detail, false);
 	game::wingwar::set_lod(arcade_detail, true);
 	full_detail.reset();

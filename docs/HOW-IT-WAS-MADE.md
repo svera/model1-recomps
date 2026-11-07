@@ -748,13 +748,49 @@ The V60's object-list builder at `02FC30` asks the TGP for an object-to-view dis
 `0x1F`. The result read at `02FC8E` is converted to an integer, shifted right by eight, and used as
 an index into the model-tier table at `02FCBA` (`00, 01, 02, 02, 03, ...`). The selected tier is
 stored in the object's draw-list entry. The later `0x1A` view checks are separate and are not
-modified.
+part of the model-detail selection.
 
 Display > LOD defaults to Off and saves `lod = off`. Off substitutes the float distance `256.0`
 at only that `02FC8E` read; after the V60's conversion and shift, it selects table entry 1, the
-nearest valid model tier. Returning zero would select the table's zero/sentinel entry, not a valid
-model. On leaves the original distance and tier selection unchanged. This keeps the arcade's
+nearest single-piece model tier. Returning zero instead invokes compound-model handlers, including
+collision-list bookkeeping, whereas tiers one through three draw a single model. On leaves the
+original distance and tier selection unchanged. This keeps the arcade's
 visibility checks and object culling in either mode.
+
+The `0x1A` checks also apply a depth cutoff while building the V60's object list. Extending that
+cutoff directly changes which objects the game submits; it is not renderer-only. An initial
+attempt to expose it as Display > Draw distance was withdrawn after it caused additional nearby
+objects to disappear in attract mode. That override remains withdrawn.
+
+### Wing War's renderer-only scenery distance
+
+Display > Draw distance now defaults to Full and saves `draw_distance = extended`; Arcade saves
+`draw_distance = arcade`. Full supplements static scenery through `matrix_objects`, without
+extending the V60's culling cutoff, drawing budget, collision lists, or TGP submissions. Aircraft
+and other moving objects retain their original visibility; this is not yet an all-object distance
+extension.
+
+The scene's row table and byte counts are at `734C[R25]` and `7350[R25]`, centered on row 128 of
+256. Each row references `count` ROM records with a `0x1C` stride: three position floats, a
+visibility-test height, the model type at `+0x10`, and additional arcade bookkeeping. The model
+table at `7354[R25]` has four pointers per type. `02FF48` uses the selected tier's model ID at
+`+2` to index the texture/polygon/size table at `271484`, with a 16-byte stride.
+
+The host observes actual single-piece (`02FF79`) and compound (`02FE99`) matrix submissions,
+not merely the V60's candidate list: a candidate may never be drawn when the CPU budget runs
+out. At the scenery-list terminator (`02FDF4`), it attaches every missing row record to the
+first single-piece matrix, translated by the difference between the record's and anchor's
+positions. The added objects use tier one, matching LOD Off's single-piece choice. The two
+display-list buffers keep independent submission sets, and the setting is latched for each
+scenery list so toggling it partway through cannot duplicate earlier submissions. Record keys
+identify copies for smooth-motion pairing.
+
+`make test-wingwar-draw-distance` runs 3,200 frames in each LOD mode, with distance toggles,
+smooth motion, and reset coverage. Across four model tables, it checks the reconstructed
+transforms against matrices the V60 actually submitted, exact texture/polygon/size selection,
+and the absence of duplicate submitted records. Paired Arcade/Full machines retain identical
+work RAM, battery RAM, CPU registers and PC, TGP cycle counts, and original display-list bytes.
+These are nonvisual checks; attract-mode appearance still requires manual validation.
 
 `make test-wingwar-lod` runs the local World set for 1,450 frames in both modes. It checks that both
 reach 3D output, the Advanced I/O BIOS signature remains present, and Off draws more polygons.

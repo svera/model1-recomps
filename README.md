@@ -252,6 +252,8 @@ or frame rate.
 
 - The original single-cabinet Wing War flight game, with all four cockpit views.
 - Sharper graphics, widescreen support, and optional smooth motion.
+- **Display > Draw distance:** Full (default) adds distant static scenery in the renderer without changing game timing or collisions. Arcade restores the original scenery limits. Moving objects retain their original visibility.
+- **Display > LOD:** Off (default) keeps the highest-detail single-piece scenery models; On restores the arcade's model selection. Full draw distance's extra scenery uses single-piece models in either mode.
 - Keyboard and gamepad controls for the flight stick, throttle, weapons, and views.
 
 ### Getting started

@@ -1,20 +1,29 @@
 #pragma once
 
 #include "../game.h"
+#include <unordered_set>
 
 namespace game::wingwar {
 
-// This TGP distance read feeds Wing War's model-tier table at 0x02fcba; its separate 0x1a
-// view checks remain untouched.
+// The 0x1f result feeds Wing War's model-tier table; the 0x1a results feed visibility checks.
 inline constexpr uint32_t LOD_RESULT_READ = 0x02fc8e;
 
 struct gameplay_state : game::gameplay_state
 {
 	bool lod = false;
+	bool extended_draw_distance = true;
+	struct scenery_list {
+		bool started = false, extended = false;
+		std::optional<uint32_t> matrix;
+		uint32_t anchor = 0;
+		std::unordered_set<uint32_t> submitted;
+	};
+	std::array<scenery_list, 2> scenery;
 };
 
 gameplay_callbacks create_gameplay(model1 &machine);
 void set_lod(model1 &machine, bool enabled);
+void set_extended_draw_distance(model1 &machine, bool enabled);
 uint32_t lod_result(bool enabled, uint32_t pc, uint32_t value);
 
 }
