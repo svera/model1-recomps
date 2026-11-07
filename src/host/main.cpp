@@ -518,8 +518,7 @@ struct settings
 
 // The player's own game, the first time: there are no ROMs in their data folder yet (or not a
 // complete set), so ask for the game's MAME set (vf.zip, vr.zip) with a file picker, copy it in
-// and check it. A model1io.zip beside it (the real I/O board's program) comes along too; without it
-// the stand-in board runs.
+// and check it. The matching I/O board BIOS archive beside it comes along too when required.
 // Only those two zips are ever read, so a roms folder shared with other games, or a wrong pick,
 // can't get in the way. Returns false if they cancel (or there's no way to pick a file).
 // A folder of its own (a "roms" folder next to the program: the Steam Deck's, a portable Windows
@@ -561,8 +560,9 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 	auto zips_in = [&](const fs::path &dir) {
 		std::vector<std::string> z;
 		std::error_code ec;
-		for (const char *name : { set.zip, "model1io.zip" })
-			if (fs::is_regular_file(dir / name, ec)) z.push_back((dir / name).string());
+		if (fs::is_regular_file(dir / set.zip, ec)) z.push_back((dir / set.zip).string());
+		const char *io_zip = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+		if (fs::is_regular_file(dir / io_zip, ec)) z.push_back((dir / io_zip).string());
 		return z;
 	};
 	auto zips_here = [&] { return zips_in(roms); };
@@ -571,7 +571,8 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 		if (kept == roms || !folder.empty()) return;
 		std::error_code ec;
 		fs::create_directories(kept, ec);
-		for (const char *name : { set.zip, "model1io.zip" }) {
+		const char *io_zip = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+		for (const char *name : { set.zip, io_zip }) {
 			if (!fs::is_regular_file(roms / name, ec)) continue;
 			if (fs::is_regular_file(kept / name, ec) && fs::file_size(kept / name, ec) == fs::file_size(roms / name, ec)) continue;
 			std::string why;
@@ -649,8 +650,9 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 			note = "Couldn't copy it into " + dest.string() + ": " + why + "\n\nChoose your " + zip + ".";
 			continue;
 		}
-		const fs::path io = fs::path(f).parent_path() / "model1io.zip";    // its neighbour, if any
-		if (fs::exists(io, ec)) copy_whole(io, dest / "model1io.zip", why);
+		const char *io_name = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+		const fs::path io = fs::path(f).parent_path() / io_name;    // its neighbour, if any
+		if (fs::exists(io, ec)) copy_whole(io, dest / io_name, why);
 		romset::result r = romset::load(set, zips_in(dest));
 		if (r.ok) { keep_copy(); out = std::move(r.regions); return true; }
 		note = r.error + "\n\nChoose " + mame + ".";

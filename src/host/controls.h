@@ -42,6 +42,7 @@ struct control_profile
 	std::array<const char *, C_COUNT> names{};        // settings.ini's key_<name> and pad_<name>; none: CONTROL_KEYS
 	std::array<const char *, C_COUNT> key_names{};    // key_<name> when it isn't name()
 	std::array<uint8_t, C_COUNT> bits{};              // the player's input byte's bits it presses (active high)
+	std::array<int8_t, C_COUNT> action_ports{};       // optional per-action input-byte override (-1: use button_ports)
 	// where each player's buttons go: by default player 1's byte (1) and player 2's (2) with the same
 	// bits; a cabinet that shares one byte gives player 2 its own bits there
 	std::array<uint8_t, 2> button_ports{ 1, 2 };
@@ -64,7 +65,7 @@ struct control_profile
 	const char *pad_buttons_help = "";                // the player page's Pad buttons
 	const char *analog_help = "";                     // each analog axis
 
-	control_profile() { pad.fill(PAD_NONE); }
+	control_profile() { pad.fill(PAD_NONE); action_ports.fill(-1); }
 	// a control the game has: its menu label (none: CONTROL_NAMES) and settings name (none: CONTROL_KEYS)
 	void add(int action, const char *label = nullptr, const char *name = nullptr)
 	{
@@ -75,7 +76,11 @@ struct control_profile
 	bool visible(int action, int player) const { return visible(action) && !(player && p1_only[action]); }
 	uint8_t bit(int player, int action) const { return player && p2_bits ? (*p2_bits)[action] : bits[action]; }
 	// a player's control held: its bit in their input byte ([system, player 1, player 2])
-	void press(uint8_t (&in)[3], int player, int action) const { in[button_ports[player ? 1 : 0]] |= bit(player, action); }
+	void press(uint8_t (&in)[3], int player, int action) const
+	{
+		const int port = action_ports[action] >= 0 ? action_ports[action] : button_ports[player ? 1 : 0];
+		in[port] |= bit(player, action);
+	}
 	const char *label(int action) const { return labels[action] ? labels[action] : CONTROL_NAMES[action]; }
 	const char *name(int action) const { return names[action] ? names[action] : CONTROL_KEYS[action]; }
 	const char *key_name(int action) const { return key_names[action] ? key_names[action] : name(action); }

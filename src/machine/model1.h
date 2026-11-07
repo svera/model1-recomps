@@ -21,6 +21,7 @@
 #include "../gpu/gpu3d.h"
 #include "m1audio.h"
 #include "model1io.h"
+#include "model1io2.h"
 #include "m1comm.h"
 #include "../core/v60_device.h"
 
@@ -42,6 +43,7 @@ public:
 		std::vector<uint8_t> maincpu, copro_tables, copro_data, polygons, sndcpu, pcm1, pcm2;
 		std::vector<uint8_t> tgp_program;   // 315-5724.bin, when the set has it
 		std::vector<uint8_t> ioboard;       // epr-14869b.25 (model1io), when there
+		std::vector<uint8_t> ioboard2;      // epr-16891.6 (advanced Model 1 I/O board), when there
 		std::vector<uint8_t> mpegcpu, mpeg; // DSB ROMs (SWA): enable_sound adds the board when present
 		game::id title;                 // the game (src/games: its own code and data)
 	};
@@ -250,10 +252,13 @@ public:
 	}
 	bool in_test_menu_mode() const { return m_profile->mode_ram && game_mode() == m_profile->test_menu_mode; }
 	// Raw board EEPROM image for persistence; words are available only on the real I/O board.
-	uint8_t *eeprom() { return m_ioboard ? reinterpret_cast<uint8_t *>(m_ioboard->eeprom) : &m_dpram[0x100]; }
-	uint16_t *eeprom_words() { return m_ioboard ? m_ioboard->eeprom : nullptr; }
+	uint8_t *eeprom() { return m_ioboard ? reinterpret_cast<uint8_t *>(m_ioboard->eeprom) :
+		m_ioboard2 ? reinterpret_cast<uint8_t *>(m_ioboard2->eeprom) : &m_dpram[0x100]; }
+	uint16_t *eeprom_words() { return m_ioboard ? m_ioboard->eeprom : m_ioboard2 ? m_ioboard2->eeprom : nullptr; }
 	static constexpr size_t EEPROM_SIZE = 0x80;
-	bool real_ioboard() const { return bool(m_ioboard); }
+	bool real_ioboard() const { return bool(m_ioboard) || bool(m_ioboard2); }
+	uint64_t advanced_ioboard_cycles() const { return m_ioboard2 ? m_ioboard2->cycles_executed() : 0; }
+	uint8_t io_board_byte(size_t index) const { return index < sizeof(m_dpram) ? m_dpram[index] : 0xff; }
 	const std::vector<uint8_t> &maincpu_rom() const { return m_regions.maincpu; }   // for the recompiler
 	uint64_t frame_number() const { return m_frame; }
 
@@ -686,6 +691,7 @@ private:
 	void sound_ready();
 	// I/O board stand-in (MAME 0.190's io_r/io_w/network_ctl): its Z80 program isn't in this set.
 	std::unique_ptr<model1io> m_ioboard;   // the real I/O board, when its program is there
+	std::unique_ptr<model1io2> m_ioboard2;
 	uint8_t io_board_r(int index);
 	void io_board_w(int index, uint8_t data);
 	void io_board_tick(int cycles);

@@ -9,7 +9,7 @@ builds to build/<game>/<region>.bin. The output is ROM data: it stays in build/,
 The game is --game's, else the zip's name (vf.zip, vr.zip). The tables are the shared CPU board's
 (here) and the game's own (tools/games/NAME/romset.py, a new game's is a new file there). Its
 optional files (VF: 315-5724.bin, the TGP's own program from a current MAME set) are written
-when found, and so is the I/O board's ROM (analog inputs).
+when found, as are the appropriate I/O board BIOS files.
 """
 import importlib.util, os, sys, zipfile, zlib
 
@@ -68,6 +68,8 @@ def find(z, name, crc):
 
 OPTIONAL_IOBOARD = ('epr-14869b.25', 0x2d093304, 'ioboard.bin',
                     'analog inputs need this ROM; digital I/O uses the stand-in')
+OPTIONAL_IOBOARD2 = ('epr-16891.6', 0xa33f84d1, 'ioboard2.bin',
+                     'Wing War requires model1io2.zip (Advanced Model 1 I/O BIOS)')
 
 def find_optional(sources, name, crc):
     for s in sources:
@@ -131,14 +133,23 @@ def main():
     common_ioboard = 'roms/model1io.zip'
     if os.path.isfile(common_ioboard):
         optional_sources.append(common_ioboard)
-    for name, crc, dst, missing in title.OPTIONAL + [OPTIONAL_IOBOARD]:
+    common_ioboard2 = 'roms/model1io2.zip'
+    if os.path.isfile(common_ioboard2):
+        optional_sources.append(common_ioboard2)
+    optional = title.OPTIONAL + ([OPTIONAL_IOBOARD] if getattr(title, 'USE_IOBOARD', True) else [])
+    if getattr(title, 'USE_ADVANCED_IOBOARD', False):
+        optional.append(OPTIONAL_IOBOARD2)
+    for name, crc, dst, missing in optional:
         d = find_optional(optional_sources, name, crc)
         if d:
             with open(os.path.join(out, dst), 'wb') as f:
                 f.write(d)
             print(f'{name}: found, written to {out}/{dst}')
         else:
-            print(f'{name}: not found ({missing})')
+            message = f'{name}: not found ({missing})'
+            if getattr(title, 'USE_ADVANCED_IOBOARD', False) and dst == 'ioboard2.bin':
+                sys.exit(message)
+            print(message)
 
 if __name__ == '__main__':
     main()

@@ -29,7 +29,7 @@ ROMSET = src/machine/model1_romset.cpp
 GAMES_SRC = src/games/game.cpp $(filter-out %/host.cpp %/romset.cpp,$(wildcard src/games/*/*.cpp))
 # the tools' game parts (tools/tool_game.h: tools/games/<name>/tool.cpp), chosen at run time
 TOOL_GAME = tools/tool_game.cpp $(wildcard tools/games/*/tool.cpp)
-MACHINE = src/machine/model1.cpp src/machine/model1_tgp.cpp src/machine/model1_tgp_lle.cpp src/machine/model1_video.cpp src/machine/model1_sky.cpp src/machine/model1_interp.cpp src/machine/model1_gpu.cpp src/machine/model1_edge_aa.cpp src/machine/model1io.cpp $(GAMES_SRC)
+MACHINE = src/machine/model1.cpp src/machine/model1_tgp.cpp src/machine/model1_tgp_lle.cpp src/machine/model1_video.cpp src/machine/model1_sky.cpp src/machine/model1_interp.cpp src/machine/model1_gpu.cpp src/machine/model1_edge_aa.cpp src/machine/model1io.cpp src/machine/model1io2.cpp $(GAMES_SRC)
 Z80_OBJ = $(OBJ)/z80/z80.o
 DASM = third_party/mame/v60/v60d.cpp
 # the recompile done on the player's machine: analysis + native code (sljit, BSD-2)
@@ -244,6 +244,7 @@ $(BIN)/romset_test: $(call objs,tests/romset_test.cpp $(ROMSET) $(wildcard src/g
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 IOBOARD_ZIP = $(wildcard roms/model1io.zip)
+IOBOARD2_ZIP = $(wildcard roms/model1io2.zip)
 
 # ---- The games ----
 # Each game's folder has a game.mk with its name (GAMES += <game>) and these settings; GAME_RULES
@@ -276,7 +277,7 @@ endef
 
 define GAME_RULES
 $(1)_LOCAL_REGIONS = $$(if $$(wildcard roms/$(1).zip),build/$(1)/maincpu.bin)
-build/$(1)/maincpu.bin: roms/$(1).zip tools/romset.py tools/games/$(1)/romset.py $$(IOBOARD_ZIP)
+build/$(1)/maincpu.bin: roms/$(1).zip tools/romset.py tools/games/$(1)/romset.py $$(IOBOARD_ZIP) $$(IOBOARD2_ZIP)
 	python3 tools/romset.py --game $(1) roms/$(1).zip build/$(1)
 $(1)-regions: build/$(1)/maincpu.bin
 
@@ -341,7 +342,7 @@ test-romset-tool:
 
 test-romset: test-romset-tool $(BIN)/romset_test $(foreach g,$(GAMES),$($(g)_LOCAL_REGIONS))
 	@[ -n "$(wildcard $(GAMES:%=roms/%.zip))" ] || { echo "test-romset: none of $(GAMES:%=roms/%.zip)" >&2; exit 1; }
-	@$(foreach g,$(GAMES),if [ -f roms/$(g).zip ]; then $(BIN)/romset_test $(g) roms/$(g).zip $(IOBOARD_ZIP) build/$(g) || exit 1; fi;) true
+	@$(foreach g,$(GAMES),if [ -f roms/$(g).zip ]; then $(BIN)/romset_test $(g) roms/$(g).zip $(IOBOARD_ZIP) $(IOBOARD2_ZIP) build/$(g) || exit 1; fi;) true
 
 clean:
 	rm -rf build/obj build/bin

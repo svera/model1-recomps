@@ -58,6 +58,7 @@ struct io_profile
 	struct analog_range { uint8_t low = 0, high = 255; bool reverse = false; };
 	std::array<analog_range, 8> analog_ranges{};
 	std::array<uint8_t, 8> analog_player{};                // whose pad and keys drive the channel (0, 1)
+	bool standin_analog = false;                           // direct inputs for a game-specific I/O bridge
 
 	uint8_t analog_port(size_t channel, uint8_t host) const
 	{

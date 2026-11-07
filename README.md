@@ -4,7 +4,7 @@
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
 This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
-multiple games; this repository currently supports Virtua Racing and Star Wars Arcade.
+multiple games; this repository currently supports Virtua Racing, Star Wars Arcade, and Wing War.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
@@ -14,7 +14,8 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 
 <p align="center">
   <a href="#virtua-racing">Virtua Racing</a> ·
-  <a href="#star-wars">Star Wars Arcade (1993)</a>
+  <a href="#star-wars">Star Wars Arcade (1993)</a> ·
+  <a href="#wing-war">Wing War (1994)</a>
  </p>
 
 
@@ -239,6 +240,53 @@ or frame rate.
 | --- | --- |
 | ![Star Destroyers in the asteroid field](assets/games/swa/screenshots/asteroid-field.png) | ![Flying over the Death Star's surface](assets/games/swa/screenshots/death-star-surface.png) |
 
+<h2 align="center" id="wing-war">Wing War Recomp</h2>
+
+> [!IMPORTANT]
+> You need your own MAME **World `wingwar.zip`** ROM set and the matching Advanced I/O BIOS
+> **`model1io2.zip`**. Neither is included. This build runs the board BIOS for Wing War's digital
+> and analog inputs.
+> This is an unofficial fan project, not affiliated with or supported by SEGA.
+
+### Features
+
+- The original single-cabinet Wing War flight game, with all four cockpit views.
+- Sharper graphics, widescreen support, and optional smooth motion.
+- Keyboard and gamepad controls for the flight stick, throttle, weapons, and views.
+
+### Getting started
+
+1. [Download](https://github.com/svera/model1-recomps/releases) the package for your system and extract it.
+2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the package's `roms` folder on Steam Deck / Linux,
+   or place them together before selecting `wingwar.zip` when prompted.
+3. Leave both archives zipped; the app checks them and remembers your choice.
+4. Insert a coin with **5** or **D-pad Up**, then press **1** or **Start**.
+
+**macOS:** open **Wing War Recomp.app**. If macOS blocks it, allow it through
+**System Settings > Privacy & Security**.
+
+**Windows:** run the included executable. Windows may show a SmartScreen warning for preview builds.
+
+**Steam Deck / Linux:** place both ROM archives in the package's `roms` folder and run `WingWar.sh`.
+
+### Controls
+
+| Action | Keyboard | Gamepad |
+| --- | --- | --- |
+| Yaw | Left / Right | Left stick X or D-pad |
+| Pitch | Up / Down | Left stick Y or D-pad |
+| Throttle | W / S | Right trigger |
+| Machine gun | Z | A / Cross |
+| Missile | X | B / Circle |
+| Smoke | C | X / Square |
+| View 1 / 2 / 3 / 4 | F5 / F6 / F7 / F8 | Y / Triangle, RB, LB, left-stick click |
+| Start | 1 | Start |
+| Insert coin | 5 | D-pad Up |
+| Open menu | Esc | View / Select |
+
+Wing War currently runs on the V60 interpreter; it does not yet use startup native recompilation.
+Use **Esc > Controls** to see or change bindings.
+
 ### For developers
 
 Build and run it from source (see [Build and test](#build-and-test)):
@@ -248,12 +296,15 @@ make swa
 build/bin/swa
 ```
 
+For Wing War, run `make wingwar` and then `build/bin/wingwar`.
+
 Developers can also record and replay play sessions; an input recording should be replayed at
 the aspect ratio it was recorded in. See
 [how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
 
-Release packaging is enabled for Virtua Racing and Star Wars Arcade on macOS, Windows, and Linux.
-Each platform's `package.sh` builds both by default, or the games named (`package.sh swa`).
+Release packaging is enabled for Virtua Racing, Star Wars Arcade, and Wing War on macOS, Windows,
+and Linux. Each platform's `package.sh` builds all three by default, or the named games
+(`package.sh swa wingwar`).
 
 Useful shared checks:
 
@@ -261,6 +312,7 @@ Useful shared checks:
 make test-model1io-adc
 make test-host-gamepads
 make test-vr-profile test-vr-gameplay test-vr-tgp-track
+make test-wingwar-profile
 ```
 
 ## Shared Model 1 implementation
@@ -290,8 +342,8 @@ Development requires a C++20 compiler, zlib, SDL 3, and FreeType. On macOS, inst
 Every game has the same make targets, made from its `src/games/<game>/game.mk`: `<game>`, `<game>-native`,
 `<game>-regions`, `<game>-coverage`, `<game>-static`, `<game>-lockstep`, and `<game>-native-lockstep`.
 
-Release packaging is enabled only for Virtua Racing on macOS, Windows, and Linux. Each platform's
-`package.sh` builds VR by default.
+Release packaging is enabled for Virtua Racing, Star Wars Arcade, and Wing War on macOS, Windows,
+and Linux. Each platform's `package.sh` builds all enabled games by default.
 
 Useful shared checks:
 
@@ -300,6 +352,7 @@ make test-model1io-adc
 make test-host-gamepads
 make test-host-graphics
 make test-vr-profile test-vr-gameplay test-vr-tgp-track
+make test-wingwar-profile
 ```
 
 `test-host-graphics` needs a working SDL graphics driver (it uses a hidden window).

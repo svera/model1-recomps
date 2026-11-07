@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs inside the Steam Runtime SDK container (see package.sh): the x86-64 Linux release build (SteamOS
-# on the Steam Deck included), for the games in $GAMES (enabled games only, currently VR: their settings
+# on the Steam Deck included), for the games in $GAMES (enabled games only: VR, SWA and Wing War; their settings
 # are tools/games/<game>/release/game.sh). No ROMs or anything made from them: each game reads the
 # player's own set at start-up, from the zip they put in its roms/.
 set -e

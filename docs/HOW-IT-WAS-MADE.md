@@ -5,7 +5,7 @@ much of it comes from MAME, and how AI coding tools were used. The commit histor
 
 ## Pull request checks
 
-The **Tests** GitHub Actions workflow runs ten ROM-free test targets on Ubuntu 24.04 (x86-64) when a pull
+The **Tests** GitHub Actions workflow runs eleven ROM-free test targets on Ubuntu 24.04 (x86-64) when a pull
 request is opened, updated with new commits, or reopened. It builds SDL3 from the same version and
 SHA-256-verified source as release packages. It can also be run manually from the Actions tab.
 New updates cancel an older run for the same pull request. ROM-backed checks remain local: CI does
@@ -697,6 +697,50 @@ as the world. Additional geometry has its own depth-sort accumulator, leaving th
 inherited sort depths unchanged. Static scenery bypasses the arcade budget and command-buffer limit,
 but does not change which cars the CPU submits. Renderer geometry allocations have explicit bounds
 checks to prevent full-course geometry from overflowing the finite point/quad buffers.
+
+## Bringing up Wing War
+
+Wing War (1994) uses the Model 1 board, but it does not use the same I/O board as Virtua Fighter,
+Virtua Racing, or Star Wars Arcade. The supported set is MAME's World `wingwar` parent set, named
+`wingwar.zip`; the distinct regional clones and Wing War R360 set are not separate supported sets.
+The ROM table is based on MAME's `ROM_START(wingwar)` and includes the game's V60 program, sound
+CPU and PCM data, polygon ROMs, interleaved TGP data, and its own TGP program (`315-5711.bin`).
+The table preserves MAME's byte/word interleave and reload offsets rather than treating the archive
+as flat files. The shared Model 1 CPU-board ROMs are still checked and loaded by the common ROM-set
+loader. MAME marks `315-5711.bin` as a bad dump; the supplied file's CRC matches that entry.
+
+MAME configures the game with the Advanced Model 1 I/O board (`model1io2`) and BIOS
+`epr-16891.6`, not the legacy board firmware used by `model1io.zip`. Wing War therefore requires
+`model1io2.zip`; the ROM loader finds that BIOS by CRC and rejects a missing or damaged copy. The
+board runs its own 9.8304 MHz Z80 program and models the 315-5338A's dual-port transfers and input
+ports, the serial ADC, its 93C46 EEPROM, and output latches. The main V60 sees the shared dual-port
+RAM as it does on the cabinet, rather than receiving input values from a title-specific shortcut.
+Its TMPZ84C015 CTC channel 1 supplies the periodic BIOS interrupts needed to initialize that
+transfer path. The common legacy I/O board used by VF, VR and SWA remains unchanged.
+
+The analog channels are stick X, stick Y, and throttle. Their neutral values are `0x80`, `0x80`,
+and `0x01`; X is reversed, Y is not, and throttle spans `1` through `255`. The host maps the left
+stick to flight control and the right trigger to throttle. The four view selectors are split across
+the system and player input bytes, so the control profile routes their bits to the correct byte;
+weapon buttons remain on the player byte. These values enter through the Advanced board's input
+callbacks and ADC, then the board firmware transfers them to dual-port RAM for the V60.
+
+The shared MAME-derived V60, TGP, video, and sound implementations handle the game, and its profile
+enables the existing frame interpolation at 30 Hz. Wing War currently runs on the V60 interpreter:
+there is no address map for startup-native recompilation, and the release launcher builds the
+interpreter executable. The cold-boot regression inserts a coin and presses Start, verifies Start
+reaches the board's dual-port RAM, and first observes 3D geometry on frame 493; geometry is submitted
+in 206 of the 700 simulated frames, with about 4.8 million TGP cycles executed. It also checks the
+Advanced board firmware's shared-RAM signature and that the TGP program is active. This proves that
+the ROM-backed machine boots into active 3D output, not that every mission, sound effect, EEPROM
+setting, or real-hardware I/O behavior has been validated. The Advanced board's diagnostic LCD,
+R360 drive connector, and Wing War's linked-cabinet M1COMM are not implemented.
+
+Validation with the local World archive and `model1io2.zip`: `make test-wingwar-profile`,
+`make test-wingwar-romset`, and `make test-wingwar-boot`. The ROM-set check verifies the Advanced
+BIOS in addition to the game ROMs, and compares its extracted image with the C++ loader. The boot
+test checks the board clock advances, digital inputs transfer through DPRAM, and the game reaches
+active 3D output after coin and Start.
 
 Full distance also adds cars outside the arcade's camera-specific cell mask in player and Live Monitor
 views. The original drawing checks at `FEF9F3`, `FEFDB2` and `FEFE08` remain untouched: admitting cars

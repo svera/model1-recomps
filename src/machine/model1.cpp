@@ -40,7 +40,9 @@ model1::model1(regions &&r)
 	video_start();
 	if (!m_regions.tgp_program.empty() && !getenv("M1_TGP_SIM"))
 		use_tgp_program(m_regions.tgp_program);
-	if (!m_regions.ioboard.empty() && !getenv("M1_IO_STANDIN"))
+	if (!m_regions.ioboard2.empty() && !getenv("M1_IO_STANDIN"))
+		m_ioboard2 = std::make_unique<model1io2>(m_regions.ioboard2, m_dpram);
+	else if (!m_regions.ioboard.empty() && !getenv("M1_IO_STANDIN"))
 		m_ioboard = std::make_unique<model1io>(m_regions.ioboard, m_dpram);
 }
 
@@ -85,6 +87,10 @@ void model1::reset()
 	if (m_ioboard) {
 		std::fill(std::begin(m_dpram), std::end(m_dpram), 0);
 		m_ioboard->reset();
+	}
+	if (m_ioboard2) {
+		std::fill(std::begin(m_dpram), std::end(m_dpram), 0);
+		m_ioboard2->reset();
 	}
 	m_maincpu.reset();
 }
@@ -266,14 +272,15 @@ bool model1::has_analog_input(int channel) const
 {
 	const auto &profile = game::get_io_profile(m_regions.title);
 	return channel >= 0 && channel < int(profile.analog_controls.size()) &&
-		   !profile.analog_controls[channel].empty() && m_ioboard;
+		   !profile.analog_controls[channel].empty() && (m_ioboard || m_ioboard2 || profile.standin_analog);
 }
 
 bool model1::set_analog_input(int channel, uint8_t value)
 {
 	if (!has_analog_input(channel)) return false;
 	m_analog_inputs[channel] = value;
-	m_ioboard->analog_inputs[channel] = value;
+	if (m_ioboard) m_ioboard->analog_inputs[channel] = value;
+	if (m_ioboard2) m_ioboard2->analog_inputs[channel] = value;
 	return true;
 }
 
@@ -321,8 +328,11 @@ void model1::bank_w(offs_t, u16 data, u16 mem_mask)
 uint8_t model1::io_board_r(int index)
 {
 	m_maincpu.adjust_icount(-1);    // MAME: a wait state on every dual-port RAM read
-	if (m_ioboard) return m_dpram[index];
-	if (index < 0x08) return 0x00;
+	if (m_ioboard || m_ioboard2) return m_dpram[index];
+	if (index < 0x08) {
+		const auto &profile = game::get_io_profile(m_regions.title);
+		return profile.standin_analog && !profile.analog_controls[index].empty() ? m_analog_inputs[index] : 0x00;
+	}
 	if (index < 0x0b) return m_inputs[index - 0x08];
 	if (index < 0x10) return index == 0x0f ? m_lamps : 0xff;
 	if (index == 0x20) return m_io_command;
@@ -332,7 +342,7 @@ uint8_t model1::io_board_r(int index)
 
 void model1::io_board_w(int index, uint8_t data)
 {
-	if (m_ioboard) { m_dpram[index] = data; return; }
+	if (m_ioboard || m_ioboard2) { m_dpram[index] = data; return; }
 	if (index == 0x0f) { m_lamps = data; return; }
 	if (index == 0x20) {
 		m_io_command = data;
@@ -350,6 +360,13 @@ void model1::io_board_tick(int cycles)
 		std::copy(m_analog_inputs.begin(), m_analog_inputs.end(), std::begin(m_ioboard->analog_inputs));
 		m_ioboard->run(cycles * 1e6 / CPU_CLOCK);
 		m_lamps = m_ioboard->outputs;
+		return;
+	}
+	if (m_ioboard2) {
+		std::copy(std::begin(m_inputs), std::end(m_inputs), m_ioboard2->inputs);
+		std::copy(m_analog_inputs.begin(), m_analog_inputs.end(), std::begin(m_ioboard2->analog_inputs));
+		m_ioboard2->run(cycles * 1e6 / CPU_CLOCK);
+		m_lamps = m_ioboard2->outputs;
 		return;
 	}
 	if (m_io_command && (m_io_ack -= cycles) <= 0)
