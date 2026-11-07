@@ -742,6 +742,25 @@ BIOS in addition to the game ROMs, and compares its extracted image with the C++
 test checks the board clock advances, digital inputs transfer through DPRAM, and the game reaches
 active 3D output after coin and Start.
 
+### Wing War's model detail
+
+The V60's object-list builder at `02FC30` asks the TGP for an object-to-view distance with command
+`0x1F`. The result read at `02FC8E` is converted to an integer, shifted right by eight, and used as
+an index into the model-tier table at `02FCBA` (`00, 01, 02, 02, 03, ...`). The selected tier is
+stored in the object's draw-list entry. The later `0x1A` view checks are separate and are not
+modified.
+
+Display > LOD defaults to Off and saves `lod = off`. Off substitutes the float distance `256.0`
+at only that `02FC8E` read; after the V60's conversion and shift, it selects table entry 1, the
+nearest valid model tier. Returning zero would select the table's zero/sentinel entry, not a valid
+model. On leaves the original distance and tier selection unchanged. This keeps the arcade's
+visibility checks and object culling in either mode.
+
+`make test-wingwar-lod` runs the local World set for 1,450 frames in both modes. It checks that both
+reach 3D output, the Advanced I/O BIOS signature remains present, and Off draws more polygons.
+The observed totals were 6,467,959 quads with LOD Off and 1,587,059 with it On. This is a geometry
+count regression, not an automated rendered-image comparison.
+
 Wing War's aircraft-introduction artwork uses both tile priorities of the background map.
 The generic widescreen default stretched the opaque pass but left its high-priority tiles
 centered, superimposing differently positioned pixels and making the colors look corrupted.

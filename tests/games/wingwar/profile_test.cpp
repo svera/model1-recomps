@@ -1,4 +1,5 @@
 #include "../../../src/games/wingwar/controls.h"
+#include "../../../src/games/wingwar/gameplay.h"
 #include <cassert>
 
 int main()
@@ -52,4 +53,8 @@ int main()
 	const auto &video = game::get_video(ID);
 	assert(video.centered_scroll_layers == 0x33);
 	assert(video.centered_scroll_y0 == 80 && video.centered_scroll_y1 == 304);
+	assert(!gameplay_state{}.lod);
+	assert(lod_result(false, LOD_RESULT_READ, 0x12345678) == 0x43800000);
+	assert(lod_result(true, LOD_RESULT_READ, 0x12345678) == 0x12345678);
+	assert(lod_result(false, LOD_RESULT_READ + 1, 0x12345678) == 0x12345678);
 }
