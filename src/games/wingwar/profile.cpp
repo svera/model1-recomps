@@ -26,6 +26,9 @@ const io_profile IO_PROFILE{
 	false
 };
 
-const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .default_fps = 30 };
+// The line-scrolled aircraft panel shares maps 0 and 2 with the stationary top/bottom artwork.
+const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .default_fps = 30,
+	.stretch_backdrops = false, .centered_scroll_layers = 0x33,
+	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304 };
 
 }

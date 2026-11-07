@@ -252,6 +252,8 @@ struct video_traits
 	// widescreen: the opaque tile layers (the backdrop) stretched across the width; else drawn 1:1,
 	// the sides of each the colour of its edges where those are one colour, black where not
 	bool stretch_backdrops = true;
+	uint8_t centered_scroll_layers = 0;
+	int centered_scroll_y0 = 0, centered_scroll_y1 = 0; // line-scrolled panel kept within the arcade width
 	std::vector<uint32_t> foreground_objects;   // screen-space 3D overlays, sorted after world geometry
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera

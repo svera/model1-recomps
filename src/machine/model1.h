@@ -603,6 +603,12 @@ private:
 	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
 	bool stretch_backdrops() const { return !m_video || m_video->stretch_backdrops; }
+	bool extend_tile_row(int layer, int y) const {
+		return !m_video || !(m_video->centered_scroll_layers & (1u << layer)) ||
+			!(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) ||
+			y < m_video->centered_scroll_y0 || y >= m_video->centered_scroll_y1;
+	}
+	void clip_scrolling_sides(bitmap_rgb32 &pixels, int layer, int flags);
 	void fill_backdrop_sides(bitmap_rgb32 &pixels, int layer = -1, int flags = 0);
 	bitmap_rgb32 m_wrap_tmp;                 // fill_backdrop_sides: a layer drawn wrapping across the sides
 public:

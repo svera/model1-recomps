@@ -629,6 +629,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			fill_backdrop_sides(c.px, layer, flags);
 		c.sides = sliding || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext));
+		clip_scrolling_sides(c.px, layer, flags);
 		c.x0.assign(SCREEN_H, 0);
 		c.x1.assign(SCREEN_H, 0);
 		for (int y = 0; y < SCREEN_H; y++) {
@@ -765,9 +766,21 @@ void model1::prepare_layers()
 // (art reaching the edge, kept 4:3). A sparse layer (SWA's starfield: at least 99% one colour) whose
 // map, wrapping round its 512 columns, is as sparse beside the picture continues across the sides
 // from the map instead, as it scrolls (`layer` given).
+void model1::clip_scrolling_sides(bitmap_rgb32 &pixels, int layer, int flags)
+{
+	if (!m_ext) return;
+	const uint32_t colour = flags & segas24_tile::DRAW_OPAQUE ? 0 : KEY;
+	for (int y = 0; y < pixels.height(); y++)
+		if (!extend_tile_row(layer, y)) {
+			std::fill_n(&pixels.pix(y, 0), m_ext, colour);
+			std::fill(&pixels.pix(y, m_ext + SCREEN_W), &pixels.pix(y, 0) + pixels.width(), colour);
+		}
+}
+
 void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
+	if (!m_ext) return;
 	if (extend_backdrops()) {
 		if (layer >= 0 && m_gameplay.layer_sides)
 			m_gameplay.layer_sides(layer, pixels.data(), pixels.width(), pixels.height(), m_ext);
@@ -847,6 +860,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;
 			fill_backdrop_sides(m_tile_tmp, layer, flags);
+			clip_scrolling_sides(m_tile_tmp, layer, flags);
 			m_l4_frame = m_frame; m_l4_ext = m_ext; m_l4_coords = sky; m_l4_wide = m_wide_frame; m_l4_gen++;
 		}
 		if (sky) find_sky();
@@ -936,7 +950,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 		// Widescreen: a row this layer covers from edge to edge is a curtain (the black that hides
 		// a stage change): carry each end out across its side (unless the game filled the sides).
 		const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
-		if (m_ext && m_wide_frame && !sides && el != KEY && er != KEY) {
+		if (m_ext && m_wide_frame && !sides && extend_tile_row(layer, y) && el != KEY && er != KEY) {
 			int covered = 0;
 			for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
 			if (covered * 10 >= SCREEN_W * 9)

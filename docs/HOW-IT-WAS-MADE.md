@@ -742,6 +742,22 @@ BIOS in addition to the game ROMs, and compares its extracted image with the C++
 test checks the board clock advances, digital inputs transfer through DPRAM, and the game reaches
 active 3D output after coin and Start.
 
+Wing War's aircraft-introduction artwork uses both tile priorities of the background map.
+The generic widescreen default stretched the opaque pass but left its high-priority tiles
+centered, superimposing differently positioned pixels and making the colors look corrupted.
+Its video profile now disables backdrop stretching: the 2D artwork keeps its arcade alignment,
+with black margins instead of wrapping the scrolling tile map or continuing edge colors into
+the sides. Register inspection shows maps 0 and 2 use line scrolling for the aircraft panel
+on rows 80 through 303, with stationary rows above and below it. Only that panel's margins
+are clipped on layers 0, 1, 4 and 5 when line scrolling is enabled, including row-edge
+continuation in whole-frame and separate-parts rendering. Top and bottom artwork retains
+its side extensions; 3D scenes still widen.
+Palette conversion and tile decoding are unchanged. Validate the aircraft introductions
+manually in 4:3 and widescreen, checking background colors and priority alignment; automated
+visual comparisons are not used. The profile test checks that backdrop stretching stays disabled,
+the centered scrolling panel has the expected layer mask and row bounds; this does not establish
+visual correctness.
+
 Full distance also adds cars outside the arcade's camera-specific cell mask in player and Live Monitor
 views. The original drawing checks at `FEF9F3`, `FEFDB2` and `FEFE08` remain untouched: admitting cars
 through those CPU loops changes emulated timing. Instead the renderer attaches missing active cars

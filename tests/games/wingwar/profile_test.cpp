@@ -48,4 +48,8 @@ int main()
 	assert(CONTROLS.pad_actions.size() == 10);
 	assert(game::get_video(ID).smooth_frames && game::get_video(ID).separate_parts);
 	assert(game::get_video(ID).default_fps == 30);
+	assert(!game::get_video(ID).stretch_backdrops);
+	const auto &video = game::get_video(ID);
+	assert(video.centered_scroll_layers == 0x33);
+	assert(video.centered_scroll_y0 == 80 && video.centered_scroll_y1 == 304);
 }
