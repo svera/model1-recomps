@@ -926,13 +926,94 @@ existing `build/cov/wingwar/coverage-human-*.txt` files. Replay the same recordi
 the native equivalence test to compare registers, RAM, display lists and timing with
 the interpreter and verify its final recorded RAM hash; it fails on missing-function
 fallbacks by default. For investigation, append `--collect-fallbacks`, regenerate the map,
-and rerun strictly. Human recordings still have to be provided; no gameplay coverage or
-visual correctness is claimed from the neutral boot-prefix validation.
+and rerun strictly. Each additional human session still needs its own verification;
+no visual correctness is claimed from recorded-input or neutral-prefix validation.
+
+The first paused human session supplied 24,149 frames (about 6 minutes 42 seconds).
+Its interpreter replay matched the recorded final RAM hash and reached 21,616 unique
+instruction addresses, including 299 RAM addresses, with 24,892 flow edges. Merging
+this with boot/attract coverage increased the observed-address union to 26,116.
+Native replay identified five additional continuation entries (`007597`, `016564`,
+`007B55`, `01814C`, and `017793`), now preserved in `native_entries.txt` rather than
+depending only on accumulated runtime logs. With these entries the provisional map
+finds 1,514 ROM functions. The full replay compares 10,239,176 scanline CPU states;
+RAM, display-list bytes, geometry counts, and TGP/I/O timing match, with zero
+missing-function fallbacks. This validates the supplied session, not every aircraft,
+mission, ending, or service-mode path. Recordings and coverage remain build-local.
+
+The same human recording was then extended through the player's reported game over
+to 32,669 frames (about 9 minutes 4 seconds). Its final recorded RAM hash also verified.
+Coverage reached 22,032 unique PCs (299 in RAM) and 25,486 flow edges; the merged
+boot/attract/human union reached 26,518 PCs. Seven more continuation entries were
+preserved: `00C084`, `00453E`, `0180B4`, `00C14D`, `00C2BD`, `00BDBE`, and `00C35B`.
+The updated provisional map finds 1,554 ROM functions. Strict replay of all 32,669
+frames compared 13,851,656 scanline CPU states with identical RAM, display lists,
+geometry counts, TGP/I/O timing, and final recorded RAM hash, with zero function
+fallbacks. Game over is reported by the human player, not inferred from pixels or
+an independently mapped game-state flag.
+
+The recording later extended through the player's reported draw to 42,991 frames
+(about 11 minutes 57 seconds). Its recorded RAM hash verified, and coverage reached
+24,385 unique PCs, including 397 RAM PCs, with 28,280 flow edges. The merged coverage
+union reached 27,013 PCs and the provisional map found 1,567 ROM functions. No new
+continuation hints were needed. Strict native replay compared 18,228,184 scanline CPU
+states, compiled 19 RAM entry/version combinations, and completed with identical
+RAM, display lists, geometry counts, TGP/I/O timing, and final recorded RAM hash,
+with zero function fallbacks. The draw outcome is human-reported, not pixel-checked
+or independently verified from a mapped result flag.
+
+An additional human-reported flight with another plane, ending in a loss, extended
+the recording to 52,189 frames (about 14 minutes 30 seconds). The final RAM hash
+verified. Coverage reached 24,499 unique PCs (398 in RAM) and 28,449 flow edges,
+with 27,056 PCs in the merged coverage union and 1,570 ROM functions in the
+provisional map. Strict replay compared 22,128,136 scanline CPU states and compiled
+20 RAM entry/version combinations, with identical nonvisual state and zero function
+fallbacks. No new continuation hints were required. The aircraft identity and loss
+are human-reported rather than inferred from pixels or mapped result flags.
 
 `make test-wingwar-recording` validates seed generation, recorded-input coverage, and
 native/interpreter seed equivalence without inspecting pixels. Multiple human sessions
 should cover different aircraft, weapons, views, deaths, continues, and progression.
 Neither recordings nor copyrighted ROM data are added to source control by these commands.
+
+### Wing War's Game Assignments
+
+The experimental native launcher's default address map is now bundled at
+`assets/games/wingwar/wingwar_map.txt`, copied from the boot/attract/human coverage map
+described above (1,570 ROM functions, with the mutable RAM overlay range). This contains
+addresses only, no ROM bytes. A normal `wingwar-native` launch no longer requires an
+explicit local-map override. `make test-wingwar-native-map` checks the bundled map against
+the interpreter through boot and attract mode. The bundled map also passed strict replay
+of the current 52,263-frame human recording: 22,159,512 scanline CPU states, identical
+RAM, TGP/I/O timing, display lists and camera hooks, and zero function fallbacks.
+This does not establish complete
+service-mode or all-gameplay coverage; the default `wingwar` executable remains interpreted.
+
+The desktop Game menu exposes six settings from the ROM's Game Assignments menu;
+advertise sound is under Sound. None requires service-mode navigation. Difficulty is 1-8; expert mode time is
+60-300 seconds in steps of 15; the four normal/VS life settings are 16-64 in steps of 4;
+advertise sound is Off/On. Changes are staged until menu close, then saved and followed
+by a game reset. Recording/replay disallows changes.
+
+Advertise sound uses the ROM's inverted boolean: persisted byte `0x40F818` is
+0 for On and 1 for Off. The service-menu label pointers at `0x120E4` and `0x120E8`
+confirm this ordering. The host regression checks both labels and both values across
+reboots; persistence alone would not detect an inverted desktop label.
+
+The ROM copies these settings from `0x40F800` to temporary menu bytes at
+`0x40F920..0x40F926`. The host updates the same persisted fields, increments the save
+counter, calculates the ROM's CRC (seed `0x000DEB00`, polynomial `0x10210000`), copies
+the backup record, and packs the 128-byte block into the Advanced I/O EEPROM's words,
+low byte first. Invalid records, out-of-range choices, and an exhausted ROM save counter
+are rejected without changing the cabinet record.
+
+Reboot validation exposed a board-level Microwire READ timing bug: the Advanced I/O
+model omitted the dummy zero before the first data bit, so its BIOS read shifted words
+and the game rejected saved settings. The model now emits that dummy bit and preserves
+all 16 data bits. `make test-wingwar-host` checks ROM checksum acceptance, all seven
+settings, boundary wrapping, unchanged unrelated fields, invalid input/record rejection,
+replay protection, warm reboot and fresh-machine EEPROM persistence, and service-menu
+dispatch. These are nonvisual checks; native service-mode coverage remains unverified.
 
 ### Wing War's model detail
 

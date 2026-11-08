@@ -279,7 +279,7 @@ void model1io2::ee_clk(int state)
 			} else if (op == 2) {
 				m_ee_address = address;
 				m_shift = uint32_t(eeprom[address]) << 16;
-				m_bits = 0;
+				m_bits = -1; // Microwire READ starts with a dummy zero before the data.
 				m_ee = EE_READ;
 			} else if (!m_locked) {
 				eeprom[address] = 0xffff;
@@ -291,6 +291,10 @@ void model1io2::ee_clk(int state)
 		}
 		break;
 	case EE_READ:
+		if (m_bits < 0) {
+			m_bits = 0;
+			break;
+		}
 		m_shift <<= 1;
 		if (++m_bits == 16) {
 			m_bits = 0;
@@ -320,6 +324,6 @@ void model1io2::ee_clk(int state)
 int model1io2::ee_do() const
 {
 	if (m_ee == EE_START) return ee_ready() ? 1 : 0;
-	if (m_ee == EE_READ) return (m_shift & 0x80000000) ? 1 : 0;
+	if (m_ee == EE_READ) return m_bits < 0 ? 0 : (m_shift & 0x80000000) ? 1 : 0;
 	return 1;
 }

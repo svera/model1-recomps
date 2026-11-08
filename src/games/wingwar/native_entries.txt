@@ -1,4 +1,5 @@
 # Boot/attract continuation entries discovered by native/interpreter lockstep.
+# Additional entries come from verified human gameplay replay.
 # Includes indirect reset returns, computed jumps, and ROM exits from RAM overlays.
 # Addresses only; this supplements execution coverage, not a complete gameplay map.
 entry 0000da
@@ -21,3 +22,17 @@ entry 03a61e
 entry 01de26
 entry 03ab1f
 entry 03a6fe
+# Human session: 24,149 frames from cold boot.
+entry 007597
+entry 016564
+entry 007b55
+entry 01814c
+entry 017793
+# Extended human session through reported game over: 32,669 frames.
+entry 00c084
+entry 00453e
+entry 0180b4
+entry 00c14d
+entry 00c2bd
+entry 00bdbe
+entry 00c35b

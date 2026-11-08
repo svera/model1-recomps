@@ -81,6 +81,7 @@ public:
 
 	// Game-specific choices in Display and Game, and main-menu pages after Game and Controls.
 	virtual std::vector<menu_item> display_menu_items() { return {}; }
+	virtual std::vector<menu_item> sound_menu_items() { return {}; }
 	virtual std::vector<menu_item> game_menu_items() { return {}; }
 	virtual std::vector<menu_item> cabinet_game_menu_items() { return game_menu_items(); }
 	virtual std::vector<menu_item> shared_game_menu_items() { return {}; }

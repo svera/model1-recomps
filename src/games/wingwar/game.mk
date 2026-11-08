@@ -1,5 +1,11 @@
 # Wing War (World): ROM-backed runtime and controls.
 GAMES += wingwar
+$(OBJ)/tests/games/wingwar/host_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(BIN)/wingwar_host_test: $(OBJ)/tests/games/wingwar/host_test.o $(OBJ)/src/games/wingwar/host.o $(OBJ)/src/games/wingwar/romset.o $(call objs,$(ROMSET)) $(GAMES_LINK)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(SDL_LIBS)
+test-wingwar-host: $(BIN)/wingwar_host_test wingwar-regions
+	$(BIN)/wingwar_host_test build/wingwar
 wingwar_COV_SCENARIOS = boot attract
 wingwar_COV_FRAMES_boot ?= 700
 wingwar_COV_FRAMES_attract ?= 7200
@@ -31,6 +37,8 @@ $(BIN)/wingwar_native_overlay_test: $(OBJ)/tests/games/wingwar/native_overlay_te
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 test-wingwar-native-overlays: $(BIN)/wingwar_native_overlay_test build/gen/wingwar_listing.txt wingwar-regions
 	$(BIN)/wingwar_native_overlay_test build/wingwar build/gen/wingwar_map.txt
+test-wingwar-native-map: $(BIN)/wingwar_native_overlay_test assets/games/wingwar/wingwar_map.txt wingwar-regions
+	$(BIN)/wingwar_native_overlay_test build/wingwar assets/games/wingwar/wingwar_map.txt
 test-wingwar-native-shared: $(BIN)/wingwar_native_overlay_test vr-regions swa-regions
 	$(BIN)/wingwar_native_overlay_test --shared build/vr build/swa
 
@@ -68,4 +76,4 @@ test-wingwar-boot: $(BIN)/wingwar_boot_test wingwar-regions
 test-wingwar-romset: $(BIN)/romset_test wingwar-regions
 	$(BIN)/romset_test wingwar roms/wingwar.zip $(IOBOARD2_ZIP) build/wingwar
 
-.PHONY: test-wingwar-profile test-wingwar-lod test-wingwar-draw-distance test-wingwar-interpolation test-wingwar-boot test-wingwar-romset test-wingwar-script test-wingwar-ram-code test-wingwar-native-overlays test-wingwar-native-shared wingwar-recording-seed test-wingwar-recording
+.PHONY: test-wingwar-profile test-wingwar-lod test-wingwar-draw-distance test-wingwar-interpolation test-wingwar-boot test-wingwar-romset test-wingwar-script test-wingwar-ram-code test-wingwar-native-overlays test-wingwar-native-map test-wingwar-native-shared wingwar-recording-seed test-wingwar-recording test-wingwar-host

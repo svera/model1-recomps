@@ -3063,6 +3063,7 @@ int main(int argc, char **argv)
 	int link_player = 0, link_port = 19792;
 	bool link_port_set = false;
 	std::string replay_path, record_path;
+	std::string recompiler_map;
 	long replay_until = -1;   // --replay-until N: hand over after the recording's first N frames
 	input_replay::recording replay, record;
 	bool recording = false;
@@ -3093,6 +3094,13 @@ int main(int argc, char **argv)
 		else if (a == "--roms" && i + 1 < argc) arg_roms = argv[++i];
 		else if (a.rfind("--roms=", 0) == 0) arg_roms = a.substr(7);
 		else if (a == "--interp") interp = true;      // MAME's V60 interpreter instead of the recompiled code
+		else if (a == "--recompiler-map") {
+			if (i + 1 == argc || argv[i + 1][0] == '-') {
+				fprintf(stderr, "--recompiler-map needs a file path\n");
+				return 2;
+			}
+			recompiler_map = argv[++i];
+		}
 		else if (a == "--arcade") arg_arcade = true;  // boot screen, credits and coins as on the cabinet
 		else if (a == "--preview-credits") preview_credits = true;
 		else if (a == "--replay-inputs" && i + 1 < argc) replay_path = argv[++i];
@@ -3124,13 +3132,24 @@ int main(int argc, char **argv)
 		}
 		replay_path = credits_recording_path();
 	}
+	if (!recompiler_map.empty()) {
+#ifndef M1_NATIVE
+		fprintf(stderr, "--recompiler-map requires a native executable\n");
+		return 2;
+#endif
+		if (interp || split_screen || link_player) {
+			fprintf(stderr, "--recompiler-map requires single-cabinet native execution without --interp\n");
+			return 2;
+		}
+	}
 	const bool replay_mode = !replay_path.empty();
 	if (split_layout_set && !split_screen) {
 		fprintf(stderr, "--split-layout needs --split-screen\n");
 		return 2;
 	}
 	const bool automatic_local_multiplayer = host_game().name == "vr" && !split_screen &&
-		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() && !getenv("M1_SCRIPT");
+		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() &&
+		recompiler_map.empty() && !getenv("M1_SCRIPT");
 	const bool local_pair_mode = split_screen || automatic_local_multiplayer;
 	if (local_pair_mode && (host_game().name != "vr" || link_player || link_port_set || arg_arcade ||
 		replay_mode || !record_path.empty() || getenv("M1_SCRIPT") ||
@@ -3351,7 +3370,9 @@ int main(int argc, char **argv)
 #ifdef M1_NATIVE
 	// The game's code, recompiled to native code from this ROM, now (tens of milliseconds); the
 	// address map says where the code is. Without it the game runs on the interpreter.
-	const std::string map_path = find_assets() + "/" + std::string(game::get(host_game()).recompiler_map);
+	const std::string map_path = recompiler_map.empty()
+		? find_assets() + "/" + std::string(game::get(host_game()).recompiler_map)
+		: recompiler_map;
 	auto recompile = [&] {
 		rec::hints map;
 		std::vector<uint8_t> mem = m.maincpu_rom();
@@ -4321,6 +4342,7 @@ int main(int argc, char **argv)
 				cfg.effects = std::clamp(cfg.effects + 10 * d, 0, 100); cfg_dirty = true;
 				m.set_volumes(cfg.music / 100.0f, cfg.effects / 100.0f);
 			} });
+		for (menu_item &i : game_part.sound_menu_items()) p.items.push_back(std::move(i));
 		p.items.push_back(back_item());
 		return p;
 	};
