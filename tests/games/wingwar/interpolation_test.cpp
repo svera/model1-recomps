@@ -44,6 +44,10 @@ struct model1_video_test
 		assert(m.m_blend_from[0][9] == 30 && m.m_blend[0][9] == 31);
 		assert(m.m_blend_from[1][9] == 10 && m.m_blend[1][9] == 11);
 		assert(m.m_blend_from[3][9] == 100 && m.m_blend[3][9] == 99);
+		// An attract fly-by moves the camera up to 12 units a game frame: still one shot.
+		b.camera[9] = -12;
+		m.blend_slots(a, b, .5);
+		assert(!m.m_blend_cut);
 		// A camera jump must not morph between unrelated attract shots.
 		b.camera[9] = -100;
 		m.blend_slots(a, b, .5);

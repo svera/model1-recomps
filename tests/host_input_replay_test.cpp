@@ -13,6 +13,14 @@ int main()
 	};
 	assert(read("M1INPUT 1 swa 1 abc\n" + row).empty());
 	assert(data.frames.size() == 1 && data.expected_ram == 0xabc);
+	{
+		input_replay::recording wingwar;
+		std::istringstream in("M1INPUT 1 wingwar 1 abc\n0 0 0 128 128 1 -1 -1 -1 -1 -1\n");
+		assert(input_replay::read(in, game::id{"wingwar"}, wingwar).empty());
+		assert(wingwar.frames[0].analog[0] == 128 && wingwar.frames[0].analog[2] == 1);
+		std::istringstream wrong("M1INPUT 1 swa 1 abc\n" + row);
+		assert(!input_replay::read(wrong, game::id{"wingwar"}, wingwar).empty());
+	}
 	assert(data.frames[0].pressed[0] == 16 && data.frames[0].analog[2] == 28);
 	assert(!read("M1INPUT 1 vf 1 abc\n" + row).empty());
 	assert(!read("M1INPUT 2 swa 1 abc\n" + row).empty());

@@ -742,6 +742,198 @@ BIOS in addition to the game ROMs, and compares its extracted image with the C++
 test checks the board clock advances, digital inputs transfer through DPRAM, and the game reaches
 active 3D output after coin and Start.
 
+### Wing War's initial scripted code coverage
+
+`src/games/wingwar/script.cpp` registers two interpreter coverage scenarios: `boot` runs
+700 video frames from reset, and `attract` runs 7,200 (two minutes at the board's 60 Hz
+video timing, not 7,200 interpolated pictures). The empty/default scenario aliases attract.
+Both keep every digital button released, both stick axes centered at `0x80`, and throttle
+at `0x01`. They do not insert coins, press Start, or apply the desktop's PC-mode settings.
+The runs therefore exercise the ROM's cold boot and unattended demonstration, not gameplay.
+
+```sh
+make wingwar-coverage
+make test-wingwar-script
+```
+
+The shared `model1cov` tool writes `build/cov/wingwar/coverage-boot.txt` and
+`build/cov/wingwar/coverage-attract.txt`, containing `pc` execution counts, `edge` flow
+transitions, and `irq` handler targets. Frame lengths can be overridden with
+`wingwar_COV_FRAMES_boot` and `wingwar_COV_FRAMES_attract`. Coverage collection uses
+unchecked scripts, as for other games; the separate ROM-backed script regression checks
+the I/O signature, active Advanced-board and TGP clocks, at least 100 geometry-submitting
+frames by frame 700, and at least 100 more after boot during the attract run. These checks
+inspect geometry submission counts, never rendered pixels. It also verifies scenario
+selection, neutral inputs, seed-independent inputs, and premature-run failure.
+
+The initial World-set boot trace recorded 3,103 instruction addresses, 3,367 flow edges,
+and one interrupt target. The attract trace expanded this to 15,586 addresses and 17,606
+edges, also with one interrupt target. Importantly, 53 boot addresses and 232 attract
+addresses execute inside work RAM (`0x400000..0x410000`). The present ROM-only analyser
+cannot turn these into native functions merely by adding address hints. The overlay
+investigation below identifies their origin and observed lifetime; native support remains
+to be implemented. Gameplay, service, and other input-driven scenarios remain untraced;
+these initial files are build-local evidence, not a shipped address map.
+
+### Wing War's RAM-code overlays
+
+Byte-level write tracing over the same 7,200-frame World-set attract run shows that all
+232 executed work-RAM instruction addresses lie in `0x40D000..0x40E000`. The observed
+code is copied verbatim from ROM, not synthesized instruction by instruction. There
+are eight destination slots, with these ROM sources (exclusive end addresses):
+
+| RAM slot | Base table `003668` | Alternate table `0036CC` | Alternate table `003730` |
+| --- | --- | --- | --- |
+| `40D000` | `00258E..0025A3` | same as base | `0025A3..00261F` |
+| `40D200` | `002701..0027A8` | same as base | `0027A8..0028B6` |
+| `40D400` | `002A1A..002AD5` | same as base | `002AD5..002BF7` |
+| `40D600` | `002DE4..002EAF` | same as base | `002EAF..002FE1` |
+| `40D800` | `002BF7..002CBA` | same as base | `002CBA..002DE4` |
+| `40DA00` | `002FE1..00311B` | same as base | `00311B..003255` |
+| `40DC00` | `003255..003324` | `003324..0033E4` | `003456..003516` |
+| `40DE00` | `003E2C..003E70` | same as base | `003E70..003F00` |
+
+The routine at `002538`, called from `001D20`, walks the fixed table at `003668`.
+Each row contains destination, ROM start, and ROM end words. The byte-copy instruction
+at `002555` moves `[R2+]` to `[R1+]`; R3 is the source length. A negative destination
+terminates the table. The routine at `002560`, called from `039B1E`, uses the byte at
+`7302[R25]` as a word-scaled index into the pointer table at `00365C`: selector 0 or 2
+selects `003730`, and selector 1 selects `0036CC`. Its copy instruction is `002583`.
+Both loaders first clear the word at `7290[R25]`. The copied routines include
+TGP commands and model transforms, rather than just data tables.
+
+Observed lifecycle, using the machine's zero-based frame counter:
+
+- Frame 0: startup instructions `0000A0`, `0000A3`, `0000A6`, and `0000A9`
+  zero the watched region as part of the V60's RAM initialization.
+- Frames 477, 1891, 2503, 3721, 4939, and 6177: all eight base routines are copied.
+- Frames 2504 and 4940: table `0036CC` replaces the base set, changing the `40DC00` routine.
+- Frame 3722: table `003730` replaces all eight routines with its alternate set.
+- No other writes to the watched region occurred in this run. Reloads use the table's
+  exact byte lengths, without clearing unused slot tails; a shorter overlay leaves the
+  previous tail intact.
+
+`make test-wingwar-ram-code` reproduces the trace without a shared-machine hook change:
+a test machine overrides the existing virtual byte/halfword bus writes. It verifies
+every copied byte against the ROM source register captured before the instruction,
+checks each completed copy against its selected ROM table, and checks every RAM opcode
+fetch against its latest byte provenance. It observes 72 copies, 17 distinct
+destination/source/length mappings, and 538 changed writes at previously executed
+opcode addresses. Unexpected writers fail explicitly. No rendered pixels are inspected.
+This identifies the lifecycle for boot/attract only; gameplay could introduce additional
+selectors, tables, or writers.
+
+For native recompilation, one address-only RAM map or one boot snapshot is insufficient:
+the same runtime PC can contain different instructions later. The experimental native backend
+uses overlay-aware analysis and native dispatch guards that follow the currently
+loaded bytes, including retained tails. Decode copied bytes at their RAM execution
+addresses so PC-relative control flow and the existing PC-sensitive host hooks remain
+correct. ROM source addresses alone must not replace the game's runtime PCs.
+
+### Wing War's experimental native overlay execution
+
+Wing War's profile declares `40D000..40E000` as mutable executable memory. The coverage
+tool includes a `ram 40d000 40e000` hint, and the analyser preserves it when writing the
+provisional map. Fixed ROM discovery is unchanged. Explicit-range analysis is used
+separately when a call first reaches RAM: the native backend snapshots the currently
+loaded bytes and discovers that entry's control flow at its actual RAM addresses.
+It does not translate runtime PCs to the ROM source.
+
+The selected recompilation context owns a RAM resolver alongside its fixed ROM table.
+RAM entry calls select a cached native function only when its entry and whole range
+snapshot match, otherwise compiling the current version. This includes unused tails
+left by shorter copies. RAM functions guard each instruction's bytes before execution;
+if an interrupt, slice suspension, nested call, or memory write has changed the next
+instruction, they leave the stale function and resolve the current PC again. All cached
+functions retain their executable storage until the owning program is released, since
+an older function may still be suspended on the coroutine stack. Separate contexts
+keep independent snapshots and native functions. Invalid or overlapping RAM ranges fail
+explicitly; unexpected runtime decoding/compilation failures report the PC and abort.
+Instructions not supported directly by SLJIT still use the existing single-instruction
+handlers, as in VR/SWA; this is not a claim of eliminating those handlers.
+
+```sh
+make test-wingwar-native-overlays
+make test-wingwar-native-shared
+```
+
+The first target generates `build/gen/wingwar_map.txt` from the boot/attract traces plus
+`src/games/wingwar/native_entries.txt`. That address-only supplement contains 20 reset,
+computed-jump, and ROM-overlay-exit continuation entries found by nonvisual lockstep;
+it makes the provisional map reproducible without private accumulated fallback logs.
+The existing runtime-entry logging remains available for future coverage expansion.
+The map currently finds 881 ROM functions and is not shipped as the complete game map.
+
+The regression runs the real World ROM for 7,200 frames with neutral inputs and compares
+all 68 CPU registers and the materialized PSW on 3,052,800 scanline boundaries. At frame
+boundaries it compares battery/work RAM, original display-list bytes, TGP and Advanced
+I/O clock totals, geometry counts, and the recovered cameras used by the Wing War hooks.
+The initial strict run compiled 16 RAM entry/version combinations, reused cached
+versions 28,382 times, and had zero missing-function interpreter fallbacks. Synthetic
+checks change the next instruction while its old native routine is suspended, restore
+a cached version, reset the coroutine stack, and interleave two contexts containing
+different bytes at the same PC. Shared VR and SWA checks each run 3,600 neutral-input
+frames against their shipped native maps, with identical nonvisual state and no
+missing-function fallbacks. None of these tests compare pixels.
+
+For investigation only, the test binary accepts `--collect-fallbacks` after its regions
+and map arguments: it still checks state equivalence but allows/logs missing-function
+entries instead of stopping at the first. The default make target remains strict.
+Wing War's ordinary desktop build is still interpreter-based. Broader gameplay/service
+coverage, native performance measurement, and manual gameplay validation are required
+before changing the default or packaging a full native map.
+
+### Wing War human gameplay recordings
+
+Gameplay coverage uses human sessions rather than synthetic flying inputs. The shared
+desktop input recorder/replayer now accepts Wing War as well as SWA. It keeps the
+existing verified-prefix handoff: the recording includes the cold-boot prefix and then
+every live cabinet-input frame. It is an input log, not a video or a machine-state save.
+
+```sh
+make wingwar wingwar-recording-seed
+build/bin/wingwar build/wingwar --interp \
+  --replay-inputs build/wingwar/boot.inputs --record-inputs build/wingwar/session.inputs
+```
+
+The seed is generated by the ROM-backed script test: 700 neutral-input frames and their
+final RAM hash. The desktop replays this prefix, verifies the hash, and pauses for
+manual control. Press P to play, insert a coin (5), and press Start (1). Play and choose
+aircraft normally, use weapons and views, and include deaths/continues if possible.
+Pause with P to save a checkpoint, or quit to save the whole session. Each session
+needs a new output filename; existing recordings are not overwritten at launch.
+F3/reset saves and ends the current recording. The replay/recording session does not
+load or save cabinet NVRAM, EEPROM, or user settings. It starts in Arcade 4:3 at 1x,
+30 FPS, with Wing War LOD Off so saved LOD settings cannot change the replay's simulation.
+Do not change LOD or cabinet settings mid-recording: version 1 records only inputs.
+The window title identifies Wing War at handoff and pause rather than incorrectly naming SWA.
+
+To collect coverage from the full human recording:
+
+```sh
+frames=$(awk 'NR == 1 { print $4; exit }' build/wingwar/session.inputs)
+build/bin/model1cov --game wingwar --replay-inputs build/wingwar/session.inputs \
+  build/wingwar "$frames" build/cov/wingwar/coverage-human-session.txt
+make build/gen/wingwar_listing.txt
+build/bin/wingwar_native_overlay_test build/wingwar build/gen/wingwar_map.txt \
+  --replay-inputs build/wingwar/session.inputs
+```
+
+Coverage replay requires the full recorded frame count and verifies the final RAM hash
+before writing coverage. It rejects a scenario/replay combination, wrong game, malformed
+recording, unavailable axes, and final-state divergence. Wing War's map build includes
+existing `build/cov/wingwar/coverage-human-*.txt` files. Replay the same recording through
+the native equivalence test to compare registers, RAM, display lists and timing with
+the interpreter and verify its final recorded RAM hash; it fails on missing-function
+fallbacks by default. For investigation, append `--collect-fallbacks`, regenerate the map,
+and rerun strictly. Human recordings still have to be provided; no gameplay coverage or
+visual correctness is claimed from the neutral boot-prefix validation.
+
+`make test-wingwar-recording` validates seed generation, recorded-input coverage, and
+native/interpreter seed equivalence without inspecting pixels. Multiple human sessions
+should cover different aircraft, weapons, views, deaths, continues, and progression.
+Neither recordings nor copyrighted ROM data are added to source control by these commands.
+
 ### Wing War's model detail
 
 The V60's object-list builder at `02FC30` asks the TGP for an object-to-view distance with command
@@ -815,7 +1007,11 @@ samples older than two video frames are not used: aircraft-introduction and othe
 current scenery retain the generic interpolation path. Resets clear camera and record history.
 
 This enables the existing record-based camera-cut guard, camera-turn smoothing, and camera-follow
-handling. Static scenery, including renderer-only Full-distance copies, follows one camera motion;
+handling. The shared cut guard treats a camera move over 8 units a game frame as a cut, which suits
+Virtua Racing's cars but not Wing War's fly-bys: the attract's opening canyon shot moves 8-12 units a
+frame for its first second, and every list of it was drawn unblended, at 30 pictures a second.
+`video_traits::camera_cut_distance` sets Wing War's limit to 64 units; its real shot changes jump 275
+units or more. Static scenery, including renderer-only Full-distance copies, follows one camera motion;
 extra copies keep their current anchor-relative offsets instead of blending unrelated anchors.
 The arcade simulation, original display-list bytes, and 30 FPS default are unchanged.
 

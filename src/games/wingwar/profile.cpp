@@ -2,10 +2,15 @@
 
 namespace game::wingwar {
 
+namespace {
+// Constant storage keeps PROFILE ready before cross-file game registration.
+constexpr std::array<std::array<uint32_t, 2>, 1> RAM_CODE{ { { 0x40d000, 0x40e000 } } };
+}
+
 const profile PROFILE{
 	ID, "Wing War", "wingwar", "games/wingwar/wingwar_map.txt",
 	"run `make wingwar-regions` with your roms/wingwar.zip, or tools/romset.py --game wingwar",
-	std::nullopt, std::nullopt, 0
+	std::nullopt, std::nullopt, 0, 8, RAM_CODE
 };
 
 const io_profile IO_PROFILE{
@@ -28,7 +33,8 @@ const io_profile IO_PROFILE{
 
 // The line-scrolled aircraft panel shares maps 0 and 2 with the stationary top/bottom artwork.
 // Scenery nodes carry ROM record pointers; moving model writers carry their RAM record in R24.
-const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .default_fps = 30,
+// Attract fly-bys move the camera up to 12 units a game frame; its shot changes jump 275 or more.
+const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .camera_cut_distance = 64, .default_fps = 30,
 	.stretch_backdrops = false, .centered_scroll_layers = 0x33,
 	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304,
 	.records = draw_records{ {

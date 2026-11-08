@@ -8,11 +8,18 @@
 
 namespace rec {
 
-struct native_stats { size_t functions = 0, instructions = 0, native = 0, code_bytes = 0; double ms = 0; };
+struct native_overlay_stats { size_t compilations = 0, cache_hits = 0, stale_instructions = 0; };
+struct native_stats {
+	size_t functions = 0, instructions = 0, native = 0, code_bytes = 0;
+	double ms = 0;
+	std::shared_ptr<native_overlay_stats> overlays;
+};
 
 // mem: the main CPU's address space (16 MB). Builds every function and makes rec::call use them.
 // Call after rec::attach (or context::attach); the selected context owns the resulting code.
 // When rebuilding, discard its suspended stack with attach before resuming execution.
+// map.ram ranges are compiled lazily from the attached CPU's current bytes. Cached versions
+// retain their executable memory for suspended calls; each RAM instruction guards its bytes.
 // Returns false on failure; the caller must explicitly report or handle the failure.
 bool build_native(const std::vector<uint8_t> &mem, const hints &map, native_stats *stats = nullptr);
 

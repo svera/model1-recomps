@@ -37,6 +37,7 @@ public:
 	void start(host_context &context) override
 	{
 		ctx = &context;
+		if (context.replay) lod = false;
 		set_extended_draw_distance(context.machine, extended);
 		set_lod(context.machine, lod);
 	}

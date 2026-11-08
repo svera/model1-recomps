@@ -253,6 +253,7 @@ IOBOARD2_ZIP = $(wildcard roms/model1io2.zip)
 #   <game>_COV_SCENARIOS   the scripted runs model1cov records as the recompile's hints ("default":
 #                          the game's plain run; none: only the runtime entries)
 #   <game>_COV_FRAMES      their length (<game>_COV_FRAMES_<scenario>: one scenario's own)
+#   <game>_EXTRA_HINTS     address-only continuation hints supplementing the coverage runs
 #   <game>_LOCK_SCENARIOS  the runs <game>-lockstep and <game>-native-lockstep check
 #   <game>_LOCK_FRAMES     their length (<game>_LOCK_FRAMES_<scenario>: one scenario's own)
 # The targets for a game g:
@@ -283,7 +284,7 @@ $(1)-regions: build/$(1)/maincpu.bin
 
 # the recompile's hints: the coverage runs, and the entries the generated code fell back to the
 # interpreter for (src/rt/rec_rt.cpp notes them in build/cov/$(1)/runtime_entries.txt)
-$(1)_HINTS = $$(foreach s,$$($(1)_COV_SCENARIOS),build/cov/$(1)/coverage-$$(s).txt) build/cov/$(1)/runtime_entries.txt
+$(1)_HINTS = $$(foreach s,$$($(1)_COV_SCENARIOS),build/cov/$(1)/coverage-$$(s).txt) $$($(1)_EXTRA_HINTS) build/cov/$(1)/runtime_entries.txt
 build/cov/$(1)/runtime_entries.txt:
 	@mkdir -p $$(dir $$@)
 	@touch $$@

@@ -6,6 +6,7 @@
 #include <istream>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +42,7 @@ struct profile
 	uint8_t test_menu_mode;
 	// The V60's average cycles per instruction (the cores charge MAME's estimate of 8 each).
 	double cpu_cycles_per_instruction = 8;
+	std::span<const std::array<uint32_t, 2>> recompiler_ram; // mutable executable ranges, exclusive end
 };
 
 struct io_profile
@@ -252,6 +254,7 @@ struct video_traits
 {
 	bool smooth_frames = false;      // the 3D blended between game frames (a 30 Hz game's)
 	bool separate_parts = false;     // the parts are separate objects (ships, shots), not a fighter's limbs
+	float camera_cut_distance = 8;   // (records) a camera move a game frame beyond this is a cut, not blended
 	int default_fps = 120;           // the Frame rate setting's first-run choice (30: the arcade's, no blending)
 	bool pin_hud_edges = false;      // move off-center, non-full-screen HUD graphics into widescreen sides
 	// widescreen: the opaque tile layers (the backdrop) stretched across the width; else drawn 1:1,

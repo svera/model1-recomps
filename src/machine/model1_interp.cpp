@@ -40,13 +40,14 @@ glm::mat4 camera_matrix(const float *m)
 	return r;
 }
 
-// A camera that turns over 25 degrees or jumps over 8 units in a game frame (a car's move is about 3)
-bool camera_cut(const glm::mat4 &from, const glm::mat4 &to)
+// A camera that turns over 25 degrees or jumps over max_jump units in a game frame
+// (video_traits::camera_cut_distance: 8 by default, a car's move being about 3)
+bool camera_cut(const glm::mat4 &from, const glm::mat4 &to, float max_jump)
 {
 	const glm::mat3 turn = glm::mat3(to) * glm::transpose(glm::mat3(from));
 	const float angle = std::acos(std::clamp((turn[0][0] + turn[1][1] + turn[2][2] - 1) / 2, -1.0f, 1.0f));
 	const float jump = glm::length(glm::vec3(glm::affineInverse(to)[3]) - glm::vec3(glm::affineInverse(from)[3]));
-	return angle > glm::radians(25.0f) || jump > 8;
+	return angle > glm::radians(25.0f) || jump > max_jump;
 }
 
 // a turn as a rotation vector (the shorter way round) and back
@@ -220,7 +221,7 @@ void model1::index_objects(logic_frame &lf)
 void model1::retain_culled_records(logic_frame &frame, const logic_frame &previous)
 {
 	if (!m_gameplay.record_visibility || !frame.has_camera || !previous.has_camera ||
-		frame.frame - previous.frame != 2 || camera_cut(camera_matrix(previous.camera.data()), camera_matrix(frame.camera.data())))
+		frame.frame - previous.frame != 2 || camera_cut(camera_matrix(previous.camera.data()), camera_matrix(frame.camera.data()), m_video->camera_cut_distance))
 		return;
 	const glm::mat4 old_inverse = glm::affineInverse(camera_matrix(previous.camera.data()));
 	const glm::mat4 camera = camera_matrix(frame.camera.data());
@@ -1864,7 +1865,7 @@ void model1::smooth_turn(logic_frame &lf, const logic_frame &before)
 	glm::quat est = q;
 	glm::vec3 rate(0);
 	lf.turn_age = 1;
-	if (before.has_camera && before.turn_age > 0 && !camera_cut(camera_matrix(before.camera.data()), cam)) {
+	if (before.has_camera && before.turn_age > 0 && !camera_cut(camera_matrix(before.camera.data()), cam, m_video->camera_cut_distance)) {
 		lf.turn_age = 2;
 		const glm::vec3 step = turn_vector(q * glm::inverse(glm::quat_cast(glm::mat3(camera_matrix(before.camera.data())))));
 		lf.turn_step = { step.x, step.y, step.z };
@@ -1968,7 +1969,7 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 	const glm::mat3 turn = glm::mat3(cb) * glm::transpose(glm::mat3(ca));
 	const float angle = std::acos(std::clamp((turn[0][0] + turn[1][1] + turn[2][2] - 1) / 2, -1.0f, 1.0f));
 	const float jump = glm::length(glm::vec3(ib[3]) - glm::vec3(glm::affineInverse(ca)[3]));
-	m_blend_cut = camera_cut(ca, cb);
+	m_blend_cut = camera_cut(ca, cb, m_video->camera_cut_distance);
 	auto first = [](const slot &sl) { return sl.polys.empty() ? 0u : sl.polys[0]; };
 	const std::vector<uint32_t> &overlays = m_video->foreground_objects;
 	auto overlay = [&](const slot &sl) { return sl.screen_space ||

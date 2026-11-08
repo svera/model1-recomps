@@ -14,6 +14,7 @@ struct analyser
 {
 	const std::vector<uint8_t> &mem;
 	bool keep_text;
+	const std::vector<code_range> &ranges;
 	program p;
 	std::set<uint32_t> entries;
 	std::map<uint32_t, std::set<uint32_t>> dyn;
@@ -23,8 +24,12 @@ struct analyser
 
 	// The program ROM's windows: 0x000000-0x0fffff (SWA runs from its mirror at 0x0c0000),
 	// 0x200000-0x2fffff and 0xf80000-0xffffff.
-	static bool is_code_addr(uint32_t a)
+	bool is_code_addr(uint32_t a) const
 	{
+		if (!ranges.empty())
+			return std::any_of(ranges.begin(), ranges.end(), [a](const code_range &r) {
+				return a >= r.first && a < r.last;
+			});
 		return a < 0x100000 || (a >= 0x200000 && a < 0x300000) || (a >= 0xf80000 && a <= 0xffffff);
 	}
 
@@ -163,14 +168,26 @@ bool hints::read(const std::string &path)
 		else if (sscanf(line, "edge %x %x", &a, &b) == 2) edges[a].insert(b);
 		else if (sscanf(line, "irq %x %x", &a, &b) == 2) entries.insert(b);
 		else if (sscanf(line, "entry %x", &a) == 1) entries.insert(a);
+		else if (sscanf(line, "ram %x %x", &a, &b) == 2) {
+			if (a >= b || b > 0x1000000) {
+				fprintf(stderr, "rec: invalid RAM code range in %s: %s", path.c_str(), line);
+				fclose(f);
+				return false;
+			}
+			if (std::none_of(ram.begin(), ram.end(), [a, b](const code_range &r) {
+				return r.first == a && r.last == b;
+			})) ram.push_back({a, b});
+		}
 	}
 	fclose(f);
 	return true;
 }
 
-program analyse(const std::vector<uint8_t> &mem, const hints &h, bool keep_text)
+program analyse(const std::vector<uint8_t> &mem, const hints &h, bool keep_text,
+	const std::vector<code_range> &ranges)
 {
-	analyser an{ mem, keep_text };
+	analyser an{ mem, keep_text, ranges };
+	an.p.ram = h.ram;
 	an.entries = h.entries;
 	an.entries.insert(0xfffff0);       // reset
 	an.dyn = h.edges;
@@ -213,6 +230,7 @@ void write_map(const program &p, const char *path)
 	fprintf(f, "# Model 1 code map for the recompiler: where the functions start\n"
 			   "# and where the indirect jumps and calls lead. Addresses only, nothing from the ROM.\n");
 	for (const function &fn : p.functions) fprintf(f, "entry %06x\n", fn.entry);
+	for (const auto &r : p.ram) fprintf(f, "ram %06x %06x\n", r.first, r.last);
 	for (auto &[a, ts] : p.edges)
 		for (uint32_t t : ts) fprintf(f, "edge %06x %06x\n", a, t);
 	fclose(f);

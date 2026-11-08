@@ -34,6 +34,7 @@ class model1 : public v60_bus
 {
 	friend struct model1_sky_test;
 	friend struct model1_video_test;
+	friend struct model1_native_test;
 public:
 	// Screen: 496x384, 60 Hz (MAME: 16 MHz pixel clock, 656x426 total)
 	static constexpr int SCREEN_W = 496, SCREEN_H = 384;

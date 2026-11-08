@@ -3167,8 +3167,8 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	if (replay_mode) {
-		if (host_game().name != "swa" || getenv("M1_SCRIPT")) {
-			fprintf(stderr, "--replay-inputs is experimental SWA-only and cannot be combined with M1_SCRIPT\n");
+		if ((host_game().name != "swa" && host_game().name != "wingwar") || getenv("M1_SCRIPT")) {
+			fprintf(stderr, "--replay-inputs supports SWA and Wing War and cannot be combined with M1_SCRIPT\n");
 			return 2;
 		}
 		if (const auto error = input_replay::load(replay_path, host_game(), replay); !error.empty()) {
@@ -4783,7 +4783,7 @@ int main(int argc, char **argv)
 			pstate[0] = pstate[1] = pad_state{};
 			resume_clock();
 			SDL_SetWindowTitle(win, preview_credits ? "SWA: credits preview - P to play, Esc for display settings" :
-				"SWA: manual handoff paused - P to play");
+				(std::string(host_title()) + ": manual handoff paused - P to play").c_str());
 			fprintf(stderr, "input replay: %s %zu frames, RAM hash %016llx in %.1f s; paused for manual control (P to play)\n",
 				replay_until < 0 ? "verified" : "replayed the first", replay.frames.size(), (unsigned long long)actual,
 				double(SDL_GetTicksNS() - replay_start) / 1e9);
@@ -4909,7 +4909,7 @@ int main(int argc, char **argv)
 				if (e.key.scancode == SDL_SCANCODE_ESCAPE) open_menu();
 				else if (e.key.scancode == SDL_SCANCODE_P) {
 					paused = !paused;
-					if (replay_mode) SDL_SetWindowTitle(win, paused ? "SWA: manual play paused - P to play" : host_title());
+					if (replay_mode) SDL_SetWindowTitle(win, paused ? (std::string(host_title()) + ": manual play paused - P to play").c_str() : host_title());
 					if (paused) save_recording("paused");
 				}
 				else if (e.key.scancode == SDL_SCANCODE_F9) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }

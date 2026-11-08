@@ -1,0 +1,23 @@
+# Boot/attract continuation entries discovered by native/interpreter lockstep.
+# Includes indirect reset returns, computed jumps, and ROM exits from RAM overlays.
+# Addresses only; this supplements execution coverage, not a complete gameplay map.
+entry 0000da
+entry 00f426
+entry 03c4eb
+entry 039b5f
+entry 0033e4
+entry 017b8f
+entry 01758e
+entry 03a047
+entry 039c3b
+entry 0001b8
+entry 018a60
+entry 017f85
+entry 01801d
+entry 01f0ce
+entry 03a152
+entry 003516
+entry 03a61e
+entry 01de26
+entry 03ab1f
+entry 03a6fe
