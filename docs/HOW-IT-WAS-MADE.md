@@ -1015,6 +1015,31 @@ settings, boundary wrapping, unchanged unrelated fields, invalid input/record re
 replay protection, warm reboot and fresh-machine EEPROM persistence, and service-menu
 dispatch. These are nonvisual checks; native service-mode coverage remains unverified.
 
+### Wing War's play style
+
+Wing War opts into the shared Game > Play style menu, just like VR. PC is the default:
+startup tests run unseen, and the cabinet uses its own free-play mode. Arcade keeps
+the visible boot screen and requires credits. Changing styles restarts the game.
+
+The ROM's coin menu saves six coinage bytes at record offsets `0x0E..0x13`; selecting
+entry 25 sets flag bit 7 and clears bit 6. PC applies those same changes, preserving
+credit ratios and the separate start/continue costs. Arcade coinage is retained as
+the six-byte hexadecimal `arcade_coins` setting and restored on returning to Arcade.
+If no retained coinage exists, Arcade replaces PC free play with the ROM's first
+coinage-table entry at `0x12C13`. Coinage and assignments share the same atomic record
+editor, save counter, CRC, backup and EEPROM packing.
+
+Wing War has no generic camera-RAM boot marker, so its host supplies a hidden-boot hook.
+It observes the ROM's boot-busy byte at `0x40F004` become set and then clear, with a
+nonzero phase at `0x40F006`; this also works after warm resets without accepting stale
+RAM as a completed boot. Failure to finish within 900 frames is reported explicitly.
+Replay bypasses play-style coin edits and retains cold arcade behavior.
+
+`make test-wingwar-host` checks PC Start with zero credits, Arcade rejection without
+credits and acceptance after coins, cold/warm hidden boot, default and custom coinage
+restoration, persisted settings, unchanged assignments, invalid coinage rejection and
+replay isolation. UI appearance remains a manual check.
+
 ### Wing War's model detail
 
 The V60's object-list builder at `02FC30` asks the TGP for an object-to-view distance with command
@@ -1064,6 +1089,93 @@ transforms against matrices the V60 actually submitted, exact texture/polygon/si
 and the absence of duplicate submitted records. Paired Arcade/Full machines retain identical
 work RAM, battery RAM, CPU registers and PC, TGP cycle counts, and original display-list bytes.
 These are nonvisual checks; attract-mode appearance still requires manual validation.
+
+### Wing War's ultrawide polygon sky
+
+Wing War submits its sky as a ten-face strip at polygon RAM word `0xA7`
+(display-list object address `0x8000A7`, texture `0x5B471`). Its paired vertices
+have X coordinates of -1000 and +1000; the Y/Z rows form the horizon colour bands
+and the upper sky. Widening the viewport alone reveals the finite strip's ends,
+producing black side wedges at 21:9, especially when the camera banks.
+
+A Wing War renderer object effect extends only this RAM strip's X coordinates.
+The extension uses the widescreen corner-to-centre reach relative to the arcade
+half-width, so banked views are covered too. It leaves the Y/Z rows, camera matrix,
+colours, clouds and other models unchanged; neither polygon RAM nor simulation
+state is patched. The effect is disabled in 4:3 and non-wide scenes.
+
+`make test-wingwar-sky` decodes real boot/attract display lists without rasterizing
+images. It compares ray/triangle intersections at both viewport edges against an
+infinite-width sky reference, including synthetic camera banks from -90 to +90
+degrees. Horizon-boundary rays are excluded to avoid float extrapolation rounding.
+The initial 3,200-frame check at 16:9 covered 154,791 sky-interior rays and filled 742 original gaps; at 21:9 it
+checks 157,008 rays and fills 8,594 original gaps. It also checks unchanged horizon
+coordinates, polygon/cabinet/work RAM, and exclusion of unrelated objects and narrow
+scenes. Native/interpreter boot/attract equivalence still passes 7,200 frames with
+zero function fallbacks. Appearance remains a manual check.
+
+The distant land also has finite outer edges. Boot/attract display lists identify
+two flat ROM strips: polygon `0xC6E0F` (texture `0x46A75`, eight faces) and
+`0xC6D4D` (texture `0x46A68`, five faces). Their vertices lie at Y=-2, with
+irregular interior contours and rectangular artificial outer bounds. The renderer
+extends only coordinates exactly on those bounds, symmetrically by the widescreen
+diagonal factor. Interior coordinates, height, normals, colours, detailed scenery,
+ROM data and simulation stay unchanged. Both effects are disabled for 4:3 and
+non-wide scenes, independent of the draw-distance setting.
+
+The initial ground regression also decoded these strips' actual polygon links and checked their
+ray intersections for the same bank angles. Previously covered side rays remain
+covered, while 21:9 gains 335 city-strip and 310 coast-strip edge samples across
+boot/attract. At 16:9 it gains 305 and 313 respectively. These counts measure
+geometry, not pixels or visual correctness. The draw-distance regression passes
+with both LOD settings, and native/interpreter boot/attract equivalence remains
+unchanged through 7,200 frames.
+
+Further manual checking found that the diagonal-proportional ground extension still
+left a black horizon band. Counting added side coverage was insufficient: it did not
+require the ground to reach the horizon. Ground perimeter reach is now derived from
+the current camera's height above Y=-2, projection zoom, viewport diagonal and render
+scale, placing the artificial outer edge within 1/8 render pixel of the true horizon.
+The camera position is recovered from the object's actual render matrix, including
+interpolated matrices. Only outer-bound coordinates move; interior contours remain
+unchanged. Invalid camera/projection data produces an explicit fatal diagnostic.
+
+These larger faces exposed cancellation in the shared frustum clipper's float
+intersections. Its four plane intersections now calculate the interpolation parameter
+and interpolated coordinates in double precision before storing float vertices.
+This prevents viewport-edge gaps at higher render scales, without changing the
+clipping planes or projection.
+
+The strengthened nonvisual regression checks the renderer's actual clipped ground
+quads against analytic ground-plane intersections outside the original perimeter,
+including rays half a render pixel from the horizon. It runs 7,200 boot/attract frames
+at 16:9/21:9, 1x/3x, and synthetic banks from -90 to +90 degrees. All 186,526 (16:9)
+and 215,582 (21:9) sampled near-horizon rays remain covered; 354,604 of those rays
+were missed by the previous extension. Synthetic checks also verify all four clipping
+planes at ordinary and horizon-sized coordinates for 4:3/21:9 and 1x/3x. Original
+coverage, interior contours and simulation remain unchanged. Wing War draw-distance
+checks with both LOD settings and native/interpreter boot/attract checks for Wing War,
+VR and SWA pass. This is geometry/state validation, not an automated appearance check.
+
+An exact paused attract recording exposed a third ground strip absent from the earlier
+matching rules: striped countryside, polygon `0xC7CA2`, texture `0x46AAB`, twenty faces.
+It is flat at Y=0, with X/Z bounds -8192 to 10240. Its finite perimeter now uses the
+same camera/projection-derived horizon reach, measured above its own plane. Stripe
+boundaries inside the rectangle, colours and simulation remain unchanged.
+
+Extending its narrow strips also exposed cancellation in the shared backface determinant.
+Edge differences and determinant products now use double intermediates, retaining float
+vertex storage and the original culling rule. The banked boot/attract regression covers
+all three ground strips and excludes their intentionally invisible undersides.
+
+The recorded scene is reproducible without a recording file: 4,183 cold-boot frames
+with neutral buttons, centred flight controls and throttle 1 reproduce RAM hash
+`fd7c1648feffc1fa`. The test also accepts an optional input-recording path. A geometry-only
+GPU sink captures actual smooth renderer submissions through `render_parts`, without
+drawing or inspecting pixels. At 16:9/21:9, 1x/3x and five interpolation fractions,
+all 9,600 sampled ground rays from half a render pixel to eight logical pixels below
+the horizon are covered; disabling the countryside extension misses 7,910.
+Appearance still requires manual confirmation.
 
 ### Wing War's interpolation records and camera
 

@@ -251,7 +251,9 @@ or frame rate.
 ### Features
 
 - The original single-cabinet Wing War flight game, with all four cockpit views.
+- **Game > Play style:** PC (default) skips startup tests and enables free play. Arcade shows the cabinet boot screen and requires coins, preserving your arcade coin settings when switching styles.
 - Sharper graphics, widescreen support, and optional smooth motion.
+- The polygon sky and distant city, coast and striped-countryside ground perimeters extend across widescreen views, including banked 21:9 views, without stretching sky bands or interior ground contours.
 - **Display > Draw distance:** Full (default) adds distant static scenery in the renderer without changing game timing or collisions. Arcade restores the original scenery limits. Moving objects retain their original visibility.
 - **Display > LOD:** Off (default) keeps the highest-detail single-piece scenery models; On restores the arcade's model selection. Full draw distance's extra scenery uses single-piece models in either mode.
 - Keyboard and gamepad controls for the flight stick, throttle, weapons, and views.
@@ -262,7 +264,7 @@ or frame rate.
 2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the package's `roms` folder on Steam Deck / Linux,
    or place them together before selecting `wingwar.zip` when prompted.
 3. Leave both archives zipped; the app checks them and remembers your choice.
-4. Insert a coin with **5** or **D-pad Up**, then press **1** or **Start**.
+4. Press **1** or **Start** to play. In Arcade play style, first insert coins with **5** or **D-pad Up**.
 
 **macOS:** open **Wing War Recomp.app**. If macOS blocks it, allow it through
 **System Settings > Privacy & Security**.

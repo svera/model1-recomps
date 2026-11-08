@@ -111,6 +111,7 @@ public:
 	const std::vector<uint8_t> &polygon_rom() const { return m_regions.polygons; }
 	const std::vector<uint8_t> &coprocessor_data_rom() const { return m_regions.copro_data; }
 	const float *render_matrix() const { return m_view->translation; }
+	std::array<float, 2> render_zoom() const { return {m_view->zoomx, m_view->zoomy}; }
 	bool redrawing() const { return m_redrawing; }
 	bool replaying() const { return m_replaying; }
 	const float *polygon_data(bool ram) const { return ram ? reinterpret_cast<const float *>(m_poly_ram.get()) : reinterpret_cast<const float *>(m_poly_rom); }

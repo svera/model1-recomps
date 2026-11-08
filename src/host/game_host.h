@@ -63,6 +63,8 @@ public:
 	virtual bool before_restart() { return false; }
 	// After each boot (a reset); true: boot again (a setting the game reads at boot was put back).
 	virtual bool booted() { return false; }
+	// Games without camera RAM can run their PC-style boot unseen, with drawing already disabled.
+	virtual void skip_boot() {}
 
 	// The chosen picture shape (width / height; 0: fit the window), before the first boot and on every
 	// change. True: the running game must restart for it (a setting it reads at boot).

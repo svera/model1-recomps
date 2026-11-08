@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <glm/matrix.hpp>
 
 namespace game::wingwar {
 
@@ -159,6 +160,59 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	};
 	callbacks.copro_result = [state](uint32_t pc, uint32_t value) {
 		return lod_result(state->lod, pc, value);
+	};
+	callbacks.object = [&machine](uint32_t, uint32_t texture, uint32_t polygon, uint32_t size, const float *data) {
+		object_effects effect;
+		if (!machine.wide_ext()) return effect;
+		const bool sky = texture == 0x5b471 && polygon == 0xa7 && size == 10 &&
+			data == machine.polygon_data(true);
+		const bool city_ground = texture == 0x46a75 && polygon == 0xc6e0f && size == 8 &&
+			data == machine.polygon_data(false);
+		const bool coast_ground = texture == 0x46a68 && polygon == 0xc6d4d && size == 5 &&
+			data == machine.polygon_data(false);
+		const bool countryside_ground = texture == 0x46aab && polygon == 0xc7ca2 && size == 20 &&
+			data == machine.polygon_data(false);
+		if (!sky && !city_ground && !coast_ground && !countryside_ground) return effect;
+		// A banked view needs the corner-to-centre reach, not just the horizontal width.
+		const float width = std::hypot(model1::SCREEN_W / 2.0f + machine.wide_ext(), model1::SCREEN_H / 2.0f) /
+			(model1::SCREEN_W / 2.0f);
+		if (sky) effect.point = [width](float &x, float &, float &) { x *= width; };
+		else {
+			const float left = city_ground ? -5120.0f : countryside_ground ? -8192.0f : -12800.0f;
+			const float right = city_ground ? 12800.0f : countryside_ground ? 10240.0f : 5120.0f;
+			const float near = city_ground ? -3072.0f : countryside_ground ? -8192.0f : -2560.0f;
+			const float far = city_ground ? 23040.0f : countryside_ground ? 10240.0f : 20480.0f;
+			const float ground_y = countryside_ground ? 0.0f : -2.0f;
+			const auto *matrix = machine.render_matrix();
+			const glm::mat3 rotation(glm::vec3(matrix[0], matrix[1], matrix[2]),
+				glm::vec3(matrix[3], matrix[4], matrix[5]), glm::vec3(matrix[6], matrix[7], matrix[8]));
+			if (!std::isfinite(glm::determinant(rotation)) || std::abs(glm::determinant(rotation)) < 1e-6f) {
+				fprintf(stderr, "Wing War horizon: invalid ground camera rotation\n");
+				std::abort();
+			}
+			const auto camera = -glm::inverse(rotation) * glm::vec3(matrix[9], matrix[10], matrix[11]);
+			const auto zoom = machine.render_zoom();
+			// Place the finite perimeter within 1/8 render pixel of the true horizon.
+			const float reach = std::abs(camera.y - ground_y) * 8 * machine.render_scale() *
+				std::hypot(std::max(std::abs(zoom[0]), std::abs(zoom[1])),
+					std::hypot(model1::SCREEN_W / 2.0f + machine.wide_ext(), model1::SCREEN_H / 2.0f));
+			if (!std::isfinite(camera.x) || !std::isfinite(camera.z) || !std::isfinite(reach)) {
+				fprintf(stderr, "Wing War horizon: non-finite ground camera or projection\n");
+				std::abort();
+			}
+			const float outer_left = std::min(left, camera.x - reach);
+			const float outer_right = std::max(right, camera.x + reach);
+			const float outer_near = std::min(near, camera.z - reach);
+			const float outer_far = std::max(far, camera.z + reach);
+			// Only the artificial perimeter moves; interior contour vertices stay fixed.
+			effect.point = [=](float &x, float &, float &z) {
+				if (x == left) x = outer_left;
+				else if (x == right) x = outer_right;
+				if (z == near) z = outer_near;
+				else if (z == far) z = outer_far;
+			};
+		}
+		return effect;
 	};
 	return callbacks;
 }

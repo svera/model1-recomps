@@ -26,5 +26,10 @@ inline constexpr std::array<assignment, 7> ASSIGNMENTS{{
 
 int assignment_value(model1 &machine, size_t index);
 bool set_assignments(model1 &machine, const std::array<int, 7> &values);
+inline constexpr int FREE_PLAY = 25;
+int64_t coin_setting(model1 &machine);
+bool valid_coin_setting(int64_t value);
+bool set_coin_setting(model1 &machine, int64_t value);
+int64_t free_play_coin_setting(int64_t value);
 
 }

@@ -3408,6 +3408,7 @@ int main(int argc, char **argv)
 		if (!g_pc_mode) { sync.start(); return; }
 		m.set_drawing(false);
 		for (int i = 0; game::get(host_game()).camera_ram && i < 900 && !m.past_boot(); i++) m.run_frame();
+		game_part.skip_boot();
 		m.set_drawing(true);
 		m.m_audio_out.clear();
 		sync.start();
