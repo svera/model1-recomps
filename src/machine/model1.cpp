@@ -663,7 +663,8 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 // repeat_curtains, rows whose pens repeat exactly across their whole width (Wing War's green menu
 // panels: two 248-pixel halves, the same tiles in two palettes; stripes) have that pattern drawn on
 // across the sides instead, each side from the period beside it, in its own palette. A row holding
-// anything else (letters, icons, pictures) is not one pattern and keeps its edge pixel.
+// anything else is not one pattern: it keeps its edge pixel only where the art is one colour beside
+// both edges (letters on a bar), and pictures have no curtain.
 void model1::find_curtains(layer_cache &c, int layer, int flags) const
 {
 	constexpr uint32_t KEY = 0xff000000;
@@ -702,6 +703,24 @@ void model1::find_curtains(layer_cache &c, int layer, int flags) const
 		if (p <= 1) continue;                                   // (one colour: its edge pixel)
 		last = period[y] = int16_t(p);
 		c.curtain[y] = 0;
+	}
+	// With repeat_curtains, an edge pixel is carried out only where the art beside the edge is one
+	// colour (a curtain, a bar with its letters inside): a picture (Wing War's match screen) would be
+	// stretched into streaks, so a run of rows with any such row leaves the sides alone.
+	if (m_video->repeat_curtains) {
+		constexpr int SOLID = 8;
+		for (int y0 = 0; y0 < SCREEN_H;) {
+			if (!c.curtain[y0]) { y0++; continue; }
+			int y1 = y0;
+			bool solid = true;
+			for (; y1 < SCREEN_H && c.curtain[y1]; y1++) {
+				const uint32_t *r = &c.px.pix(y1) + m_ext;
+				for (int x = 1; x < SOLID && solid; x++)
+					solid = r[x] == r[0] && r[SCREEN_W - 1 - x] == r[SCREEN_W - 1];
+			}
+			if (!solid) std::fill(c.curtain.begin() + y0, c.curtain.begin() + y1, uint8_t(0));
+			y0 = y1;
+		}
 	}
 
 	// Each band of rows sharing a period has it drawn on across the sides. Where the colours repeat

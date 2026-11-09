@@ -97,6 +97,22 @@ bool set_coin_setting(model1 &m, int64_t value)
 	});
 }
 
+std::vector<uint8_t> new_eeprom(model1 &m)
+{
+	constexpr size_t DEFAULTS = 0x3dab4;   // (the ROM's own record, the block's first 0x44 bytes)
+	const auto &rom = m.program_rom();
+	if (rom.size() < DEFAULTS + 0x44 || memcmp(rom.data() + DEFAULTS, "S32AF0", 6)) return {};
+	std::vector<uint8_t> s(model1::EEPROM_SIZE);
+	memcpy(s.data(), rom.data() + DEFAULTS, 0x44);
+	s[ASSIGNMENTS[0].offset] = 0;
+	s[0xa] = 1;   // (the save count the ROM's own first save gives)
+	const auto sum = crc(s.data() + 0xa);
+	s[8] = uint8_t(sum);
+	s[9] = uint8_t(sum >> 8);
+	memcpy(s.data() + 0x44, s.data() + 8, 0x3c);
+	return s;
+}
+
 int64_t free_play_coin_setting(int64_t value)
 {
 	// The service menu selects entry 25 and flag bit 7, leaving the credit ratios intact.

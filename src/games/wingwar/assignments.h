@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 class model1;
 
@@ -31,5 +32,8 @@ int64_t coin_setting(model1 &machine);
 bool valid_coin_setting(int64_t value);
 bool set_coin_setting(model1 &machine, int64_t value);
 int64_t free_play_coin_setting(int64_t value);
+// The settings the ROM writes on blank saves, with difficulty 1 (its own is 3), as the EEPROM a
+// cold boot reads them from; empty if the ROM has no such record.
+std::vector<uint8_t> new_eeprom(model1 &machine);
 
 }

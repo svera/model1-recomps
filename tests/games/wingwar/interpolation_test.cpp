@@ -55,6 +55,118 @@ struct model1_video_test
 		assert(std::none_of(m.m_blend_ok.begin(), m.m_blend_ok.end(), [](bool value) { return value; }));
 	}
 
+	// The match screen: no camera, still parts round a plane spinning in place. The camera move
+	// fitted to the still parts' places must not carry the plane: it turns its own way between lists.
+	static void spinning(model1 &m)
+	{
+		model1::logic_frame a, b;
+		a.frame = 10;
+		b.frame = 12;
+		auto part = [](uint32_t poly, float x, float y, float z, float turn) {
+			model1::slot s;
+			s.polys = { poly };
+			s.mat[0] = s.mat[4] = std::cos(turn);
+			s.mat[1] = std::sin(turn);
+			s.mat[3] = -std::sin(turn);
+			s.mat[8] = 1;
+			s.mat[9] = x;
+			s.mat[10] = y;
+			s.mat[11] = z;
+			return s;
+		};
+		const float step = 22.5f * 3.14159265f / 180;
+		for (int i = 0; i < 12; i++) {
+			const float x = float(i % 4) * 20 - 30, y = float(i / 4) * 15 - 15;
+			a.slots.push_back(part(0x5000 + i, x, y, 40 + float(i % 3) * 5, 0));
+			b.slots.push_back(part(0x5000 + i, x, y, 40 + float(i % 3) * 5, 0));
+		}
+		a.slots.push_back(part(0x16200, 8, 1, 34, 1));
+		b.slots.push_back(part(0x16200, 8, 1, 34, 1 + step));
+		model1::logic_frame before = a;
+		before.frame = 8;
+		before.slots.back() = part(0x16200, 8, 1, 34, 1 - step);
+		m.blend_slots(before, a, .5);
+		m.blend_slots(a, b, .5);
+		const size_t plane = b.slots.size() - 1;
+		assert(!m.m_blend_cut && m.m_blend_ok[plane]);
+		assert(std::equal(m.m_blend_from[plane].begin(), m.m_blend_from[plane].end(), a.slots[plane].mat));
+		const float turned = std::atan2(m.m_blend[plane][1], m.m_blend[plane][0]);
+		assert(std::abs(turned - (1 + step / 2)) < 0.5f * 3.14159265f / 180);
+	}
+
+	// The match screen's letters: held in place by the game while the desert behind them pans.
+	// The pan's move, fitted to the scenery, mustn't carry them: they drifted and snapped back.
+	static void letters(model1 &m)
+	{
+		auto part = [](uint32_t poly, float x, float y, float z) {
+			model1::slot s;
+			s.polys = { poly };
+			s.mat[0] = s.mat[4] = s.mat[8] = 1;
+			s.mat[9] = x, s.mat[10] = y, s.mat[11] = z;
+			return s;
+		};
+		auto list = [&](int frame) {
+			model1::logic_frame l;
+			l.frame = frame;
+			const float t = float(frame - 10) / 2;
+			for (int i = 0; i < 24; i++)
+				l.slots.push_back(part(0x9000 + i, float(i % 6) * 40 - 100 - 0.16f * t, float(i / 6) * 12 - 40 - 0.12f * t, 90 + float(i % 5) * 20));
+			for (int i = 0; i < 6; i++) l.slots.push_back(part(0xdc12d + i, float(i) * 3 - 8, 12, 55));
+			return l;
+		};
+		m.blend_slots(list(8), list(10), .5);
+		for (int frame = 12; frame < 32; frame += 2) {
+			const model1::logic_frame a = list(frame - 2), b = list(frame);
+			for (float alpha : { 0.0f, 0.5f }) {
+				m.blend_slots(a, b, alpha);
+				assert(!m.m_blend_cut);
+				for (size_t i = 24; i < b.slots.size(); i++)
+					for (int r = 9; r < 12; r++) assert(std::abs(m.m_blend[i][r] - b.slots[i].mat[r]) < 1e-3f);
+			}
+		}
+	}
+
+	// "Take control!": no camera, a floor of 256 tiles in one sloping plane scrolling past the
+	// plane and the controls. The move fitted to the tiles' places must be a turn: a shear fits
+	// places in a plane as well, and taken back by it each tile started 150 units off.
+	static void floor(model1 &m)
+	{
+		auto part = [](uint32_t poly, float x, float y, float z) {
+			model1::slot s;
+			s.polys = { poly };
+			s.mat[0] = 1;
+			s.mat[4] = 0.995f, s.mat[5] = -0.098f;
+			s.mat[7] = 0.098f, s.mat[8] = 0.995f;
+			s.mat[9] = x, s.mat[10] = y, s.mat[11] = z;
+			return s;
+		};
+		auto list = [&](int frame) {
+			model1::logic_frame l;
+			l.frame = frame;
+			const float t = float(frame - 10) / 2;
+			for (int col = 0; col < 16; col++)
+				for (int row = 0; row < 16; row++)
+					l.slots.push_back(part(0x800000, float(col) * 256 - 2048, float(row) * 25.1f - 254.2f - 0.5f * t, float(row) * 254.8f - 1806.3f - 5 * t));
+			l.slots.push_back(part(0x2fecc, 0, -20, 60));
+			l.slots.push_back(part(0x2ffc3, -12, -30, 40));
+			l.slots.push_back(part(0x2ffc4, 12, -30, 40));
+			return l;
+		};
+		m.blend_slots(list(8), list(10), .5);
+		for (int frame = 12; frame < 112; frame += 2) {
+			const model1::logic_frame a = list(frame - 2), b = list(frame);
+			m.blend_slots(a, b, .5);
+			assert(!m.m_blend_cut);
+			for (size_t i = 0; i < 256; i++) {
+				assert(m.m_blend_ok[i]);
+				for (int r = 9; r < 12; r++) {
+					assert(std::abs(m.m_blend_from[i][r] - a.slots[i].mat[r]) < 0.1f);
+					assert(std::abs(m.m_blend[i][r] - (a.slots[i].mat[r] + b.slots[i].mat[r]) / 2) < 0.1f);
+				}
+			}
+		}
+	}
+
 	static void attract(model1 &m, model1 &arcade)
 	{
 		std::array<std::map<uint32_t, uint32_t>, 2> records;
@@ -158,6 +270,24 @@ int main(int argc, char **argv)
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s regions-dir (requires wingwar.zip)\n", argv[0]);
 		return 2;
+	}
+	{
+		model1 m(load_regions(argv[1], game::wingwar::ID));
+		m.reset();
+		m.set_smooth(true);
+		model1_video_test::spinning(m);
+	}
+	{
+		model1 m(load_regions(argv[1], game::wingwar::ID));
+		m.reset();
+		m.set_smooth(true);
+		model1_video_test::floor(m);
+	}
+	{
+		model1 m(load_regions(argv[1], game::wingwar::ID));
+		m.reset();
+		m.set_smooth(true);
+		model1_video_test::letters(m);
 	}
 	for (bool full : { false, true }) {
 		model1 m(load_regions(argv[1], game::wingwar::ID));

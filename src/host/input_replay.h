@@ -1,7 +1,9 @@
 #pragma once
 #include "../games/script.h"
 #include "../machine/model1.h"
+#include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 
 namespace input_replay {
@@ -12,6 +14,7 @@ struct recording
 {
 	std::vector<game::script_inputs> frames;
 	uint64_t expected_ram = 0;
+	std::vector<uint8_t> eeprom;   // the cold boot's saves (version 2); empty: blank, as version 1
 };
 
 inline uint64_t ram_hash(model1 &m)
@@ -29,8 +32,15 @@ inline std::string read(std::istream &in, game::id title, recording &out)
 	size_t count = 0;
 	recording candidate;
 	if (!(in >> magic >> version >> name >> count >> std::hex >> candidate.expected_ram >> std::dec) ||
-		magic != "M1INPUT" || version != 1 || name != title.name || count == 0 || count > MAX_FRAMES)
+		magic != "M1INPUT" || (version != 1 && version != 2) || name != title.name || count == 0 || count > MAX_FRAMES)
 		return "invalid input replay header, game or frame count";
+	if (version == 2) {
+		std::string hex;
+		if (!(in >> hex) || hex.size() != 2 * model1::EEPROM_SIZE ||
+			hex.find_first_not_of("0123456789abcdef") != std::string::npos)
+			return "invalid input replay EEPROM";
+		for (size_t i = 0; i < hex.size(); i += 2) candidate.eeprom.push_back(uint8_t(std::stoi(hex.substr(i, 2), nullptr, 16)));
+	}
 	candidate.frames.reserve(count);
 	for (size_t f = 0; f < count; f++) {
 		game::script_inputs frame;
@@ -62,8 +72,14 @@ inline std::string save(const std::string &path, game::id title, const recording
 {
 	std::ofstream out(path);
 	if (!out) return "cannot create input replay: " + path;
-	out << "M1INPUT 1 " << title.name << ' ' << data.frames.size() << ' '
-		<< std::hex << data.expected_ram << std::dec << '\n';
+	if (!data.eeprom.empty() && data.eeprom.size() != model1::EEPROM_SIZE) return "invalid input recording EEPROM";
+	out << "M1INPUT " << (data.eeprom.empty() ? 1 : 2) << ' ' << title.name << ' ' << data.frames.size() << ' '
+		<< std::hex << data.expected_ram;
+	if (!data.eeprom.empty()) {
+		out << ' ' << std::setfill('0');
+		for (uint8_t b : data.eeprom) out << std::setw(2) << unsigned(b);
+	}
+	out << std::dec << '\n';
 	for (const auto &frame : data.frames) {
 		for (auto bits : frame.pressed) out << unsigned(bits) << ' ';
 		for (auto value : frame.analog) out << value << ' ';
@@ -72,6 +88,13 @@ inline std::string save(const std::string &path, game::id title, const recording
 	out.close();
 	if (!out) return "cannot write input replay: " + path;
 	return {};
+}
+
+// Before the cold boot (the machine's reset) of a new machine: the saves the recording started
+// from, or none (version 1).
+inline void start(model1 &m, const recording &data)
+{
+	if (!data.eeprom.empty()) memcpy(m.eeprom(), data.eeprom.data(), model1::EEPROM_SIZE);
 }
 
 // The cabinet inputs the next frame runs with, in the form apply() replays.

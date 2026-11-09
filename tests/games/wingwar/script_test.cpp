@@ -1,4 +1,5 @@
 #include "../../../src/games/wingwar/profile.h"
+#include "../../../src/games/wingwar/assignments.h"
 #include "../../../src/games/script.h"
 #include "../../../src/host/regions.h"
 #include "../../../src/host/input_replay.h"
@@ -47,7 +48,6 @@ int main(int argc, char **argv)
 		for (int p = 0; p < 3; p++) m.m_inputs[p] = uint8_t(~in.pressed[p]);
 		if (argc == 3 && f <= 700) recording.frames.push_back(input_replay::capture(m));
 		m.run_frame();
-		if (argc == 3 && f == 700) recording.expected_ram = input_replay::ram_hash(m);
 		if (f <= boot->min_frames()) {
 			const auto error = boot->check(f, m);
 			if (!error.empty()) { fprintf(stderr, "%s\n", error.c_str()); return 1; }
@@ -61,6 +61,18 @@ int main(int argc, char **argv)
 	}
 	assert(!rom.empty());
 	if (argc == 3) {
+		// (the seed starts from a new player's saves: difficulty 1, not the ROM's 3)
+		model1 seed(load_regions(argv[1], ID));
+		recording.eeprom = game::wingwar::new_eeprom(seed);
+		assert(recording.eeprom.size() == model1::EEPROM_SIZE);
+		input_replay::start(seed, recording);
+		seed.reset();
+		for (const auto &frame : recording.frames) {
+			assert(input_replay::apply(seed, frame).empty());
+			seed.run_frame();
+		}
+		assert(game::wingwar::assignment_value(seed, 0) == 0);
+		recording.expected_ram = input_replay::ram_hash(seed);
 		const auto error = input_replay::save(argv[2], ID, recording);
 		if (!error.empty()) { fprintf(stderr, "%s\n", error.c_str()); return 1; }
 		printf("Verified Wing War boot recording saved to %s\n", argv[2]);

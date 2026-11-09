@@ -110,13 +110,15 @@ void equivalence(game::id title, const char *regions, const char *map, bool coll
 	const bool wingwar = title == game::wingwar::ID;
 	model1 reference(load_regions(regions, title));
 	model1 native(load_regions(regions, title));
-	reference.reset();
-	native.reset();
 	input_replay::recording replay;
 	if (recording) {
 		const auto error = input_replay::load(recording, title, replay);
 		if (!error.empty()) { fprintf(stderr, "%s\n", error.c_str()); std::abort(); }
 	}
+	input_replay::start(reference, replay);
+	input_replay::start(native, replay);
+	reference.reset();
+	native.reset();
 	auto play = wingwar && !recording ? game::make_auto_play(title, "attract", 1, true) : nullptr;
 	const int frames = recording ? int(replay.frames.size()) : wingwar ? play->min_frames() : 3600;
 	rec::context runtime;

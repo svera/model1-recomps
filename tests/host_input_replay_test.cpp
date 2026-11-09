@@ -1,5 +1,6 @@
 #include "../src/host/input_replay.h"
 #include <cassert>
+#include <filesystem>
 #include <iostream>
 
 int main()
@@ -32,6 +33,20 @@ int main()
 	assert(!read("M1INPUT 1 swa 1 abc\n0 0 0 -2 0 0 0 0 0 0 0").empty());
 	assert(!read("M1INPUT 1 swa 1 abc\n0 0 0 256 0 0 0 0 0 0 0").empty());
 	assert(!read("M1INPUT 1 swa 1 abc\n" + row + "junk").empty());
-	assert(data.frames.size() == 1 && data.expected_ram == 0xabc);
-	std::cout << "Input replay: strict header, frame counts, buttons, axes and trailing-data checks passed\n";
+	assert(data.frames.size() == 1 && data.expected_ram == 0xabc && data.eeprom.empty());
+	{
+		std::string hex;
+		for (size_t i = 0; i < model1::EEPROM_SIZE; i++) hex += i == 1 ? "a5" : "00";
+		assert(read("M1INPUT 2 swa 1 abc " + hex + "\n" + row).empty());
+		assert(data.eeprom.size() == model1::EEPROM_SIZE && data.eeprom[1] == 0xa5 && data.frames.size() == 1);
+		assert(!read("M1INPUT 2 swa 1 abc " + hex.substr(2) + "\n" + row).empty());
+		assert(!read("M1INPUT 2 swa 1 abc " + hex.substr(2) + "g\n" + row).empty());
+		const auto path = std::filesystem::temp_directory_path() / "m1_input_replay_test.inputs";
+		assert(input_replay::save(path.string(), swa, data).empty());
+		input_replay::recording again;
+		assert(input_replay::load(path.string(), swa, again).empty());
+		std::filesystem::remove(path);
+		assert(again.eeprom == data.eeprom && again.expected_ram == 0xabc && again.frames.size() == 1);
+	}
+	std::cout << "Input replay: strict header, frame counts, buttons, axes and trailing-data checks and the starting EEPROM passed\n";
 }

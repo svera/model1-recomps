@@ -45,6 +45,8 @@ public:
 		if (arcade_coin >= 0) fprintf(f, "arcade_coins = %012llx\n", (long long)arcade_coin);
 	}
 
+	std::vector<uint8_t> new_eeprom(model1 &machine) override { return game::wingwar::new_eeprom(machine); }
+
 	void start(host_context &context) override
 	{
 		ctx = &context;
@@ -70,8 +72,9 @@ public:
 
 	void keep_arcade_settings() override
 	{
+		// (a recording's restart writes them, after the recording is saved)
 		if (ctx->replay) return;
-		menu_closed();
+		apply_assignments();
 		const auto now = coin_setting(ctx->machine);
 		if (!ctx->pc_mode && now >= 0 && now != arcade_coin) {
 			arcade_coin = now;
@@ -125,15 +128,14 @@ public:
 		return {assignment_item(6)};
 	}
 
-	restart menu_closed() override
+	// Changed assignments restart the game, which reads them as it starts. They are written at the
+	// restart itself, after a recording (whose RAM hash covers the settings) has been saved.
+	restart menu_closed() override { return assignments_changed ? restart::game : restart::none; }
+
+	bool before_restart() override
 	{
-		if (!assignments_changed) return restart::none;
-		assignments_changed = false;
-		if (ctx->replay || !set_assignments(ctx->machine, choices)) {
-			fprintf(stderr, "Wing War: failed to save game assignments; replay is active, cabinet settings are invalid, or the save counter is exhausted\n");
-			return restart::none;
-		}
-		return restart::game;
+		apply_assignments();
+		return false;
 	}
 
 private:
@@ -169,6 +171,14 @@ private:
 		return true;
 	}
 
+	void apply_assignments()
+	{
+		if (!assignments_changed) return;
+		assignments_changed = false;
+		if (!set_assignments(ctx->machine, choices))
+			fprintf(stderr, "Wing War: failed to save game assignments; cabinet settings are invalid or the save counter is exhausted\n");
+	}
+
 	void load_choices()
 	{
 		if (!assignments_changed)
@@ -179,16 +189,18 @@ private:
 	{
 		return {i == 0 ? "Game difficulty (1 easy - 8 hard)" : ASSIGNMENTS[i].name,
 				i == 0
-					? "1 is the easiest; 8 is the hardest. Higher levels make the game harder. Changes apply when this menu closes and restart the game. Input recording/replay keeps cabinet assignments unchanged."
-					: "The arcade's Game Assignments setting. Changes apply when this menu closes and restart the game. Input recording/replay keeps cabinet assignments unchanged.",
+					? "1 is the easiest; 8 is the hardest. Higher levels make the game harder. Changes apply when this menu closes and restart the game."
+					: "The arcade's Game Assignments setting. Changes apply when this menu closes and restart the game.",
 				[this, i] {
+					load_choices();   // (the game may set up its settings while the menu is open)
 					if (choices[i] < 0) return std::string("Not ready");
 					if (i == 6) return std::string(choices[i] ? "Off" : "On");
 					return std::to_string(ASSIGNMENTS[i].first + choices[i] * ASSIGNMENTS[i].step);
 				},
 				[this, i](int direction) {
-					if (ctx->replay || choices[i] < 0) {
-						fprintf(stderr, "Wing War: cannot change game assignments during replay or before settings load\n");
+					load_choices();
+					if (choices[i] < 0) {
+						fprintf(stderr, "Wing War: cannot change game assignments before the game sets up its settings\n");
 						return;
 					}
 					const int count = ASSIGNMENTS[i].count;

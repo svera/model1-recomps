@@ -3331,8 +3331,11 @@ int main(int argc, char **argv)
 		ee_path = dir + (m.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav");
 	if (!replay_mode) {
 		load_blob(nv_path, m.nvram().data(), m.nvram().size());
-		load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE);
-	}
+		if (!load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE)) {
+			const auto fresh = game_part.new_eeprom(m);   // (no saves yet: a new player's settings)
+			if (fresh.size() == model1::EEPROM_SIZE) memcpy(m.eeprom(), fresh.data(), fresh.size());
+		}
+	} else input_replay::start(m, replay);
 	// the backup as loaded: the autosave in the loop writes it once it differs (free play set at
 	// boot, the game's first settings, an arcade setting changed in the first seconds)
 	auto backup_hash = [&] {
@@ -4157,6 +4160,9 @@ int main(int argc, char **argv)
 	};
 	auto reset_game = [&](bool keep_settings = true, bool force_code = false) {
 		if (recording) { save_recording("reset ends the recording"); recording = false; }
+		// (after a replay's handoff a reset ends its reproduction: the game's settings, coins and play
+		// style apply as in normal play. Saves stay isolated: replay_mode)
+		game_ctx.replay = false;
 		arcade_picture_pending = false;
 		arcade_next_picture = 0;
 		if (keep_settings) game_part.keep_arcade_settings();     // (Arcade: as the service menu may have left them)
@@ -4812,6 +4818,7 @@ int main(int argc, char **argv)
 				double(SDL_GetTicksNS() - replay_start) / 1e9);
 			if (!record_path.empty()) {
 				record.frames = replay.frames;
+				record.eeprom = replay.eeprom;
 				recording = true;
 				fprintf(stderr, "input recording: on; saved to %s when you pause (P), reset or quit\n", record_path.c_str());
 			}

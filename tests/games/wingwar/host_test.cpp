@@ -59,6 +59,8 @@ int main(int argc, char **argv)
 		const auto refreshed = assignment_menu();
 		for (size_t i = 0; i < expected.size(); i++) assert(refreshed[i].value() == menu[i].value());
 		assert(host->menu_closed() == game_host::restart::game);
+		assert(actual.nvram() == original);   // (written at the restart, after a recording is saved)
+		assert(!host->before_restart());
 		for (size_t i = 0; i < expected.size(); i++) {
 			assert(game::wingwar::assignment_value(actual, i) == expected[i]);
 		}
@@ -77,10 +79,15 @@ int main(int argc, char **argv)
 		for (size_t i = 0; i < expected.size(); i++) {
 			assert(game::wingwar::assignment_value(actual, i) == expected[i]);
 		}
-		live.replay = true;
+		live.replay = true;   // (after a replay's handoff)
 		const auto replay_menu = host->sound_menu_items();
+		const int advertise_before = game::wingwar::assignment_value(actual, 6);
 		replay_menu[0].change(1);
-		assert(host->menu_closed() == game_host::restart::none);
+		assert(host->menu_closed() == game_host::restart::game);
+		host->keep_arcade_settings();
+		assert(game::wingwar::assignment_value(actual, 6) == advertise_before);
+		host->before_restart();
+		assert(game::wingwar::assignment_value(actual, 6) == 1 - advertise_before);
 		live.replay = false;
 		std::array<int, 7> maximum;
 		for (size_t i = 0; i < maximum.size(); i++) maximum[i] = game::wingwar::ASSIGNMENTS[i].count - 1;
@@ -93,7 +100,19 @@ int main(int argc, char **argv)
 			boundaries[i].change(1);
 		}
 		assert(host->menu_closed() == game_host::restart::game);
+		host->before_restart();
 		assert(memcmp(actual.nvram().data() + 0xf808, actual.nvram().data() + 0xf844, 0x3c) == 0);
+		{
+			model1 fresh(load_regions(argv[1], game::wingwar::ID));
+			const auto saves = host->new_eeprom(fresh);
+			assert(saves.size() == model1::EEPROM_SIZE);
+			memcpy(fresh.eeprom(), saves.data(), saves.size());
+			fresh.reset();
+			for (int f = 0; f < 700; f++) fresh.run_frame();
+			assert(game::wingwar::assignment_value(fresh, 0) == 0);   // a new player's difficulty: 1
+			assert(game::wingwar::assignment_value(fresh, 1) == 4 && game::wingwar::assignment_value(fresh, 6) == 0);
+			assert(memcmp(fresh.eeprom(), saves.data(), saves.size()) == 0);
+		}
 		model1 cold(load_regions(argv[1], game::wingwar::ID));
 		memcpy(cold.eeprom(), actual.eeprom(), model1::EEPROM_SIZE);
 		cold.reset();
@@ -110,6 +129,7 @@ int main(int argc, char **argv)
 		advertise[0].change(1);
 		assert(advertise[0].value() == "Off");
 		assert(host->menu_closed() == game_host::restart::game);
+		host->before_restart();
 		assert(cold.read8(0x40f818) == 1);
 		cold.reset();
 		for (int f = 0; f < 700; f++) cold.run_frame();
@@ -118,16 +138,29 @@ int main(int argc, char **argv)
 		advertise[0].change(1);
 		assert(advertise[0].value() == "On");
 		assert(host->menu_closed() == game_host::restart::game);
+		host->before_restart();
 		cold.reset();
 		for (int f = 0; f < 700; f++) cold.run_frame();
 		assert(cold.read8(0x40f818) == 0);
 		assert(host->sound_menu_items()[0].value() == "On");
+		const auto ready = host->sound_menu_items();
+		cold.nvram()[0xf800] = 0;
+		assert(game::wingwar::assignment_value(cold, 0) == -1);
+		assert(ready[0].value() == "Not ready");
+		ready[0].change(1);
+		assert(host->menu_closed() == game_host::restart::none);
+		cold.nvram()[0xf800] = 'S';   // (the game sets up its settings while the menu is open)
+		assert(ready[0].value() == "On");
+		ready[0].change(1);
+		assert(ready[0].value() == "Off");
+		assert(host->menu_closed() == game_host::restart::game);
+		host->before_restart();
+		assert(cold.read8(0x40f818) == 1);
 		cold.nvram()[0xf800] = 0;
 		const auto corrupt = cold.nvram();
-		assert(game::wingwar::assignment_value(cold, 0) == -1);
 		assert(!game::wingwar::set_assignments(cold, expected));
 		assert(cold.nvram() == corrupt);
-		puts("Wing War assignments: ROM checksum, all seven choices, EEPROM and reboot persistence passed");
+		puts("Wing War assignments: ROM checksum, all seven choices, EEPROM and reboot persistence, a new player's difficulty 1 passed");
 
 		auto style = std::make_unique<model1>(load_regions(argv[1], game::wingwar::ID));
 		auto style_host = make_game_host();

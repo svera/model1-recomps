@@ -42,6 +42,7 @@ struct model1_video_test
 			inputs.frames.assign(4183, neutral);
 			inputs.expected_ram = 0xfd7c1648feffc1fa;
 		}
+		input_replay::start(m, inputs);
 		m.reset();
 		m.set_smooth(true);
 		for (const auto &frame : inputs.frames) {
@@ -131,8 +132,9 @@ struct model1_video_test
 	}
 
 	// Widescreen curtain rows: only a pattern repeated across the whole row (stripes, a panel's two
-	// halves in two palettes) repeats into the sides; other art keeps its edge pixel (no pixels
-	// rendered: the mapping is checked on a synthetic layer).
+	// halves in two palettes) repeats into the sides; other art keeps its edge pixel where it is one
+	// colour beside both edges (a curtain, a bar with letters), and a picture is not stretched (no
+	// pixels rendered: the mapping is checked on a synthetic layer).
 	static void curtains(model1 &m)
 	{
 		constexpr uint32_t KEY = 0xff000000;
@@ -182,7 +184,8 @@ struct model1_video_test
 		for (int y = 0; y < model1::SCREEN_H; y++)
 			for (int x = ext; x < ext + W; x++) {
 				const int ax = x - ext;
-				if (y >= 120 && y < 180 && ax >= 200) continue;         // partial: no curtain
+				const bool gap = (y >= 120 && y < 180) || (y >= 320 && y < 324) || (y >= 352 && y < 360);
+				if (gap && ax >= 200) continue;                         // partial: no curtain
 				c.coord[size_t(y) * w + x] = uint32_t(y * 512 + ax);
 				if (y < 60) c.px.pix(y, x) = 0;                         // plain curtain
 				else if (y < 120) c.px.pix(y, x) = stripe(x, y);        // stripes
@@ -190,17 +193,22 @@ struct model1_video_test
 				else if (y >= 180 && y < 260) c.px.pix(y, x) = panel(ax, y);
 				else if (y >= 260 && y < 320)                           // a panel with a letter on it
 					c.px.pix(y, x) = ax >= 100 && ax < 110 ? 0xffffffu : panel(ax, y);
+				else if (y >= 324 && y < 352)                           // a bar with letters: one colour at its edges
+					c.px.pix(y, x) = ax >= 100 && ax < 110 ? 0xffffffu : 0x404040u;
 				else if (y >= 320) c.px.pix(y, x) = picture(ax, y);    // a picture: not a pattern
 			}
 		m.find_curtains(c, 2, 0);
 		for (int y = 0; y < model1::SCREEN_H; y++) {
 			const uint32_t *row = &c.px.pix(y);
-			// curtains of one colour, letters and pictures carry out their edge pixel
-			assert(c.curtain[y] == (y < 60 || y >= 260));
+			// curtains of one colour and bars carry out their edge pixel; a panel with art at its edges
+			// that isn't one pattern, and pictures, leave the sides alone
+			const bool bar = y >= 324 && y < 352;
+			assert(c.curtain[y] == (y < 60 || bar));
 			for (int x = 0; x < w; x++) {
 				const int ax = x - ext;
 				if (y < 60 || y >= 260) {
-					if (ax < 0 || ax >= W) assert(row[x] == KEY && m.curtain_pixel(c, y, x) == row[x < ext ? ext : ext + W - 1]);
+					if (ax < 0 || ax >= W) assert(row[x] == KEY);
+					if ((ax < 0 || ax >= W) && c.curtain[y]) assert(m.curtain_pixel(c, y, x) == row[x < ext ? ext : ext + W - 1]);
 				} else if (y < 120) assert(row[x] == stripe(x, y));    // the stripes drawn on
 				else if (y < 180) assert((ax < 0 || ax >= 200) == (row[x] == KEY));
 				else                                                    // the streaks continued exactly

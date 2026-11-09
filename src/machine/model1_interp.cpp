@@ -937,9 +937,17 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 			}
 			// (a proper turn: places in a plane, the Death Star's trench, fit its mirror image as
 			// well, and the iteration came out at that: the cells' axes turned inside out by it,
-			// their faces culled, the trench gone, black, for a picture)
+			// their faces culled, the trench gone, black, for a picture. Nor one the iteration hadn't
+			// settled on: Wing War's "Take control!" floor, 256 tiles in one sloping plane with a
+			// plane and controls by them, left it a shear, a row 1.73 long, that fit the tiles'
+			// places as well as the move did; each tile's matrix taken back by it lay 150 units off,
+			// the floor jumping that far on every few lists and sliding back.)
 			const double det = Mn[0][0] * (Mn[1][1] * Mn[2][2] - Mn[1][2] * Mn[2][1]) - Mn[0][1] * (Mn[1][0] * Mn[2][2] - Mn[1][2] * Mn[2][0]) + Mn[0][2] * (Mn[1][0] * Mn[2][1] - Mn[1][1] * Mn[2][0]);
-			if (det > 0) {
+			bool orthonormal = true;
+			for (int r = 0; r < 3 && orthonormal; r++)
+				for (int c = 0; c < 3; c++)
+					orthonormal &= std::fabs(Mn[0][r] * Mn[0][c] + Mn[1][r] * Mn[1][c] + Mn[2][r] * Mn[2][c] - (r == c ? 1.0 : 0.0)) <= 1e-3;
+			if (det > 0 && orthonormal) {
 				memcpy(R, Mn, sizeof R);
 				for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
 				settle();
@@ -1278,7 +1286,31 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 				m_ship[k] = 1;
 				continue;
 			}
-			if (pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.02f) { by_camera(k); continue; }
+			if (pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.02f) {
+				by_camera(k);
+				// (the fit is by places: a part turning about its own, Wing War's planes spinning on
+				// the match screen, sat on the move, and blended from the camera's older pose of it
+				// its own turn was lost, the plane held a list and then jumped 22 degrees. Turned off
+				// the camera's move by its own (over 5 degrees), it is blended by its own pair.)
+				const float *po = a.slots[pair[k]].mat, *pc = m_cam_older[k].data();
+				bool own = false;
+				for (int c = 0; c < 9 && !own; c += 3) {
+					const float lo = po[c] * po[c] + po[c + 1] * po[c + 1] + po[c + 2] * po[c + 2];
+					const float lc = pc[c] * pc[c] + pc[c + 1] * pc[c + 1] + pc[c + 2] * pc[c + 2];
+					const float dot = po[c] * pc[c] + po[c + 1] * pc[c + 1] + po[c + 2] * pc[c + 2];
+					own = lo > 1e-12f && lc > 1e-12f && dot < 0.996f * std::sqrt(lo * lc);
+				}
+				if (own) m_cam_res[k] = -1;
+				// (nor a part the game held in place, the match screen's letters, while the
+				// background panned: carried by the pan's move, a list's 0.15 units at 55 deep,
+				// they drifted with it and snapped back at each list, shaking.)
+				const float *pb = b.slots[k].mat;
+				const float depth = std::max(std::sqrt(pb[9] * pb[9] + pb[10] * pb[10] + pb[11] * pb[11]), 1.0f);
+				const float stay = std::hypot(pb[9] - po[9], pb[10] - po[10], pb[11] - po[11]);
+				const float carried = std::hypot(pc[9] - po[9], pc[10] - po[10], pc[11] - po[11]);
+				if (stay <= 1e-4f * depth && carried > 1e-3f * depth) m_cam_res[k] = -1;
+				continue;
+			}
 			const float *pb = b.slots[k].mat;
 			const pt q{ pb[9], pb[10], pb[11] };
 			int best = -1;
