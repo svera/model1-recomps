@@ -262,6 +262,9 @@ struct video_traits
 	bool stretch_backdrops = true;
 	uint8_t centered_scroll_layers = 0;
 	int centered_scroll_y0 = 0, centered_scroll_y1 = 0; // line-scrolled panel kept within the arcade width
+	// widescreen: a row a layer covers edge to edge repeats its edge's pattern across the side
+	// (else carries its edge pixel out, the plain curtain)
+	bool repeat_curtains = false;
 	std::vector<uint32_t> foreground_objects;   // screen-space 3D overlays, sorted after world geometry
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera

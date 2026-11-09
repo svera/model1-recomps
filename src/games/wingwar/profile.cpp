@@ -36,7 +36,7 @@ const io_profile IO_PROFILE{
 // Attract fly-bys move the camera up to 12 units a game frame; its shot changes jump 275 or more.
 const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .camera_cut_distance = 64, .default_fps = 30,
 	.stretch_backdrops = false, .centered_scroll_layers = 0x33,
-	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304,
+	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304, .repeat_curtains = true,
 	.records = draw_records{ {
 		{ 0x02ff79, 21, 0, -6, true }, { 0x02fe99, 21, 0, -6, true },
 		{ 0x00394e, 24 }, { 0x003890, 24 }, { 0x002682, 24 }, { 0x002a0c, 24 }

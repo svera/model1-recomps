@@ -180,14 +180,9 @@ void model1::parts_composite(bitmap_rgb32 &out, uint64_t &key, uint64_t &gen, st
 			uint32_t *d = &made.pix(y);
 			for (int x = c.x0[y]; x < c.x1[y]; x++)
 				if (src[x] != KEY) d[x] = blend_layer_pixel(src[x], d[x]);
-			const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
-			if (m_ext && m_wide_frame && !c.sides && extend_tile_row(l, y) && el != KEY && er != KEY) {
-				int covered = 0;
-				for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
-				if (covered * 10 >= SCREEN_W * 9) {
-					std::fill(d, d + m_ext, el);
-					std::fill(d + m_ext + SCREEN_W, d + tw, er);
-				}
+			if (!c.sides && c.curtain[y]) {
+				for (int x = 0; x < m_ext; x++) d[x] = curtain_pixel(c, y, x);
+				for (int x = m_ext + SCREEN_W; x < tw; x++) d[x] = curtain_pixel(c, y, x);
 			}
 		}
 	}

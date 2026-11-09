@@ -625,7 +625,15 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			smooth_slide ? slide_rows.data() : nullptr);
 		else if (extend_backdrops() && (flags & segas24_tile::DRAW_OPAQUE))
 			m_tiles.draw_wide(c.px, layer, flags, m_ext);
-		else m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
+		else {
+			// (where each pixel came from, for find_curtains' patterns)
+			const bool pens = m_video->repeat_curtains && m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE);
+			if (pens) c.coord.assign(size_t(tw) * SCREEN_H, ~0u);
+			else c.coord.clear();
+			segas24_tile::m_coord = pens ? c.coord.data() : nullptr;
+			m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
+			segas24_tile::m_coord = nullptr;
+		}
 		if (!m_layers_together) m_tiles.m_ox = 0;
 		pin_hud_tiles(c.px, layer);
 		if (flags & segas24_tile::DRAW_OPAQUE)
@@ -643,10 +651,195 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			while (b > a && r[b - 1] == KEY) b--;
 			c.x0[y] = int16_t(a); c.x1[y] = int16_t(b);
 		}
+		find_curtains(c, layer, flags);
 		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.wide = m_wide_frame; c.gen++;
 		c.slide_time = slide_time;
 	}
 	return c;
+}
+
+// Widescreen: a row a layer covers edge to edge is a curtain (the black that hides a stage change),
+// carried out across the sides unless the game filled them: its edge pixel repeated. With
+// repeat_curtains, rows whose pens repeat exactly across their whole width (Wing War's green menu
+// panels: two 248-pixel halves, the same tiles in two palettes; stripes) have that pattern drawn on
+// across the sides instead, each side from the period beside it, in its own palette. A row holding
+// anything else (letters, icons, pictures) is not one pattern and keeps its edge pixel.
+void model1::find_curtains(layer_cache &c, int layer, int flags) const
+{
+	constexpr uint32_t KEY = 0xff000000;
+	c.curtain.assign(SCREEN_H, 0);
+	if (!m_ext || !m_wide_frame || c.sides || (flags & segas24_tile::DRAW_OPAQUE)) return;
+	const int tw = c.px.width();
+	const bool repeat = c.coord.size() == size_t(tw) * SCREEN_H;
+	std::vector<uint8_t> pens(repeat ? size_t(SCREEN_H) * SCREEN_W : 0);
+	std::array<int16_t, SCREEN_H> period{};
+	int last = 1;
+	for (int y = 0; y < SCREEN_H; y++) {
+		const uint32_t *src = &c.px.pix(y);
+		if (!extend_tile_row(layer, y) || src[m_ext] == KEY || src[m_ext + SCREEN_W - 1] == KEY) continue;
+		int covered = 0;
+		for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
+		if (covered * 10 < SCREEN_W * 9) continue;
+		c.curtain[y] = 1;
+		period[y] = 1;
+		if (!repeat || covered != SCREEN_W) continue;
+		const uint32_t *coord = &c.coord[size_t(y) * tw + m_ext];
+		uint8_t *pen = &pens[size_t(y) * SCREEN_W];
+		bool known = true;
+		for (int x = 0; x < SCREEN_W && known; x++) {
+			known = coord[x] != ~0u;
+			if (known) pen[x] = m_tiles.pen_at(coord[x]);
+		}
+		if (!known) continue;
+		auto pattern = [&](int p) {
+			for (int x = 0; x + p < SCREEN_W; x++)
+				if (pen[x] != pen[x + p]) return false;
+			return true;
+		};
+		int p = last > 1 && pattern(last) ? last : 0;          // (a panel's rows share theirs)
+		for (int q = 1; q <= SCREEN_W / 2 && !p; q++)
+			if (pattern(q)) p = q;
+		if (p <= 1) continue;                                   // (one colour: its edge pixel)
+		last = period[y] = int16_t(p);
+		c.curtain[y] = 0;
+	}
+
+	// Each band of rows sharing a period has it drawn on across the sides. Where the colours repeat
+	// too (stripes), the period is just wrapped round. Where they don't (a panel half in its own
+	// palette, its art not made to wrap: its last column doesn't lead into its first), copies of
+	// it are stitched together along the cut stitch_pattern finds, beginning inside the arcade's
+	// columns, so the arcade's edge leads into the sides as seamlessly as copies into each other.
+	for (int y0 = 0; y0 < SCREEN_H;) {
+		const int p = period[y0];
+		int y1 = y0 + 1;
+		while (y1 < SCREEN_H && period[y1] == p) y1++;
+		const int rows = y1 - y0;
+		bool exact = true;
+		for (int y = y0; y < y1 && exact && p > 1; y++) {
+			const uint32_t *r = &c.px.pix(y) + m_ext;
+			for (int x = 0; x + p < SCREEN_W && exact; x++) exact = r[x] == r[x + p];
+		}
+		// the band seen from each side (column m is m columns in from that edge), and its stitch: the
+		// plain wrap where the colours repeat, else the one found (once for each band's pens, the
+		// two sides at once)
+		std::array<curtain_stitch, 2> stitch;
+		std::array<std::future<curtain_stitch>, 2> finding;
+		std::array<uint64_t, 2> key{};
+		std::array<std::vector<uint8_t>, 2> band;
+		for (int side = 0; side < 2 && p > 1; side++) {
+			stitch[side].q = p;
+			stitch[side].k.assign(rows, 0);
+			if (exact || rows < 2 || p < 64) continue;
+			band[side].resize(size_t(rows) * p);
+			uint64_t h = 1469598103934665603ull;
+			auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+			mix(uint64_t(p)); mix(uint64_t(rows));
+			for (int r = 0; r < rows; r++)
+				for (int m = 0; m < p; m++)
+					mix(band[side][size_t(r) * p + m] = pens[size_t(y0 + r) * SCREEN_W + (side ? SCREEN_W - 1 - m : m)]);
+			key[side] = h;
+			std::lock_guard<std::mutex> lock(m_stitch_lock);
+			const auto it = m_stitches.find(h);
+			if (it != m_stitches.end()) stitch[side] = it->second;
+			else finding[side] = std::async(std::launch::async, stitch_pattern, band[side].data(), rows, p);
+		}
+		for (int side = 0; side < 2 && p > 1; side++) {
+			if (finding[side].valid()) {
+				stitch[side] = finding[side].get();
+				std::lock_guard<std::mutex> lock(m_stitch_lock);
+				if (m_stitches.size() >= 32) m_stitches.clear();
+				m_stitches.emplace(key[side], stitch[side]);
+			}
+			auto column = [&](int s) { return side ? m_ext + SCREEN_W - 1 - s : m_ext + s; };
+			const int q = stitch[side].q;
+			for (int r = 0; r < rows; r++) {
+				uint32_t *row = &c.px.pix(y0 + r);
+				const int k = stitch[side].k[r];
+				// (the columns copied from, k and on, are never written)
+				for (int s = k - 1; s >= -m_ext; s--)
+					row[column(s)] = row[column(k + ((s - k) % q + q) % q)];
+			}
+		}
+		if (p > 1)
+			for (int y = y0; y < y1; y++) { c.x0[y] = 0; c.x1[y] = int16_t(tw); }
+		y0 = y1;
+	}
+}
+
+// Where copies of a pattern `p` columns wide (`pens`, row by row, column 0 at the arcade's edge) join
+// best: copies q columns apart, row r's cut k[r] columns in, columns left of it shown from the copy
+// (column + q). The cut is the path through the rows (moving a few columns a row) along which the
+// joined pens differ least: across it, and along the diagonals, the pattern's grain (Wing War's
+// streaks) weighted most, and where the copy is most like what it covers. A minimum-error boundary
+// cut, as in image quilting.
+model1::curtain_stitch model1::stitch_pattern(const uint8_t *pens, int rows, int p)
+{
+	constexpr int MOVE = 4, SPAN = 60;
+	const int cuts = std::min(96, p * 2 / 5);
+	const int qlo = std::max(cuts, p - cuts - SPAN), qhi = p - cuts;
+	auto at = [&](int r, int x) { return int(pens[size_t(r) * p + x]); };
+	long down = 0, up = 0;                                    // the grain: the smoother diagonal
+	for (int r = 0; r + 1 < rows; r++)
+		for (int x = 0; x + 1 < p; x++) {
+			down += std::abs(at(r, x) - at(r + 1, x + 1));
+			up += std::abs(at(r, x + 1) - at(r + 1, x));
+		}
+	const int across = 2, wd = down <= up ? 4 : 1, wu = down <= up ? 1 : 4;
+	curtain_stitch best;
+	long best_cost = std::numeric_limits<long>::max();
+	std::vector<long> cost(cuts), next(cuts);
+	std::vector<int16_t> back(size_t(rows) * cuts);
+	for (int q = qlo; q <= qhi; q++) {
+		auto shown = [&](int r, int s, int k) { return s < k ? at(r, s + q) : at(r, s); };
+		// the join across the cut, and how like the original the copy is about it
+		auto join = [&](int r, int k) {
+			long c = across * std::abs(at(r, k - 1 + q) - at(r, k));
+			for (int s = std::max(k - 3, 0); s < std::min(k + 3, p - q); s++) c += std::abs(at(r, s) - at(r, s + q));
+			return c;
+		};
+		for (int b = 0; b < cuts; b++) cost[b] = join(0, b + 1);
+		bool pruned = false;
+		for (int r = 1; r < rows && !pruned; r++) {
+			long low = std::numeric_limits<long>::max();
+			for (int b = 0; b < cuts; b++) {
+				const int k2 = b + 1;
+				long bc = std::numeric_limits<long>::max();
+				int ba = b;
+				for (int a = std::max(0, b - MOVE); a <= std::min(cuts - 1, b + MOVE); a++) {
+					const int k1 = a + 1;
+					long c = cost[a];
+					if (c >= bc) continue;
+					for (int s = std::max(std::min(k1, k2) - 2, 0); s <= std::max(k1, k2); s++) {
+						if ((s < k1) != (s + 1 < k2)) c += wd * std::abs(shown(r - 1, s, k1) - shown(r, s + 1, k2));
+						if ((s + 1 < k1) != (s < k2)) c += wu * std::abs(shown(r - 1, s + 1, k1) - shown(r, s, k2));
+					}
+					if (c < bc) { bc = c; ba = a; }
+				}
+				next[b] = bc + join(r, k2);
+				back[size_t(r) * cuts + b] = int16_t(ba);
+				low = std::min(low, next[b]);
+			}
+			std::swap(cost, next);
+			pruned = low >= best_cost;
+		}
+		if (pruned) continue;
+		const int end = int(std::min_element(cost.begin(), cost.end()) - cost.begin());
+		if (cost[end] >= best_cost) continue;
+		best_cost = cost[end];
+		best.q = q;
+		best.k.assign(rows, 0);
+		for (int r = rows - 1, b = end; r >= 0; r--) {
+			best.k[r] = int16_t(b + 1);
+			if (r) b = back[size_t(r) * cuts + b];
+		}
+	}
+	return best;
+}
+
+// A curtain row's pixel at side column x (of the layer's widened width): its edge pixel.
+uint32_t model1::curtain_pixel(const layer_cache &c, int y, int x) const
+{
+	return c.px.pix(y, x < m_ext ? m_ext : m_ext + SCREEN_W - 1);
 }
 
 bool model1::hud_edge_pinning_active() const
@@ -844,6 +1037,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	constexpr uint32_t KEY = 0xff000000;     // pixels are 0x00rrggbb: never the key
 	bitmap_rgb32 *tmp = &m_tile_tmp;
 	const int16_t *rx0 = nullptr, *rx1 = nullptr;    // each row's drawn span (cached layers)
+	const layer_cache *cache = nullptr;
 	bool sky = false, sides = false;
 	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) {
 		// the sky layer: note where each pixel came from, for a hi-res replacement (drawn once a game
@@ -869,7 +1063,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 		if (sky) find_sky();
 	} else {
 		layer_cache &c = cached_layer(layer, flags);
-		tmp = &c.px; rx0 = c.x0.data(); rx1 = c.x1.data(); sides = c.sides;
+		tmp = &c.px; rx0 = c.x0.data(); rx1 = c.x1.data(); sides = c.sides; cache = &c;
 	}
 	// Widescreen: the opaque layers are the game's backdrop (VF's sky), which only holds the
 	// visible part of its panorama; stretch it across the width. Other layers retain their scale;
@@ -950,19 +1144,15 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 				for (int dx = 0; dx < s; dx++) d[dx] = blend_layer_pixel(c, d[dx]);
 			}
 		}
-		// Widescreen: a row this layer covers from edge to edge is a curtain (the black that hides
-		// a stage change): carry each end out across its side (unless the game filled the sides).
-		const uint32_t el = src[m_ext], er = src[m_ext + SCREEN_W - 1];
-		if (m_ext && m_wide_frame && !sides && extend_tile_row(layer, y) && el != KEY && er != KEY) {
-			int covered = 0;
-			for (int x = m_ext; x < m_ext + SCREEN_W; x++) covered += src[x] != KEY;
-			if (covered * 10 >= SCREEN_W * 9)
-				for (int dy = 0; dy < s; dy++) {
-					uint32_t *d = &bitmap.pix(y * s + dy);
-					std::fill(d, d + m_ext * s, el);
-					std::fill(d + (m_ext + SCREEN_W) * s, d + bitmap.width(), er);
-				}
-		}
+		// Widescreen: a curtain row carried out across the sides (see find_curtains).
+		if (cache && !sides && cache->curtain[y])
+			for (int dy = 0; dy < s; dy++) {
+				uint32_t *d = &bitmap.pix(y * s + dy);
+				for (int x = 0; x < m_ext; x++)
+					std::fill_n(d + x * s, s, curtain_pixel(*cache, y, x));
+				for (int x = m_ext + SCREEN_W; x < tmp->width(); x++)
+					std::fill_n(d + x * s, std::min(s, bitmap.width() - x * s), curtain_pixel(*cache, y, x));
+			}
 	}
 	});
 }

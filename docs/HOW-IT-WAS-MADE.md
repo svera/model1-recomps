@@ -1238,6 +1238,37 @@ visual comparisons are not used. The profile test checks that backdrop stretchin
 the centered scrolling panel has the expected layer mask and row bounds; this does not establish
 visual correctness.
 
+Rows a transparent layer covers edge to edge (a "curtain") are carried out across the widescreen
+sides. Normally each row repeats its edge pixel, which is right for a black curtain but turned the
+mode-select screen's green panels (layer 5, rows 208–343) into horizontal streaks. Their tile data
+shows the panel is two 248-pixel halves built from the same pens, shown in two palette banks (1C–1F
+and 21–24, swapped as the selection changes); the darker bank merges some of the lighter one's
+colours, so the pixels alone cannot tell this recolouring from a letter missing in one half. Wing
+War's profile therefore sets `repeat_curtains`: while drawing such a layer the tile renderer records
+each pixel's source (per thread, as layers draw in parallel), and `find_curtains` takes a row's
+smallest period over which the pens repeat exactly across all 496 columns. A row whose pens do not
+repeat (letters, icons, pictures, such as the panel's bottom strip at rows 344–383) keeps the edge
+pixel.
+
+Each band of rows sharing a period is then drawn on across the sides, from the period beside each
+side and so in that side's palette. Where the colours repeat as well (stripes, a backdrop repeating
+every 128 pixels) the period simply wraps. The panel's art does not: each half's last column does not
+lead into its first (85% of rows differ there, against 38% between neighbouring columns), a join the
+arcade hides behind its palette change. Wrapping it left a hard seam at each arcade edge. So
+`stitch_pattern` joins copies as image quilting does: copies `q` columns apart, cut along the path
+through the rows (moving at most four columns a row) along which the joined pens differ least, across
+the cut, along both diagonals (the streaks' direction weighted most) and against what the copy
+covers. The cut starts up to 96 columns inside the arcade's background, where the copy replaces the
+original. On the recorded panel the left side stitches every 135 columns and the right every 102, and
+the colour changes along the streaks, across them and along rows match the arcade's own halves (0.9,
+8.7 and 4.5 on the left; 0.5, 4.0 and 2.1 against 0.5, 4.4 and 2.3 on the right), with no column
+standing out. The search takes about 30 ms, the two sides at once, the first time a band's pens are
+seen; its results are kept by those pens, so the selection swapping palettes reuses them. The CPU and
+GPU-parts paths draw the cached layer as it is. The sky test checks synthetic tiles without
+rendering: plain rows keep their edge, stripes wrap, a lettered row and a picture keep their edges,
+streaks repeating every 120 columns but cut at 248 continue exactly in each half's palette, and a
+stitch of art that does not repeat joins better than the plain wrap.
+
 Full distance also adds cars outside the arcade's camera-specific cell mask in player and Live Monitor
 views. The original drawing checks at `FEF9F3`, `FEFDB2` and `FEFE08` remain untouched: admitting cars
 through those CPU loops changes emulated timing. Instead the renderer attaches missing active cars

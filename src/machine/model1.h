@@ -11,6 +11,7 @@
 #include <future>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include "../games/game.h"
@@ -549,7 +550,16 @@ private:
 	// several pictures a frame and the tiles only change with the frame. With each row's drawn span,
 	// so the scaling skips what's empty (the HUD and text layers are mostly empty).
 	// `sides`: the game filled the widescreen sides (gameplay layer_sides), so no curtain is carried out
-	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; double slide_time = -1; };
+	// `curtain`: rows covered edge to edge whose edge pixels are carried out across the sides (rows
+	// repeating a pattern have it drawn into `px` instead); `coord`: where each pixel came from
+	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; std::vector<uint8_t> curtain; std::vector<uint32_t> coord; uint64_t gen = 0; bool sides = false; double slide_time = -1; };
+	void find_curtains(layer_cache &c, int layer, int flags) const;
+	uint32_t curtain_pixel(const layer_cache &c, int y, int x) const;
+	// A pattern band's stitch on one side: copies `q` columns apart, each row's cut `k` columns in
+	struct curtain_stitch { int q = 0; std::vector<int16_t> k; };
+	static curtain_stitch stitch_pattern(const uint8_t *pens, int rows, int p);
+	mutable std::mutex m_stitch_lock;
+	mutable std::unordered_map<uint64_t, curtain_stitch> m_stitches;   // by the band's pens
 	// the sky layer as last drawn (once a game frame, as the others; its panorama placing every time)
 	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false, m_l4_wide = false; uint64_t m_l4_gen = 0;
 	// The GPU's parts (model1_gpu.cpp)

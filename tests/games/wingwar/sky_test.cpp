@@ -130,6 +130,103 @@ struct model1_video_test
 		m.set_gpu3d(nullptr);
 	}
 
+	// Widescreen curtain rows: only a pattern repeated across the whole row (stripes, a panel's two
+	// halves in two palettes) repeats into the sides; other art keeps its edge pixel (no pixels
+	// rendered: the mapping is checked on a synthetic layer).
+	static void curtains(model1 &m)
+	{
+		constexpr uint32_t KEY = 0xff000000;
+		constexpr int W = model1::SCREEN_W, HALF = W / 2;
+		m.set_aspect(21.0f / 9);
+		m.m_wide_frame = true;
+		const int ext = m.m_ext, w = W + 2 * ext;
+		assert(ext > 0);
+		auto stripe = [](int x, int y) { return ((x + y) % 12 + 12) % 12 < 5 ? 0x208020u : 0x104010u; };
+		// diagonal streaks of pens repeating every 120 columns, cut into 248-column halves shown in a
+		// lighter and a darker palette (Wing War's panels: art that doesn't wrap at the half)
+		auto pen = [](int x, int y) { const int d = ((x - y) % 120 + 120) % 120; return (d * 37 + d * d / 7) % 13; };
+		// (the darker palette merges some of the lighter one's colours)
+		auto panel = [&](int ax, int y) {
+			const int p = pen(ax % HALF, y);
+			return ax < HALF ? 0x20a060u + uint32_t(p) * 0x000301u : 0x105030u + uint32_t(p / 2) * 0x000301u;
+		};
+		auto picture = [](int ax, int y) { return uint32_t(0x200000 | ((ax * ax / 7 + y * 3) & 0xff) << 8 | ((ax * 5 + y * y) & 0xff)); };
+		// the tiles' pens: map 0 as the arcade screen, a tile of its own for each place
+		auto tile_pen = [&](int ax, int y) {
+			if (y < 60) return 1;
+			if (y < 120) return stripe(ax + ext, y) == 0x208020u ? 2 : 3;
+			if (y < 180) return 4;
+			if (y >= 260 && y < 320 && ax >= 100 && ax < 110) return 15;
+			if (y < 320) return pen(ax % HALF, y) + 1;
+			return int((uint32_t(ax) * 2654435761u ^ uint32_t(y) * 40503u) >> 20) % 15 + 1;
+		};
+		for (int ty = 0; ty < model1::SCREEN_H / 8; ty++)
+			for (int tx = 0; tx < W / 8; tx++) {
+				const int code = 1 + ty * 64 + tx;
+				m.m_tiles.tile_w(ty * 64 + tx, uint16_t(code), 0xffff);
+				for (int r = 0; r < 8; r++)
+					for (int half = 0; half < 2; half++) {
+						uint16_t v = 0;
+						for (int i = 0; i < 4; i++) v = uint16_t(v << 4 | tile_pen(tx * 8 + half * 4 + i, ty * 8 + r));
+						m.m_tiles.char_w(code * 16 + r * 2 + half, v, 0xffff);
+					}
+			}
+		static const std::vector<uint32_t> no_colours(0x2000);
+		m.m_tiles.update(no_colours.data());
+		model1::layer_cache c;
+		c.px.allocate(w, model1::SCREEN_H);
+		c.px.fill(KEY);
+		c.coord.assign(size_t(w) * model1::SCREEN_H, ~0u);
+		c.x0.assign(model1::SCREEN_H, 0);
+		c.x1.assign(model1::SCREEN_H, 0);
+		for (int y = 0; y < model1::SCREEN_H; y++)
+			for (int x = ext; x < ext + W; x++) {
+				const int ax = x - ext;
+				if (y >= 120 && y < 180 && ax >= 200) continue;         // partial: no curtain
+				c.coord[size_t(y) * w + x] = uint32_t(y * 512 + ax);
+				if (y < 60) c.px.pix(y, x) = 0;                         // plain curtain
+				else if (y < 120) c.px.pix(y, x) = stripe(x, y);        // stripes
+				else if (y < 180) c.px.pix(y, x) = 7;
+				else if (y >= 180 && y < 260) c.px.pix(y, x) = panel(ax, y);
+				else if (y >= 260 && y < 320)                           // a panel with a letter on it
+					c.px.pix(y, x) = ax >= 100 && ax < 110 ? 0xffffffu : panel(ax, y);
+				else if (y >= 320) c.px.pix(y, x) = picture(ax, y);    // a picture: not a pattern
+			}
+		m.find_curtains(c, 2, 0);
+		for (int y = 0; y < model1::SCREEN_H; y++) {
+			const uint32_t *row = &c.px.pix(y);
+			// curtains of one colour, letters and pictures carry out their edge pixel
+			assert(c.curtain[y] == (y < 60 || y >= 260));
+			for (int x = 0; x < w; x++) {
+				const int ax = x - ext;
+				if (y < 60 || y >= 260) {
+					if (ax < 0 || ax >= W) assert(row[x] == KEY && m.curtain_pixel(c, y, x) == row[x < ext ? ext : ext + W - 1]);
+				} else if (y < 120) assert(row[x] == stripe(x, y));    // the stripes drawn on
+				else if (y < 180) assert((ax < 0 || ax >= 200) == (row[x] == KEY));
+				else                                                    // the streaks continued exactly
+					assert(row[x] == (ax < HALF ? 0x20a060u + uint32_t(pen(ax, y)) * 0x000301u :
+						0x105030u + uint32_t(pen(ax - HALF, y) / 2) * 0x000301u));
+			}
+			if (y >= 60 && y < 260 && (y < 120 || y >= 180)) assert(c.x0[y] == 0 && c.x1[y] == w);
+		}
+		// the stitch of a panel whose art doesn't repeat: no seam worse than where the plain wrap joins
+		std::vector<uint8_t> art(size_t(80) * HALF);
+		for (int r = 0; r < 80; r++)
+			for (int x = 0; x < HALF; x++)
+				art[size_t(r) * HALF + x] = uint8_t(int((uint32_t(x - r + 999) * 2654435761u) >> 21) % 7 + (x * x + r) % 5);
+		const auto st = model1::stitch_pattern(art.data(), 80, HALF);
+		assert(st.q > 0 && st.q < HALF && int(st.k.size()) == 80);
+		long stitched = 0, wrapped = 0;
+		for (int r = 0; r < 80; r++) {
+			const int k = st.k[r];
+			assert(k > 0 && k + st.q <= HALF && (!r || std::abs(k - st.k[r - 1]) <= 4));
+			stitched += std::abs(art[size_t(r) * HALF + k - 1 + st.q] - art[size_t(r) * HALF + k]);
+			wrapped += std::abs(art[size_t(r) * HALF + HALF - 1] - art[size_t(r) * HALF]);
+		}
+		assert(stitched < wrapped);
+		m.set_aspect(4.0f / 3);
+	}
+
 	static void clipping(model1 &m)
 	{
 		for (float aspect : {4.0f / 3, 21.0f / 9}) {
@@ -434,6 +531,7 @@ int main(int argc, char **argv)
 	}
 	model1 m(load_regions(argv[1], game::wingwar::ID));
 	if (argc == 3) { model1_video_test::recording(m, argv[2]); return 0; }
+	model1_video_test::curtains(m);
 	model1_video_test::clipping(m);
 	m.reset();
 	std::array<size_t, 2> rays{}, gaps{};
