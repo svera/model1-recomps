@@ -123,6 +123,12 @@ public:
 	uint16_t palette_word(uint32_t i) const { return m_paletteram16[i]; }
 	void palette_write(uint32_t i, uint16_t v) { model1_paletteram_w(i, v, 0xffff); }
 	const std::shared_ptr<game::gameplay_state> &game_state() const { return m_gameplay.state; }
+	uint32_t cheats() const { return m_gameplay.state ? m_gameplay.state->cheats : 0; }
+	bool set_cheats(uint32_t flags) {
+		if ((flags & ~m_gameplay.supported_cheats) || (!m_gameplay.state && flags)) return false;
+		if (m_gameplay.state) m_gameplay.state->cheats = flags;
+		return true;
+	}
 	// Screen art for a screen the game names (game::gameplay_callbacks::screen_hashes)
 	bool load_screen(const std::string &name, std::vector<uint32_t> xrgb, int w, int h);
 	uint16_t peek16(uint32_t a) { return bus_read16(a); }               // the V60's view (ROM, RAM)
@@ -615,6 +621,9 @@ private:
 	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
 	bool stretch_backdrops() const { return !m_video || m_video->stretch_backdrops; }
+	bool repeat_tile_layer(int layer) const {
+		return m_ext && m_wide_frame && m_gameplay.repeat_tile_layer && m_gameplay.repeat_tile_layer(layer);
+	}
 	bool extend_tile_row(int layer, int y) const {
 		return !m_video || !(m_video->centered_scroll_layers & (1u << layer)) ||
 			!(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) ||

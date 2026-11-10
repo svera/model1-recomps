@@ -19,6 +19,7 @@ struct script_inputs
 {
 	std::array<uint8_t, 3> pressed{};
 	std::array<int, 8> analog{ -1, -1, -1, -1, -1, -1, -1, -1 };
+	uint32_t cheats = 0;
 };
 
 class auto_play

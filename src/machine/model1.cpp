@@ -621,9 +621,10 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		const bool sliding = (m_ext || smooth_slide) && m_wide_frame && slide != slides.end() &&
 			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
+		const bool repeating = repeat_tile_layer(layer);
 		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance,
 			smooth_slide ? slide_rows.data() : nullptr);
-		else if (extend_backdrops() && (flags & segas24_tile::DRAW_OPAQUE))
+		else if (repeating || (extend_backdrops() && (flags & segas24_tile::DRAW_OPAQUE)))
 			m_tiles.draw_wide(c.px, layer, flags, m_ext);
 		else {
 			// (where each pixel came from, for find_curtains' patterns)
@@ -638,7 +639,7 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		pin_hud_tiles(c.px, layer);
 		if (flags & segas24_tile::DRAW_OPAQUE)
 			fill_backdrop_sides(c.px, layer, flags);
-		c.sides = sliding || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
+		c.sides = sliding || repeating || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext));
 		clip_scrolling_sides(c.px, layer, flags);
 		c.x0.assign(SCREEN_H, 0);
@@ -996,6 +997,7 @@ void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
 	if (!m_ext) return;
+	if (repeat_tile_layer(layer)) return;
 	if (extend_backdrops()) {
 		if (layer >= 0 && m_gameplay.layer_sides)
 			m_gameplay.layer_sides(layer, pixels.data(), pixels.width(), pixels.height(), m_ext);
@@ -1026,6 +1028,23 @@ void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 				return;
 			}
 		}
+	// Plain bands down both edges, matching row for row (Wing War's sky with the black strip behind
+	// its "Take control!" label): each row continues in its edge's colour.
+	bool bands = true;
+	for (int y = 0, run = 0; y < SCREEN_H && bands; y++, run++) {
+		const uint32_t c = pixels.pix(y, m_ext);
+		bands = c != KEY && pixels.pix(y, m_ext + SCREEN_W - 1) == c;
+		if (bands && y && c != pixels.pix(y - 1, m_ext)) { bands = run >= 8; run = 0; }
+		if (bands && y == SCREEN_H - 1) bands = run + 1 >= 8;
+	}
+	if (bands) {
+		for (int y = 0; y < SCREEN_H; y++) {
+			const uint32_t c = pixels.pix(y, m_ext);
+			std::fill_n(&pixels.pix(y, 0), m_ext, c);
+			std::fill(&pixels.pix(y, m_ext + SCREEN_W), &pixels.pix(y, 0) + pixels.width(), c);
+		}
+		return;
+	}
 	for (int x_edge : { m_ext, m_ext + SCREEN_W - 1 }) {
 		const uint32_t first = pixels.pix(0, x_edge);
 		bool plain = first != KEY;
@@ -1071,7 +1090,7 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 				m_tile_coord.assign(size_t(m_tile_tmp.width()) * m_tile_tmp.height(), ~0u);
 				m_tiles.m_coord = m_tile_coord.data();
 			}
-			if (extend_backdrops()) m_tiles.draw_wide(m_tile_tmp, layer, flags, m_ext);
+			if (extend_backdrops() || repeat_tile_layer(layer)) m_tiles.draw_wide(m_tile_tmp, layer, flags, m_ext);
 			else m_tiles.draw(m_tile_tmp, m_tile_tmp.cliprect(), layer, 0, flags);
 			m_tiles.m_coord = nullptr;
 			m_tiles.m_ox = 0;

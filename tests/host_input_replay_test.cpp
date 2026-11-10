@@ -48,5 +48,29 @@ int main()
 		std::filesystem::remove(path);
 		assert(again.eeprom == data.eeprom && again.expected_ram == 0xabc && again.frames.size() == 1);
 	}
-	std::cout << "Input replay: strict header, frame counts, buttons, axes and trailing-data checks and the starting EEPROM passed\n";
+	{
+		const auto path = std::filesystem::temp_directory_path() / "m1_input_replay_cheats_test.inputs";
+		data.frames.resize(3);
+		data.frames[0].cheats = 0;
+		data.frames[1].cheats = 1;
+		data.frames[2].cheats = 0;
+		for (bool eeprom : {false, true}) {
+			data.eeprom.assign(eeprom ? model1::EEPROM_SIZE : 0, 0xa5);
+			assert(input_replay::save(path.string(), game::id{"wingwar"}, data).empty());
+			input_replay::recording again;
+			assert(input_replay::load(path.string(), game::id{"wingwar"}, again).empty());
+			assert(again.eeprom == data.eeprom && again.expected_ram == data.expected_ram);
+			assert(again.frames.size() == 3 && again.frames[0].cheats == 0 &&
+				again.frames[1].cheats == 1 && again.frames[2].cheats == 0);
+		}
+		std::filesystem::remove(path);
+		assert(!read("M1INPUT 3 swa 1 abc -\n" + row + "-1").empty());
+		assert(!read("M1INPUT 3 swa 1 abc -\n" + row + "4294967296").empty());
+		assert(!read("M1INPUT 3 swa 1 abc -\n" + row).empty());
+		assert(read("M1INPUT 3 swa 1 abc -\n" + row + "4294967295").empty());
+		assert(data.frames[0].cheats == UINT32_MAX);
+		assert(!read("M1INPUT 4 swa 1 abc -\n" + row + "1").empty());
+		assert(!read("M1INPUT 3 swa 1 abc invalid\n" + row + "1").empty());
+	}
+	std::cout << "Input replay: versions 1/2/3, strict validation, EEPROM and per-frame cheat transitions passed\n";
 }

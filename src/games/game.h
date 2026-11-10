@@ -88,6 +88,7 @@ struct tgp_hle_callbacks
 struct gameplay_state
 {
 	virtual ~gameplay_state() = default;
+	uint32_t cheats = 0;
 };
 
 // Optional per-object effects, in model coordinates and BGR555 colour components.
@@ -131,6 +132,7 @@ struct record_visibility
 
 struct gameplay_callbacks
 {
+	uint32_t supported_cheats = 0;
 	std::shared_ptr<gameplay_state> state;
 	std::function<void()> reset;
 	std::function<void()> frame_begin;
@@ -171,6 +173,8 @@ struct gameplay_callbacks
 	std::function<std::vector<uint32_t>(std::string_view)> screen_hashes;
 	std::function<std::optional<std::string_view>(uint32_t)> screen_name;
 	std::function<bool(uint32_t, bool)> wide_scene;
+	// Tile artwork known to repeat horizontally: continue its map across a wide scene at 1:1.
+	std::function<bool(int layer)> repeat_tile_layer;
 	// Widescreen: a tile layer as drawn this game frame, `ext` columns each side of the
 	// arcade's 496 (`width` = 496 + 2 * ext, pixels 0x00rrggbb, 0xff000000 for nothing). The game may
 	// fill the sides, which are otherwise empty (or map-wrapped for a narrow screen's opaque

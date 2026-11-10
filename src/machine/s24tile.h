@@ -212,8 +212,11 @@ public:
 				if (win) m = ~m;
 				if (m & (0x8000 >> ((mx & 127) >> 3))) continue;
 				int i = (h + x) & 511;
-				if (srct[i] == tpri || (flags_in & DRAW_OPAQUE))
+				if (srct[i] == tpri || (flags_in & DRAW_OPAQUE)) {
 					*dst = m_pens[src[i] & 0x1fff];
+					if (m_coord) m_coord[size_t(y) * bitmap.width() + m_ox + x] =
+						uint32_t(l) << 18 | uint32_t(sy * 512 + i);
+				}
 			}
 		}
 	}

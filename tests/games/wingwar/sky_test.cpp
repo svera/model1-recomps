@@ -235,6 +235,82 @@ struct model1_video_test
 		m.set_aspect(4.0f / 3);
 	}
 
+	// An opaque backdrop of plain bands down its edges (the sky with the black strip behind the
+	// "Take control!" label, letters inside it) continues each row in its edge's colour, not black;
+	// art reaching the edges still leaves black sides.
+	static void bands(model1 &m)
+	{
+		constexpr int W = model1::SCREEN_W, H = model1::SCREEN_H;
+		m.set_aspect(21.0f / 9);
+		m.m_wide_frame = true;
+		const int ext = m.m_ext, w = W + 2 * ext;
+		bitmap_rgb32 px;
+		px.allocate(w, H);
+		for (bool art : {false, true}) {
+			px.fill(0xff000000);
+			for (int y = 0; y < H; y++)
+				for (int x = ext; x < ext + W; x++) {
+					const int ax = x - ext;
+					const bool strip = y >= 160 && y < 200;
+					uint32_t c = strip ? (ax >= 100 && ax < 300 && (ax + y) % 7 < 3 ? 0xffff00u : 0) : 0x00b5ffu;
+					if (art && y >= 300) c = uint32_t((ax * 13 + y * 7) & 0xffffff);
+					px.pix(y, x) = c;
+				}
+			m.fill_backdrop_sides(px);
+			for (int y = 0; y < H; y++)
+				for (int x = 0; x < w; x++) {
+					if (x >= ext && x < ext + W) continue;
+					const uint32_t want = art ? 0 : y >= 160 && y < 200 ? 0 : 0x00b5ffu;
+					assert(px.pix(y, x) == want);
+				}
+		}
+		m.set_aspect(4.0f / 3);
+		puts("Backdrop bands: plain edge bands carried across the 21:9 sides");
+	}
+
+	static void continue_sky(model1 &m)
+	{
+		auto &tiles = m.m_tiles;
+		tiles.tile_w(0x5002, 0, 0xffff);
+		tiles.tile_w(0x5006, 0, 0xffff);
+		for (int y = 0; y < 48; y++)
+			for (int x = 0; x < 64; x++)
+				tiles.tile_w(0x2000 + y * 64 + x, uint16_t(0x1c80 + y + x % 16), 0xffff);
+		assert(m.m_gameplay.repeat_tile_layer(4) && m.m_gameplay.repeat_tile_layer(5));
+		for (int layer : {0, 1, 2, 3, 6, 7}) assert(!m.m_gameplay.repeat_tile_layer(layer));
+		for (float aspect : {4.0f / 3, 16.0f / 9, 21.0f / 9, 32.0f / 9}) {
+			m.set_aspect(aspect);
+			m.m_wide_frame = true;
+			assert(m.repeat_tile_layer(4) == (m.m_ext > 0));
+			if (!m.m_ext) continue;
+			assert(m.cached_layer(5, 0).sides);
+			// Check source coordinates, not rendered pixels: 1:1 sampling wraps the original map.
+			bitmap_rgb32 target;
+			const int w = model1::SCREEN_W + 2 * m.m_ext;
+			target.allocate(w, model1::SCREEN_H);
+			std::vector<uint32_t> coordinates(size_t(w) * model1::SCREEN_H, ~0u);
+			tiles.m_ox = m.m_ext;
+			tiles.m_coord = coordinates.data();
+			tiles.draw_wide(target, 4, segas24_tile::DRAW_OPAQUE, m.m_ext);
+			tiles.m_coord = nullptr;
+			tiles.m_ox = 0;
+			for (int y = 0; y < model1::SCREEN_H; y++)
+				for (int x = 0; x < w; x++)
+					assert(coordinates[size_t(y) * w + x] == uint32_t((2 << 18) | (y << 9) | ((x - m.m_ext) & 511)));
+		}
+		const uint16_t saved = tiles.tile_r(0x2000 + 47 * 64 + 63);
+		tiles.tile_w(0x2000 + 47 * 64 + 63, uint16_t(saved + 1), 0xffff);
+		assert(!m.m_gameplay.repeat_tile_layer(4));
+		tiles.tile_w(0x2000 + 47 * 64 + 63, 0x100, 0xffff);
+		assert(!m.m_gameplay.repeat_tile_layer(4));
+		tiles.tile_w(0x2000 + 47 * 64 + 63, saved, 0xffff);
+		tiles.tile_w(0x5006, 0x4000, 0xffff);
+		assert(!m.m_gameplay.repeat_tile_layer(4));
+		tiles.tile_w(0x5006, 0, 0xffff);
+		m.set_aspect(4.0f / 3);
+		puts("Continue sky: original-scale map coordinates at 4:3, 16:9, 21:9 and 32:9");
+	}
+
 	static void clipping(model1 &m)
 	{
 		for (float aspect : {4.0f / 3, 21.0f / 9}) {
@@ -540,6 +616,8 @@ int main(int argc, char **argv)
 	model1 m(load_regions(argv[1], game::wingwar::ID));
 	if (argc == 3) { model1_video_test::recording(m, argv[2]); return 0; }
 	model1_video_test::curtains(m);
+	model1_video_test::bands(m);
+	model1_video_test::continue_sky(m);
 	model1_video_test::clipping(m);
 	m.reset();
 	std::array<size_t, 2> rays{}, gaps{};

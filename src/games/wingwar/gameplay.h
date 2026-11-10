@@ -7,6 +7,8 @@ namespace game::wingwar {
 
 // The 0x1f result feeds Wing War's model-tier table; the 0x1a results feed visibility checks.
 inline constexpr uint32_t LOD_RESULT_READ = 0x02fc8e;
+inline constexpr uint32_t INVINCIBILITY = 1;
+inline constexpr uint32_t DAMAGE_IMMUNITY_READ = 0x01f18a;
 
 struct gameplay_state : game::gameplay_state
 {

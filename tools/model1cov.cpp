@@ -63,6 +63,9 @@ int main(int argc, char **argv)
 	};
 	for (int f = 1; f <= frames; f++) {
 		const game::script_inputs in = play ? play->frame(f, m) : replay.frames[f - 1];
+		if (!m.set_cheats(in.cheats)) {
+			fprintf(stderr, "Input replay uses unsupported cheats\n"); return 1;
+		}
 		for (size_t c = 0; c < in.analog.size(); c++)
 			if (in.analog[c] >= 0 && !m.set_analog_input(c, uint8_t(in.analog[c]))) {
 				fprintf(stderr, "%s coverage requires the Model 1 I/O board ROM (model1io.zip)\n", game::get(title).display_name.data());

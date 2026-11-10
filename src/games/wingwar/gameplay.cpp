@@ -149,7 +149,28 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	gameplay_callbacks callbacks;
 	auto state = std::make_shared<gameplay_state>();
 	callbacks.state = state;
-	callbacks.reset = [state] { state->scenery = {}; state->cameras = {}; };
+	callbacks.supported_cheats = INVINCIBILITY;
+	callbacks.read_pc_first = callbacks.read_pc_last = DAMAGE_IMMUNITY_READ;
+	callbacks.read_value = [&machine, state](uint32_t pc, uint32_t address, uint16_t value) {
+		// 732c[R25] identifies the local pilot; the other combat aircraft is CPU-controlled.
+		const uint32_t player = machine.cpu().reg(24);
+		return uint16_t((state->cheats & INVINCIBILITY) && pc == DAMAGE_IMMUNITY_READ &&
+			address == 0x40f308 && (player == 0x40b400 || player == 0x40b800) &&
+			player == machine.read32(0x40f32c) ? 1 : value);
+	};
+	callbacks.repeat_tile_layer = [&machine](int layer) {
+		if ((layer != 4 && layer != 5) || machine.tile_word(0x2000) != 0x1c80 ||
+			machine.tile_word(0x5002) != 0 || machine.tile_word(0x5006) != 0) return false;
+		// Continue's purple starfield repeats every 16 tiles; don't wrap other screen artwork.
+		for (int y = 0; y < 48; y++)
+			for (int x = 0; x < 64; x++) {
+				const uint16_t tile = machine.tile_word(0x2000 + y * 64 + x);
+				if (tile < 0x1c80 || tile > 0x1dc1 ||
+					tile != machine.tile_word(0x2000 + y * 64 + x % 16)) return false;
+			}
+		return true;
+	};
+	callbacks.reset = [state] { state->scenery = {}; state->cameras = {}; state->cheats = 0; };
 	callbacks.matrix_objects = [&machine, state](uint32_t &word) {
 		capture_camera(machine, *state, word);
 		return scenery_objects(machine, *state, word);

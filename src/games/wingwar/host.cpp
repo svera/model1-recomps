@@ -128,6 +128,27 @@ public:
 		return {assignment_item(6)};
 	}
 
+	std::vector<menu_item> menu_items_after_controls() override
+	{
+		return { { "Cheats", "Optional invincibility.", {}, {},
+			[this] {
+				menu_page page{"Cheats", "", {}};
+				page.items.push_back({ "Invincibility",
+					"On prevents damage to your aircraft only; CPU opponents remain vulnerable. "
+					"Does not change flight controls, restore lost health or stop the stage timer. "
+					"Recorded per frame for deterministic replay. Off by default; resets when the game restarts.",
+					[this] { return ctx->machine.cheats() & INVINCIBILITY ? "On" : "Off"; },
+					[this](int) {
+						if (!ctx->machine.set_cheats(ctx->machine.cheats() ^ INVINCIBILITY)) {
+							fprintf(stderr, "Wing War: invincibility is unavailable\n");
+							std::abort();
+						}
+					} });
+				page.items.push_back(ctx->back_item());
+				ctx->push_page(std::move(page));
+			} } };
+	}
+
 	// Changed assignments restart the game, which reads them as it starts. They are written at the
 	// restart itself, after a recording (whose RAM hash covers the settings) has been saved.
 	restart menu_closed() override { return assignments_changed ? restart::game : restart::none; }

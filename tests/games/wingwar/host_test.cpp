@@ -2,6 +2,7 @@
 #include "../../../src/games/wingwar/profile.h"
 #include "../../../src/games/wingwar/assignments.h"
 #include "../../../src/host/regions.h"
+#include "../../../src/host/input_replay.h"
 #include <cassert>
 #include <cstdio>
 #include <cstring>
@@ -17,6 +18,37 @@ int main(int argc, char **argv)
 	host_context context{machine, "", "", pc_mode, [&] { settings_calls++; }, {}, {},
 		[&] { service_calls++; }};
 	host->start(context);
+	menu_page cheats;
+	context.push_page = [&](menu_page page) { cheats = std::move(page); };
+	context.back_item = [] { return menu_item{"Back"}; };
+	const auto extras = host->menu_items_after_controls();
+	assert(extras.size() == 1 && extras[0].label == "Cheats");
+	extras[0].activate();
+	assert(cheats.name == "Cheats" && cheats.items.size() == 2);
+	auto &invincibility = cheats.items[0];
+	assert(invincibility.value() == "Off" && machine.cheats() == 0);
+	const auto before_cheat = machine.nvram();
+	invincibility.change(1);
+	assert(invincibility.value() == "On" && machine.cheats() == 1);
+	assert(host->menu_closed() == game_host::restart::none && settings_calls == 0);
+	const auto recorded = input_replay::capture(machine);
+	assert(recorded.cheats == 1);
+	invincibility.change(-1);
+	assert(invincibility.value() == "Off");
+	assert(input_replay::apply(machine, recorded).empty() && invincibility.value() == "On");
+	auto unsupported = recorded;
+	unsupported.cheats = 2;
+	assert(!input_replay::apply(machine, unsupported).empty() && machine.cheats() == 1);
+	{
+		model1::regions other_regions;
+		other_regions.title = game::id{"swa"};
+		model1 other(std::move(other_regions));
+		assert(!input_replay::apply(other, recorded).empty() && other.cheats() == 0);
+	}
+	assert(input_replay::apply(machine, game::script_inputs{}).empty() && machine.cheats() == 0);
+	invincibility.change(1);
+	machine.reset();
+	assert(invincibility.value() == "Off" && machine.nvram() == before_cheat);
 	assert(host->has_play_style());
 	const auto items = host->game_menu_items();
 	assert(items.size() == 7 && items.back().label == "Service menu");

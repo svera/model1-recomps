@@ -105,6 +105,84 @@ void context_isolation()
 	puts("Native RAM guards: independent contexts with different bytes at the same PC passed");
 }
 
+void invincibility(const char *regions, const char *map)
+{
+	for (bool native : {false, true}) {
+		model1 m(load_regions(regions, game::wingwar::ID));
+		m.reset();
+		rec::context runtime;
+		if (native) {
+			runtime.attach(m.cpu(), game::wingwar::ID.name);
+			rec::hints hints;
+			assert(hints.read(map));
+			hints.entries.insert(game::wingwar::DAMAGE_IMMUNITY_READ);
+			assert(rec::build_native(m.maincpu_rom(), hints));
+		}
+		for (uint32_t local : {0x40b400u, 0x40b800u})
+		for (uint32_t player : {0x40b400u, 0x40b800u, 0x40be00u})
+			for (bool enabled : {false, true})
+				for (uint8_t health : {1, 10}) {
+					if (native) runtime.attach(m.cpu(), game::wingwar::ID.name);
+					assert(m.set_cheats(enabled ? game::wingwar::INVINCIBILITY : 0));
+					m.write32(0x40f32c, local);
+					m.write8(0x40f308, 0);
+					m.write8(0x40f309, 0x5a);
+					m.write8(0x40f302, 1);
+					m.write32(player + 0x50, 0);
+					m.write8(player + 0x56, health);
+					m.write8(player + 0x99, 0);
+					m.write8(player + 0x94, 0x21);
+					m.write8(player + 0x95, 0x43);
+					m.write8(player + 0x96, 0x65);
+					m.write32(player + 0x20, player == local ? 0x162ed : 0x18e73);
+					m.write32(player + 0x8c, 0x22092);
+					m.cpu().set_reg(24, player);
+					m.cpu().set_reg(25, 0x408000);
+					m.cpu().set_reg(1, 1);
+					m.cpu().set_reg(2, 0);
+					m.cpu().set_reg(3, 0);
+					m.cpu().set_reg(32, game::wingwar::DAMAGE_IMMUNITY_READ + 4);
+					assert(m.read8(0x40f308) == 0);
+					m.cpu().set_reg(32, game::wingwar::DAMAGE_IMMUNITY_READ);
+					assert(m.read8(0x40f309) == 0x5a);
+					int steps = 0;
+					while (m.cpu().pc() != 0x1f28d && m.cpu().pc() != 0x1f28c && steps++ < 1000) {
+						if (native) runtime.run(1);
+						else m.cpu().run(1);
+					}
+					assert(steps < 1000);
+					const bool protected_player = enabled && player == local;
+					assert(m.read8(player + 0x56) == (protected_player ? health : health - 1));
+					assert((m.read32(player + 0x50) & 2) == ((!protected_player && health == 1) ? 2u : 0u));
+					assert(m.read8(player + 0x94) == 0x21 && m.read8(player + 0x95) == 0x43 &&
+						m.read8(player + 0x96) == 0x65);
+					assert(m.read32(player + 0x20) == (player == local ? 0x162edu : 0x18e73u));
+					assert(m.read32(player + 0x8c) == ((!protected_player && health == 1) ? 0x284e8u : 0x22092u));
+					assert(m.read8(0x40f308) == 0);
+					assert(!native || !rec::fallback_count());
+					if (player == local) {
+						if (native) runtime.attach(m.cpu(), game::wingwar::ID.name);
+						m.write8(0x40f0b0, 0x12);
+						m.write8(0x40f0b1, 0x34);
+						m.write8(0x40f0b2, 0x56);
+						m.cpu().set_reg(32, 0x162ed);
+						steps = 0;
+						while (m.cpu().pc() != 0x1630a && steps++ < 100) {
+							if (native) runtime.run(1);
+							else m.cpu().run(1);
+						}
+						assert(steps < 100);
+						assert(m.read8(player + 0x94) == 0x12 && m.read8(player + 0x95) == 0x34 &&
+							m.read8(player + 0x96) == 0x56);
+						assert(!native || !rec::fallback_count());
+					}
+				}
+		m.reset();
+		assert(m.cheats() == 0 && !m.set_cheats(2));
+	}
+	puts("Invincibility: local pilot only, CPU damage, lethal hits when off and live flight controls, interpreter/native passed");
+}
+
 void equivalence(game::id title, const char *regions, const char *map, bool collect, const char *recording = nullptr)
 {
 	const bool wingwar = title == game::wingwar::ID;
@@ -162,6 +240,7 @@ void equivalence(game::id title, const char *regions, const char *map, bool coll
 				if (native.has_analog_input(c)) in.analog[c] = io.analog_neutral[c];
 		}
 		for (auto *m : {&reference, &native}) {
+			assert(m->set_cheats(in.cheats));
 			for (size_t c = 0; c < in.analog.size(); c++)
 				if (in.analog[c] >= 0) assert(m->set_analog_input(c, uint8_t(in.analog[c])));
 			for (int p = 0; p < 3; p++) m->m_inputs[p] = uint8_t(~in.pressed[p]);
@@ -217,5 +296,6 @@ int main(int argc, char **argv)
 	}
 	guarded_versions();
 	context_isolation();
+	invincibility(argv[1], argv[2]);
 	equivalence(game::wingwar::ID, argv[1], argv[2], argc == 4);
 }

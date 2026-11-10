@@ -167,6 +167,55 @@ struct model1_video_test
 		}
 	}
 
+	// Continue: the moving aircraft outnumber the hangar's parts. Their places aren't a camera
+	// reference; the hangar's axes give the camera move without carrying the aircraft with it.
+	static void continue_scene(model1 &m)
+	{
+		auto list = [](int frame) {
+			model1::logic_frame l;
+			l.frame = frame;
+			const float t = float(frame - 10) / 2;
+			const float c = std::cos(.003f * t), s = std::sin(.003f * t);
+			auto part = [&](uint32_t poly, uint32_t owner, float x, float y, float z) {
+				model1::slot p;
+				p.polys = { poly };
+				p.owner = owner;
+				p.mat[0] = p.mat[8] = c;
+				p.mat[2] = -s;
+				p.mat[6] = s;
+				p.mat[4] = 1;
+				p.mat[9] = c * x + s * z + .1f * t;
+				p.mat[10] = y;
+				p.mat[11] = -s * x + c * z - .6f * t;
+				l.slots.push_back(p);
+			};
+			part(0xd05a6, 0, -.66f, -.81f, 17.43f);
+			for (int i = 0; i < 8; i++)
+				part(0xcedaa + i, 0, float(i) * 4 - 15, -1, 10 + float(i) * 7);
+			const float origins[4][3] = { {0, 0, 8}, {330, 35, 300}, {-45, 25, 60}, {-100, 30, 220} };
+			const float moves[4][2] = { {0, 0}, {1.3f, .9f}, {1.3f, .9f}, {-.9f, 1.3f} };
+			for (int plane = 0; plane < 4; plane++)
+				for (int i = 0; i < 14; i++)
+					part(0x1000 + i, 0x401a80 + plane * 0x80,
+						origins[plane][0] + float(i % 4) + moves[plane][0] * t,
+						origins[plane][1] + float(i / 4), origins[plane][2] + float(i % 3) + moves[plane][1] * t);
+			return l;
+		};
+		m.blend_slots(list(8), list(10), .5);
+		for (int frame = 12; frame < 32; frame += 2) {
+			const model1::logic_frame a = list(frame - 2), b = list(frame);
+			for (float alpha : { 0.0f, 0.5f }) {
+				m.blend_slots(a, b, alpha);
+				assert(!m.m_blend_cut);
+				for (size_t i = 0; i < b.slots.size(); i++) {
+					assert(m.m_blend_ok[i]);
+					for (int r = 0; r < 12; r++)
+						assert(std::abs(m.m_blend_from[i][r] - a.slots[i].mat[r]) < 1e-3f);
+				}
+			}
+		}
+	}
+
 	static void attract(model1 &m, model1 &arcade)
 	{
 		std::array<std::map<uint32_t, uint32_t>, 2> records;
@@ -288,6 +337,12 @@ int main(int argc, char **argv)
 		m.reset();
 		m.set_smooth(true);
 		model1_video_test::letters(m);
+	}
+	{
+		model1 m(load_regions(argv[1], game::wingwar::ID));
+		m.reset();
+		m.set_smooth(true);
+		model1_video_test::continue_scene(m);
 	}
 	for (bool full : { false, true }) {
 		model1 m(load_regions(argv[1], game::wingwar::ID));
