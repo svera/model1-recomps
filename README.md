@@ -279,6 +279,10 @@ The CPU renderer reproduces the arcade's 1x picture. Optional higher render scal
 are host-side features. On supported systems, the GPU renderer is checked against the CPU renderer and falls back
 to the CPU if it detects a difference or error.
 
+In Virtua Racing and Star Wars Arcade, **Display > Free camera** or **F4** enables free camera. Use **W/A/S/D** to move,
+**Q/E** to move vertically, the **arrow keys** to look, and **R** to reset. Holding **Shift** moves faster.
+Game controls are disabled while the free camera is active.
+
 The recompiler translates the V60 program at startup using an address-only function map and SLJIT. It reads the
 game program from the user's ROM set; ROM bytes are not shipped. The developer-only ahead-of-time path emits C++
 from analyzed V60 functions and keeps ROM-derived output under `build/`.

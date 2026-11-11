@@ -45,6 +45,16 @@ with tempfile.TemporaryDirectory(prefix="vr-split-screen-") as directory:
     assert "1 cabinet(s) running, 0/0 link exchanges" in solo
     assert not (data / "two-cabinets/2/nvram.sav").exists()
 
+    free_camera = run([], "10:f4,20:status,30:f4,40:status")
+    assert re.search(r"status .*free_camera=1$", free_camera, re.MULTILINE)
+    assert re.search(r"status .*free_camera=0$", free_camera, re.MULTILINE)
+
+    free_camera_menu_events = ["10:escape", "12:down", "14:return"]
+    free_camera_menu_events.extend(f"{16 + i * 2}:down" for i in range(15))
+    free_camera_menu_events += ["48:right", "50:status", "52:escape", "54:escape", "70:close"]
+    free_camera_menu = run([], ",".join(free_camera_menu_events))
+    assert re.search(r"status .*free_camera=1$", free_camera_menu, re.MULTILINE)
+
     gpu = re.search(r"^gpu3d (?:metal|sdl_gpu): (.+), its (?:shaders|pipelines) ready", solo, re.MULTILINE)
     if gpu and "The GPU is unavailable or failed its picture check" not in solo:
         software = any(name in gpu[1] for name in

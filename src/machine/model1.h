@@ -132,6 +132,16 @@ public:
 	bool load_sky(const std::string &name, std::vector<uint32_t> xrgb, int w, int h);
 	// The stages' own skies above 1x: softened and smoothly enlarged, or the original pixels.
 	void set_sky_filter(bool smooth);
+	struct free_cam_pose
+	{
+		float position[3] = {};
+		float yaw = 0, pitch = 0;
+	};
+	void set_free_cam(bool on);
+	bool free_cam() const { return m_free_cam; }
+	void free_cam_reset();
+	void free_cam_move(float forward, float right, float up, float yaw, float pitch);
+	void set_free_cam_pose(const free_cam_pose &pose);
 	// Antialiasing's Low: the 3D's edges smoothed after it's drawn (edge_aa.cpp), at the render
 	// scale, for about a tenth of the cost of drawing 4 times the pixels
 	void set_edge_aa(bool on) { if (m_edge_aa != on) { m_edge_aa = on; recheck_gpu3d(); } }
@@ -339,6 +349,9 @@ private:
 	v60_device m_maincpu;
 	segas24_tile m_tiles;
 	bitmap_rgb32 m_bitmap;
+	bool m_free_cam = false;
+	free_cam_pose m_free_cam_pose;
+	std::array<float, 12> m_free_cam_matrix = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
 	int m_scale = 1;
 	int m_ext = 0;                   // extra arcade pixels each side in widescreen
 	bool m_wide_frame = true;        // the scene uses the extra width; else it stays 4:3
@@ -1040,6 +1053,7 @@ private:
 	int draw_direct(bitmap_rgb32 &bitmap, const rectangle &cliprect, int list_offset);
 	int skip_direct(int list_offset) const;
 	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0, const game::model_bounds *bounds = nullptr);
+	void free_cam_point(point_t *point) const;
 	void    draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 
 	void set_current_render_list();

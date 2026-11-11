@@ -640,6 +640,47 @@ load/save and simulated sleep. An SDL-GPU host built on macOS also checked curre
 the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
 management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
 
+## Free camera, paths and recording
+
+The free-camera and recording features from upstream commits `e82fe453` and `441f03e` are adapted
+for Virtua Racing and Star Wars Arcade, rather than enabled for Virtua Fighter. The shared machine
+applies an extra transform after the game's camera transform; this is an offset from the game camera,
+not a world-anchored replacement. The host disables gameplay controls while free camera is active.
+
+VR's default local-multiplayer mode uses a separate host loop, even with only one player.
+That loop has its own F4 handler, movement controls and Display menu entry, applying the free-camera
+state to the active cabinets and optional Live Monitor. The split-screen regression checks both
+F4 toggling and menu activation.
+
+### Scripted camera paths
+
+In the standard VR/SWA host, set `M1_TEST_FREECAM_PATH` to a text file. Lines support `key` camera
+poses and `at` events; `#` starts a comment. Times are game frames, and a leading `+` makes a time
+relative to the previous line:
+
+```text
+at 0 on
+key 0 pos 0 0 0 look 170 0
+key +120 rel 10 90 2 look -170 10
+at +120 off
+```
+
+`pos x y z` sets an offset from the game camera, `rel radius azimuth height` expresses that offset
+as a radius and azimuth in degrees plus height, and `game` uses the origin. `look yaw pitch` angles
+are in degrees; `lookat game` points back toward that origin. Events are `on`, `off`, `pause`,
+`unpause`, and `quit`.
+
+### Recording
+
+Set `M1_RECORD` to an output directory to record a run in the standard VR/SWA host.
+FFmpeg must be available on `PATH`; the directory receives `video.mp4` and stereo `sound.wav`.
+`M1_RECORD_FROM` and `M1_RECORD_TO` select an inclusive game-frame range (default: from frame 0
+through the end), and `M1_RECORD_HZ` sets the video rate (default: 60, range: 1–240).
+
+Scripted camera paths and recording are initialized only in the standard host. VR's default
+local-multiplayer host returns before that initialization, so these environment variables do not
+enable paths or recording there; interactive free camera is available in both host loops.
+
 ## VR's race-finish HUD placement
 
 Widescreen HUD edge pinning must remain active after racing phase `0x14`.

@@ -4,6 +4,7 @@
 #include "../src/games/swa/gameplay.h"
 #include "../src/games/script.h"
 #include "../src/host/regions.h"
+#include "../src/host/free_cam_path.h"
 #include "../src/rt/native.h"
 #include <array>
 #include <cassert>
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <sstream>
 #include <tuple>
 
 struct model1_video_test
@@ -151,6 +153,33 @@ struct model1_video_test
 		m.m_ram_b[0x1138] = 0x07;
 		assert(!m.smooth_tile_slide(1, rows));
 		puts("Tile slide interpolation: fractional, wrapped, and discontinuous row scrolls checked");
+	}
+
+	static void free_camera_path()
+	{
+		std::istringstream input(
+			"at 0 on\n"
+			"key 0 pos 0 0 0 look 170 0\n"
+			"key +10 rel 10 90 2 look -170 10\n"
+			"at +2 pause\n");
+		freecam::path path;
+		assert(path.load(input));
+		freecam::pose pose;
+		assert(path.at(5, pose));
+		assert(std::fabs(pose.position[0] - 5) < 0.01f);
+		assert(std::fabs(pose.position[1] - 1) < 0.01f);
+		assert(std::fabs(std::fabs(pose.yaw) - 3.1415926f) < 0.05f);
+		std::vector<std::string> events;
+		path.events_through(12, [&](const std::string &action) { events.push_back(action); });
+		assert((events == std::vector<std::string>{"on", "pause"}));
+		std::istringstream looking("key 0 rel 10 90 2 lookat game\n");
+		freecam::path look_path;
+		assert(look_path.load(looking));
+		assert(look_path.at(0, pose));
+		assert(std::fabs(pose.yaw + 1.5707963f) < 0.01f);
+		std::istringstream invalid("key 1 pos nan 0 0 look 0 0\n");
+		assert(!path.load(invalid));
+		puts("Free-camera path: interpolation, event timing, and invalid input checked");
 	}
 
 	static void cockpit_coverage()
@@ -4057,6 +4086,7 @@ int main(int argc, char **argv)
 	}
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();
+	model1_video_test::free_camera_path();
 	model1_video_test::narrow_screen_backdrops();
 	if (argc > 2 && std::string(argv[2]) == "--swa-name-fall") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_name_fall(argv[1], aspect);

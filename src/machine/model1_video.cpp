@@ -1325,6 +1325,16 @@ void model1::close_steps()
 	edges.clear();
 }
 
+void model1::free_cam_point(point_t *p) const
+{
+	if (!m_free_cam) return;
+	const auto &m = m_free_cam_matrix;
+	const float x = p->x, y = p->y, z = p->z;
+	p->x = m[0] * x + m[1] * y + m[2] * z + m[9];
+	p->y = m[3] * x + m[4] * y + m[5] * z + m[10];
+	p->z = m[6] * x + m[7] * y + m[8] * z + m[11];
+}
+
 // old_z is the flat-z "reuse" register (poly zmode 0 = keep previous poly's
 // sort z). It persists ACROSS objects within a display-list walk: NetMerc's
 // garage door wings (all-zmode-0 dynamic objects) must inherit the ~325k z of
@@ -1447,6 +1457,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			const glm::vec3 p = glm::inverse(at) * -glm::vec3(t[9] + m_view->vxx, t[10] + m_view->vyy, t[11] + m_view->vzz);
 			e.x = p.x, e.y = p.y, e.z = p.z;
 			m_view->transform_point(&e);
+			free_cam_point(&e);
 			extra_eye = glm::vec3(e.x, e.y, e.z);
 			extra_check = glm::length(extra_eye) > 0;
 		}
@@ -1504,6 +1515,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	pose_depths(old_p1);
 	m_view->transform_point(old_p0);
 	m_view->transform_point(old_p1);
+	free_cam_point(old_p0);
+	free_cam_point(old_p1);
 
 	if (old_p0->z > 0)
 	{
@@ -1593,6 +1606,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		pose_depths(p1);
 		m_view->transform_point(p0);
 		m_view->transform_point(p1);
+		free_cam_point(p0);
+		free_cam_point(p1);
 		if (p0->z > 0)
 		{
 			m_view->project_point(p0);
@@ -1812,6 +1827,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			point_t p;
 			p.x = m.x, p.y = m.y, p.z = m.z;
 			m_view->transform_point(&p);
+			free_cam_point(&p);
 			return glm::vec3(p.x, p.y, p.z);
 		};
 		const glm::vec3 origin = view_of(glm::vec3(0));
