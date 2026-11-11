@@ -254,8 +254,8 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 			if (touch && !st.touch_was) hk = hotkey::menu;
 			st.touch_was = touch;
 			// the d-pad and left stick: the game's Up, Down, Left and Right (those it has as buttons)
-			if (btn(SDL_GAMEPAD_BUTTON_DPAD_UP) || ly < -dead) press(C_UP);
-			if (btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || ly > dead) press(C_DOWN);
+			if (btn(SDL_GAMEPAD_BUTTON_DPAD_UP) || (prof.pad_stick_vertical && ly < -dead)) press(C_UP);
+			if (btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || (prof.pad_stick_vertical && ly > dead)) press(C_DOWN);
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -dead) press(C_LEFT);
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > dead) press(C_RIGHT);
 			if (back) {
