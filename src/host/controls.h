@@ -49,6 +49,7 @@ struct control_profile
 	std::array<bool, C_COUNT> p1_only{};              // controls player 2 doesn't have (hidden on their pages)
 	std::array<uint8_t, 2> start_bits{};              // each player's start button in the system byte
 	bool hold_start = false;                         // keep Start pressed after its initial pulse
+	bool pad_stick_vertical = true;                  // map the pad's left stick up/down to Up/Down
 	bool steering_curve = false;
 	std::array<std::array<SDL_Scancode, C_COUNT>, 2> keys{};   // the defaults, per player
 	std::array<int, C_COUNT> pad;                     // (PAD_NONE until set)
