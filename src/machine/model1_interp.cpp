@@ -1897,9 +1897,16 @@ void model1::smooth_turn(logic_frame &lf, const logic_frame &before)
 	glm::quat est = q;
 	glm::vec3 rate(0);
 	lf.turn_age = 1;
-	if (before.has_camera && before.turn_age > 0 && !camera_cut(camera_matrix(before.camera.data()), cam, m_video->camera_cut_distance)) {
+	const glm::mat4 before_cam = camera_matrix(before.camera.data());
+	const glm::vec3 step = before.has_camera ? turn_vector(q * glm::inverse(glm::quat_cast(glm::mat3(before_cam)))) : glm::vec3(0);
+	const glm::vec3 last_step(before.turn_step[0], before.turn_step[1], before.turn_step[2]);
+	// (camera_swings) A fast swing's steps over the cut's limit, the step before it at least half as
+	// far and within 30 degrees of its axis; the camera's own move still under the limit
+	const bool swinging = m_video->camera_swings && before.has_camera && before.turn_age == 2 && glm::length(last_step) * 2 >= glm::length(step)
+		&& glm::dot(step, last_step) >= std::cos(glm::radians(30.0f)) * glm::length(step) * glm::length(last_step)
+		&& glm::length(glm::vec3(glm::affineInverse(cam)[3]) - glm::vec3(glm::affineInverse(before_cam)[3])) <= m_video->camera_cut_distance;
+	if (before.has_camera && before.turn_age > 0 && (swinging || !camera_cut(before_cam, cam, m_video->camera_cut_distance))) {
 		lf.turn_age = 2;
-		const glm::vec3 step = turn_vector(q * glm::inverse(glm::quat_cast(glm::mat3(camera_matrix(before.camera.data())))));
 		lf.turn_step = { step.x, step.y, step.z };
 		if (before.turn_age == 1)                    // the first move after a cut: its speed as it is
 			rate = step;
@@ -1907,7 +1914,6 @@ void model1::smooth_turn(logic_frame &lf, const logic_frame &before)
 			constexpr float ALPHA = 0.4f, BETA = 0.1f, LIMIT = glm::radians(1.0f);
 			constexpr int TURN_HOLD = 8;
 			const glm::vec3 last_rate(before.turn_rate[0], before.turn_rate[1], before.turn_rate[2]);
-			const glm::vec3 last_step(before.turn_step[0], before.turn_step[1], before.turn_step[2]);
 			// The camera swinging back over a degree from a turn of its own (swaying about a car it keeps
 			// in place, after the bridge in the attract drive): its own turn, for a while after the last
 			// swing. Evened out, the car swung on screen, also as the swaying slowed.
@@ -2001,7 +2007,9 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 	const glm::mat3 turn = glm::mat3(cb) * glm::transpose(glm::mat3(ca));
 	const float angle = std::acos(std::clamp((turn[0][0] + turn[1][1] + turn[2][2] - 1) / 2, -1.0f, 1.0f));
 	const float jump = glm::length(glm::vec3(ib[3]) - glm::vec3(glm::affineInverse(ca)[3]));
-	m_blend_cut = camera_cut(ca, cb, m_video->camera_cut_distance);
+	// (camera_swings: a swing smooth_turn carried on from a, b's list before it, isn't one)
+	m_blend_cut = camera_cut(ca, cb, m_video->camera_cut_distance) && !(m_video->camera_swings && b.turn_age == 2 &&
+		((&a == &m_logic[0] && &b == &m_logic[1]) || (&a == &m_logic_prev && &b == &m_logic[0])));
 	auto first = [](const slot &sl) { return sl.polys.empty() ? 0u : sl.polys[0]; };
 	const std::vector<uint32_t> &overlays = m_video->foreground_objects;
 	auto overlay = [&](const slot &sl) { return sl.screen_space ||

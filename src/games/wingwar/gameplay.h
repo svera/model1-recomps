@@ -30,6 +30,11 @@ struct gameplay_state : game::gameplay_state
 		uint64_t frame = 0;
 	};
 	std::array<camera_sample, 2> cameras;
+	struct credits_points {
+		std::vector<std::array<float, 6>> points; // world position, then where the camera puts it
+		uint64_t frame = 0;
+	};
+	std::array<credits_points, 2> credits;
 };
 
 gameplay_callbacks create_gameplay(model1 &machine);

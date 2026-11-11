@@ -7,7 +7,9 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <vector>
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 struct model1_video_test
 {
@@ -216,6 +218,57 @@ struct model1_video_test
 		}
 	}
 
+	// The ending whips round its landing aircraft: steps of 26-36 degrees a list, each carrying on
+	// the one before. Blended (camera_swings), while a lone turn as large still cuts.
+	static void ending_swing(model1 &m)
+	{
+		auto list = [](int frame, float heading, float z) {
+			model1::logic_frame l;
+			l.frame = frame;
+			l.has_camera = true;
+			const glm::mat4 turn = glm::rotate(glm::mat4(1), glm::radians(heading), glm::vec3(0, 1, 0));
+			const glm::mat4 camera = turn * glm::translate(glm::mat4(1), glm::vec3(68, -2.4f, -z));
+			for (int c = 0; c < 4; c++)
+				for (int r = 0; r < 3; r++) l.camera[c * 3 + r] = camera[c][r];
+			model1::slot part;
+			part.owner = 0x401c80;
+			part.polys = { 0x2339b };
+			const glm::mat4 pose = camera * glm::translate(glm::mat4(1), glm::vec3(-60, 0, 2440));
+			for (int c = 0; c < 4; c++)
+				for (int r = 0; r < 3; r++) part.mat[c * 3 + r] = pose[c][r];
+			l.slots.push_back(part);
+			return l;
+		};
+		auto run = [&](std::initializer_list<float> steps) {
+			std::vector<bool> cuts;
+			float heading = 0, z = 2440;
+			int frame = 10;
+			m.m_logic[0] = {};
+			m.m_logic[1] = list(frame, heading, z);
+			m.smooth_turn(m.m_logic[1], m.m_logic[0]);
+			for (float step : steps) {
+				heading += step;
+				z += 2.2f;
+				frame += 2;
+				model1::logic_frame next = list(frame, heading, z);
+				m.smooth_turn(next, m.m_logic[1]);
+				m.m_logic_prev = std::move(m.m_logic[0]);
+				m.m_logic[0] = std::move(m.m_logic[1]);
+				m.m_logic[1] = std::move(next);
+				m.blend_slots(m.m_logic[0], m.m_logic[1], .5);
+				cuts.push_back(m.m_blend_cut);
+				if (!m.m_blend_cut) assert(m.m_blend_ok[0]);
+			}
+			return cuts;
+		};
+		for (bool cut : run({ 0.3f, 4.8f, 7.7f, 13.8f, 25.8f, 36.1f, 26.9f, 14.5f, 8.1f, 4.9f, 3.3f }))
+			assert(!cut);
+		const auto lone = run({ 0.2f, 0.2f, 32.9f, 0.2f });
+		assert(!lone[1] && lone[2] && !lone[3]);
+		const auto reversed = run({ 0.2f, 14.0f, 26.0f, -26.0f });
+		assert(!reversed[2] && reversed[3]);
+	}
+
 	static void attract(model1 &m, model1 &arcade)
 	{
 		std::array<std::map<uint32_t, uint32_t>, 2> records;
@@ -343,6 +396,12 @@ int main(int argc, char **argv)
 		m.reset();
 		m.set_smooth(true);
 		model1_video_test::continue_scene(m);
+	}
+	{
+		model1 m(load_regions(argv[1], game::wingwar::ID));
+		m.reset();
+		m.set_smooth(true);
+		model1_video_test::ending_swing(m);
 	}
 	for (bool full : { false, true }) {
 		model1 m(load_regions(argv[1], game::wingwar::ID));

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <glm/geometric.hpp>
 #include <glm/matrix.hpp>
 
 namespace game::wingwar {
@@ -79,6 +80,59 @@ void capture_camera(model1 &machine, gameplay_state &state, uint32_t word)
 	if (!std::all_of(camera.begin(), camera.end(), [](float value) { return std::isfinite(value); })) {
 		fprintf(stderr, "Wing War interpolation: non-finite camera for record %08x\n", record);
 		std::abort();
+	}
+	sample.matrix = camera;
+}
+
+// The ending's hangar scenery (0x3af2f) has no camera matrix of its own: each piece is drawn at a
+// world position (8/C/10[R24]) with fixed turns and scale, all on one height. The camera is fitted
+// from the moves of three or more pieces: move = R * position + T, and R's middle column is the
+// cross product of the other two.
+void capture_credits_camera(model1 &machine, gameplay_state &state, uint32_t word)
+{
+	if (machine.cpu().pc() != 0x0026d8 || !(word & 1) || machine.read32(machine.cpu().reg(31)) != 0x03afa0) return;
+	const uint32_t cursor = machine.cpu().reg(11);
+	if (cursor < 0x600000 || cursor >= 0x620000 || word < 23) {
+		fprintf(stderr, "Wing War interpolation: invalid credits matrix cursor %08x/%04x\n", cursor, word);
+		std::abort();
+	}
+	const int buffer = int((cursor - 0x600000) >> 16);
+	auto &credits = state.credits[buffer];
+	auto &sample = state.cameras[buffer];
+	if (credits.frame != machine.frame_number()) credits = { {}, machine.frame_number() };
+	const uint32_t piece = machine.cpu().reg(24);
+	std::array<float, 6> point;
+	for (int k = 0; k < 3; k++) {
+		point[k] = std::bit_cast<float>(machine.read32(piece + 8 + k * 4));
+		point[3 + k] = std::bit_cast<float>(machine.read32((cursor & 0xff0000) + (word - 23) * 2 + 36 + k * 4));
+	}
+	credits.points.push_back(point);
+	sample.frame = machine.frame_number();
+	sample.matrix.reset();
+	if (credits.points.size() < 3) return;
+	glm::dmat3 normal(0);
+	glm::dmat3 moved(0);
+	for (const auto &p : credits.points) {
+		const glm::dvec3 row(p[0], p[2], 1);
+		normal += glm::outerProduct(row, row);
+		moved += glm::outerProduct(row, glm::dvec3(p[3], p[4], p[5]));
+	}
+	if (std::abs(glm::determinant(normal)) < 1e-6) return;
+	// solution's columns: the move per x, per z, then the constant
+	const glm::dmat3 solution = glm::transpose(glm::inverse(normal) * moved);
+	const glm::dvec3 x = solution[0], z = solution[1], y = glm::cross(z, x);
+	const glm::dvec3 move = solution[2] - y * double(credits.points[0][1]);
+	if (std::abs(glm::length(x) - 1) > 0.01 || std::abs(glm::length(z) - 1) > 0.01 || std::abs(glm::dot(x, z)) > 0.01) return;
+	for (const auto &p : credits.points) {
+		const glm::dvec3 fit = x * double(p[0]) + y * double(p[1]) + z * double(p[2]) + move;
+		if (glm::length(fit - glm::dvec3(p[3], p[4], p[5])) > 0.05 * std::max(1.0, glm::length(fit))) return;
+	}
+	std::array<float, 12> camera;
+	for (int k = 0; k < 3; k++) {
+		camera[k] = float(x[k]);
+		camera[3 + k] = float(y[k]);
+		camera[6 + k] = float(z[k]);
+		camera[9 + k] = float(move[k]);
 	}
 	sample.matrix = camera;
 }
@@ -223,9 +277,10 @@ gameplay_callbacks create_gameplay(model1 &machine)
 			}
 		return true;
 	};
-	callbacks.reset = [state] { state->scenery = {}; state->cameras = {}; state->cheats = 0; };
+	callbacks.reset = [state] { state->scenery = {}; state->cameras = {}; state->credits = {}; state->cheats = 0; };
 	callbacks.matrix_objects = [&machine, state](uint32_t &word) {
 		capture_camera(machine, *state, word);
+		capture_credits_camera(machine, *state, word);
 		return scenery_objects(machine, *state, word);
 	};
 	callbacks.draw_camera = [&machine, state](int buffer) -> std::optional<std::array<float, 12>> {

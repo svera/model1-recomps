@@ -259,6 +259,9 @@ struct video_traits
 	bool smooth_frames = false;      // the 3D blended between game frames (a 30 Hz game's)
 	bool separate_parts = false;     // the parts are separate objects (ships, shots), not a fighter's limbs
 	float camera_cut_distance = 8;   // (records) a camera move a game frame beyond this is a cut, not blended
+	// (records) a turn over camera_cut's limit carrying on a swing (the list before turned at least half
+	// as far about much the same axis) is blended: Wing War's ending whips round its landing aircraft
+	bool camera_swings = false;
 	int default_fps = 120;           // the Frame rate setting's first-run choice (30: the arcade's, no blending)
 	bool pin_hud_edges = false;      // move off-center, non-full-screen HUD graphics into widescreen sides
 	// widescreen: the opaque tile layers (the backdrop) stretched across the width; else drawn 1:1,

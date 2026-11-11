@@ -1423,6 +1423,30 @@ regresses without this anchor. A non-rendering replay of the saved continue scen
 aircraft and hangar matrices against their actual older poses, with maximum error 0.000012.
 Appearance still requires a manual play check.
 
+The ending's landing scenes (the Werewolf, Harrier and others settling by the hangars as the credits
+scroll) had no captured camera either: the gameplay capture at `02FFAE` never runs there. They took
+the generic no-camera path, where the camera whips round each aircraft at 4.8, 7.7, 13.8, 25.8, 36.1,
+26.9 and 14.5 degrees a list. Its cut rules took the fast steps for shot changes, so each was held a
+list and then jumped. The ending's hangar scenery comes from the loop at `03AF2F`. It draws each piece
+of the ROM table `2FBC58` at a world position in `8/C/10[R24]`, all at one height, with fixed turns
+and scale, then reads the matrix through `00268C`. When that read's last word is written (`0026D8`,
+returning to `03AFA0`), the host keeps the piece's world position and its matrix's translation. From
+three or more pieces it fits the camera by least squares: translation = R·position + T. The pieces'
+fixed height leaves R's middle column underdetermined, so it is taken as the cross product of the
+other two. The fit is used only when R is orthonormal within 1% and every piece lies within 5% of its
+fitted place; in the recorded ending its error is about 0.0003. The credits lists now use the
+record-aware path: the landing aircraft blend by record, and no part is left unblended.
+
+That path's 25-degree cut still split the whip. `video_traits::camera_swings`, set only for Wing War,
+exempts a turn from that limit while it carries on the previous step. The previous step must be at
+least half as large, within 30 degrees of the same axis, and the eye move must stay within
+`camera_cut_distance`. A lone 33-degree change of shot in the ending still cuts, as does a swing
+reversing direction. In a non-rendering replay of the recorded ending, every list of the three
+whips now blends. Flagged jerks remain only at the ending's eight real shot changes, at parts
+starting to move from rest, and at parts within a few units of the eye. The interpolation test runs the whip's turn steps and checks that each
+blends, and that a lone turn of the same size and a reversed swing cut. Appearance requires a manual
+check of the credits.
+
 The continue screen's purple starfield is tile map 2, not the hangar geometry. With backdrop
 stretching disabled its patterned edges previously received black side fills. The map already
 repeats every 16 tiles (128 pixels), so Wing War now opts its two tile priorities into the shared

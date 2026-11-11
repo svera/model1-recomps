@@ -35,7 +35,7 @@ const io_profile IO_PROFILE{
 // Scenery nodes carry ROM record pointers; moving model writers carry their RAM record in R24.
 // Attract fly-bys move the camera up to 12 units a game frame; its shot changes jump 275 or more.
 // The continue hangar anchors its camera-less scene; its moving aircraft aren't scenery.
-const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .camera_cut_distance = 64, .default_fps = 30,
+const video_traits VIDEO{ .smooth_frames = true, .separate_parts = true, .camera_cut_distance = 64, .camera_swings = true, .default_fps = 30,
 	.stretch_backdrops = false, .centered_scroll_layers = 0x33,
 	.centered_scroll_y0 = 80, .centered_scroll_y1 = 304, .repeat_curtains = true,
 	.camera_anchors = { 0xd05a6 },
