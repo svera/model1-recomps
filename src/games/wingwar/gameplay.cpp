@@ -11,6 +11,33 @@ namespace game::wingwar {
 namespace {
 constexpr uint32_t NEAREST_DETAIL_DISTANCE = std::bit_cast<uint32_t>(256.0f);
 
+bool local_aircraft(model1 &machine, uint32_t aircraft)
+{
+	return (aircraft == 0x40b400 || aircraft == 0x40b800) && aircraft == machine.read32(0x40f32c);
+}
+
+void clear_hit_reaction(model1 &machine, uint32_t aircraft)
+{
+	uint32_t handler;
+	switch (machine.read32(aircraft + 0xf8)) {
+	case 0x2a9b5: case 0x2a9f7: case 0x2aa38: case 0x2ab62:
+		handler = 0x2a90a;
+		break;
+	case 0x2c211: case 0x2c24f: case 0x2c285: case 0x2c2c2: case 0x2c382:
+		handler = 0x2c1a4;
+		break;
+	default:
+		return;
+	}
+	// Match the ROM's reaction exit, including bit D, then release its steering penalty.
+	machine.write32(aircraft + 0xf8, handler);
+	machine.write32(aircraft + 0x50, machine.read32(aircraft + 0x50) & ~0x2000u);
+	for (uint32_t offset = 0x70; offset <= 0x74; offset++) machine.write8(aircraft + offset, 0);
+	machine.write16(aircraft + 0xf6, 0);
+	machine.write8(aircraft + 0x9a, 0);
+	machine.write8(aircraft + 0x9b, 0);
+}
+
 uint32_t rom_word(model1 &machine, uint32_t address, uint32_t bytes = 4)
 {
 	if (address < 0x200000 || address > 0x300000 - bytes) {
@@ -149,14 +176,40 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	gameplay_callbacks callbacks;
 	auto state = std::make_shared<gameplay_state>();
 	callbacks.state = state;
-	callbacks.supported_cheats = INVINCIBILITY;
-	callbacks.read_pc_first = callbacks.read_pc_last = DAMAGE_IMMUNITY_READ;
+	callbacks.supported_cheats = INVINCIBILITY | INFINITE_MISSILES;
+	callbacks.read_pc_first = HIT_EVENT_READ;
+	callbacks.read_pc_last = MISSILE_STOCK_READ;
 	callbacks.read_value = [&machine, state](uint32_t pc, uint32_t address, uint16_t value) {
-		// 732c[R25] identifies the local pilot; the other combat aircraft is CPU-controlled.
+		const uint32_t target = machine.cpu().reg(0);
+		const bool pitch_hit = pc == PROJECTILE_PITCH_READ && address == target + 0xb8;
+		const bool roll_hit = pc == PROJECTILE_ROLL_READ && address == target + 0xbc;
+		if ((state->cheats & INVINCIBILITY) && (pitch_hit || roll_hit) && local_aircraft(machine, target)) {
+			// Projectiles add these impulses outside the damage routine; cancel only the new addend.
+			return uint16_t(value - machine.cpu().reg(pitch_hit ? 15 : 17));
+		}
 		const uint32_t player = machine.cpu().reg(24);
-		return uint16_t((state->cheats & INVINCIBILITY) && pc == DAMAGE_IMMUNITY_READ &&
-			address == 0x40f308 && (player == 0x40b400 || player == 0x40b800) &&
-			player == machine.read32(0x40f32c) ? 1 : value);
+		const bool immunity = (state->cheats & INVINCIBILITY) && pc == HIT_EVENT_READ &&
+			address >= 0x502b00 && address <= 0x522afe;
+		const bool missiles = (state->cheats & INFINITE_MISSILES) && pc == MISSILE_STOCK_READ && address == player + 0xea;
+		if ((!immunity && !missiles) || !local_aircraft(machine, player)) return value;
+		if (immunity && address == 0x502b00 + 2 * machine.read16(player + 0x4c)) {
+			// Consume the latch even though returning zero skips the ROM's nonzero-event acknowledgement.
+			machine.write16(address, 0);
+			clear_hit_reaction(machine, player);
+			return uint16_t(0);
+		}
+		if (missiles) {
+			// Use the ROM's initial magazine size, leaving its launch/reload timers alone.
+			const uint32_t weapons = machine.read32(0x1feb18 + machine.read8(player + 0x54) * 4);
+			const uint8_t stock = machine.read8(weapons + 2);
+			if (!stock || stock > 127) {
+				fprintf(stderr, "Wing War: invalid missile magazine size %u at %08x\n", stock, weapons);
+				std::abort();
+			}
+			machine.write8(address, stock);
+			return uint16_t(stock);
+		}
+		return value;
 	};
 	callbacks.repeat_tile_layer = [&machine](int layer) {
 		if ((layer != 4 && layer != 5) || machine.tile_word(0x2000) != 0x1c80 ||

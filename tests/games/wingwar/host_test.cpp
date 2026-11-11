@@ -24,8 +24,10 @@ int main(int argc, char **argv)
 	const auto extras = host->menu_items_after_controls();
 	assert(extras.size() == 1 && extras[0].label == "Cheats");
 	extras[0].activate();
-	assert(cheats.name == "Cheats" && cheats.items.size() == 2);
+	assert(cheats.name == "Cheats" && cheats.items.size() == 3);
 	auto &invincibility = cheats.items[0];
+	auto &missiles = cheats.items[1];
+	assert(missiles.label == "Infinite missiles" && missiles.value() == "Off");
 	assert(invincibility.value() == "Off" && machine.cheats() == 0);
 	const auto before_cheat = machine.nvram();
 	invincibility.change(1);
@@ -33,11 +35,16 @@ int main(int argc, char **argv)
 	assert(host->menu_closed() == game_host::restart::none && settings_calls == 0);
 	const auto recorded = input_replay::capture(machine);
 	assert(recorded.cheats == 1);
+	missiles.change(1);
+	assert(machine.cheats() == 3 && missiles.value() == "On" && invincibility.value() == "On");
+	const auto both_recorded = input_replay::capture(machine);
+	missiles.change(-1);
+	assert(machine.cheats() == 1 && missiles.value() == "Off");
 	invincibility.change(-1);
 	assert(invincibility.value() == "Off");
 	assert(input_replay::apply(machine, recorded).empty() && invincibility.value() == "On");
 	auto unsupported = recorded;
-	unsupported.cheats = 2;
+	unsupported.cheats = 4;
 	assert(!input_replay::apply(machine, unsupported).empty() && machine.cheats() == 1);
 	{
 		model1::regions other_regions;
@@ -46,9 +53,9 @@ int main(int argc, char **argv)
 		assert(!input_replay::apply(other, recorded).empty() && other.cheats() == 0);
 	}
 	assert(input_replay::apply(machine, game::script_inputs{}).empty() && machine.cheats() == 0);
-	invincibility.change(1);
+	assert(input_replay::apply(machine, both_recorded).empty() && machine.cheats() == 3);
 	machine.reset();
-	assert(invincibility.value() == "Off" && machine.nvram() == before_cheat);
+	assert(invincibility.value() == "Off" && missiles.value() == "Off" && machine.nvram() == before_cheat);
 	assert(host->has_play_style());
 	const auto items = host->game_menu_items();
 	assert(items.size() == 7 && items.back().label == "Service menu");

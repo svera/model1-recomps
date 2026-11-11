@@ -913,7 +913,11 @@ The window title identifies Wing War at handoff and pause rather than incorrectl
 
 Wing War also offers **Esc > Cheats > Invincibility**, off by default and cleared on
 restart, without saving it to user settings or the cabinet EEPROM. It blocks damage
-to the local pilot's aircraft using the ROM's existing immunity check at `01f18a`.
+and hit-induced spinning by consuming the local aircraft's collision event at
+`01f142` and returning zero before the ROM adds hit impulses, steering penalties,
+hit counters or spin flags. The latch is explicitly acknowledged, since returning
+zero skips the ROM's nonzero-event acknowledgement. Its halfword index at
+aircraft offset `4c` is scaled by two into the event table at `502b00`.
 The aircraft must match the local-pilot pointer at `40f32c`, not merely one of the
 combat records `40b400` and `40b800`: the other record is the CPU opponent, not a
 second human player. Protecting both had made opponents invincible too.
@@ -922,9 +926,72 @@ aircraft. Interpreter and native tests execute the actual ROM damage path, inclu
 lethal hits, with the toggle on and off and either combat slot selected as local.
 They also execute the ROM's live stick/throttle copy after damage with both settings.
 
+Enabling protection during a hit reaction also restores that reaction family's
+normal handler, clears its recovery flag (bit D), visual angle/position corrections
+and counter, and releases its steering penalty (`9a`/`9b`). This recognizes only
+the ROM's hit-reaction handlers, rather than bypassing every response dispatch.
+Ordinary flight integration, world-boundary collision physics and UFO AI are not
+replaced. Existing physical momentum is not erased when enabling the cheat.
+Tests inject repeated UFO event types with and without protection, in both local
+slots and both execution modes; they verify that hit reactions end, steering
+commands are no longer attenuated, health is preserved, and disabling protection
+restores event delivery. CPU opponents and the missile-only toggle remain unchanged.
+
+Earlier implementations spoofed global immunity or bypassed response dispatch.
+A subsequent health-only version preserved motion exactly across nonfatal hits,
+but also preserved the repeated spins the player wanted to avoid. In the reported
+UFO recording that version spent 1,952 of 3,923 protected flight updates in the
+full-spin handler. The event-consumption implementation intentionally removes
+those hit reactions instead of claiming that unchanged motion is the desired
+result. Simulation-state checks are not a substitute for manual flight-feel and
+appearance checks.
+
+The corrected 36,647-frame human UFO replay consumes 349 incoming protected hits.
+An active spin at the toggle clears on its first protected update; the subsequent
+3,922 flight updates use the normal response handler, and health stays at 32.
+Strict interpreter/native replay matches all 15,538,328 scanline states and the
+final RAM checksum with zero fallbacks after adding nine newly reached UFO entry
+hints. This verifies replay determinism and hit-state recovery, not visual feel.
+
+That event gate missed a separate projectile knockback routine: at `01fb9c` and
+`01fba1` it adds R15/R17 directly to the target aircraft's pitch/roll impulses
+(`b8`/`bc`), without going through aircraft damage. Here R24 is the projectile;
+the target is R0. Tracing the subsequent right-drift report with neutral input
+showed repeated positive roll impulses from this path. Invincibility now cancels
+only those additions, retaining the existing impulse and the ROM's other physics.
+The guards require the exact instruction, operand address and local target pointer;
+CPU hits, unprotected hits and the infinite-missiles-only toggle are unchanged.
+
+Interpreter/native ROM tests cover repeated positive and negative projectile
+impulses, both local slots, both game-mode division paths and all cheat masks.
+They also execute the actual steering, bank integration, collision-impulse and
+damping routines under repeated fire across all five aircraft: neutral bank stays
+below 256 angle units, and both stick directions produce the corresponding bank.
+In a 1,000-frame neutral-input UFO check, the large repeated banks disappear;
+left/right control trials reach opposite banks. Normal heading/boundary corrections
+still apply, so this is not a claim that the aircraft holds a fixed world heading.
+The latest 36,137-frame human replay checks that all 206 protected projectile
+updates preserve existing impulses. Strict interpreter/native replay matches all
+15,322,088 scanline states and its final RAM checksum with zero fallbacks; ten new
+entries and forty continuation entries from the rebuilt map are retained as hints.
+Manual flight-feel validation is still required.
+
+**Esc > Cheats > Infinite missiles** is independent of invincibility, also off by
+default and cleared on reset. At the local aircraft's magazine test (`01fd6f`), it
+restores the original stock from the same per-aircraft ROM table used by weapon
+initialization (`1feb18`, byte 2 of its selected entry). Empty magazines refill too.
+Launch costs, single/dual missile behavior, cooldowns and reload timing stay intact,
+and CPU stock is unaffected. Turning it off leaves the remaining magazine available.
+
+The earlier 31,903-frame UFO input replay exercised flags `0 -> 1 -> 3 -> 2 -> 0`,
+including missile firing, and supplied additional UFO native entry hints. That
+test proved replay equivalence, not correct flight behavior; the hit-recovery and
+steering-penalty checks above exercise the requested change explicitly.
+
 Recordings that use cheats are written as `M1INPUT 3`: the header retains version 2's
 starting EEPROM (or `-` for a blank EEPROM), and each input frame adds a decimal
-32-bit cheat mask after the eight analog values. Wing War bit 0 is invincibility.
+32-bit cheat mask after the eight analog values. Wing War bit 0 is invincibility;
+bit 1 is infinite missiles. Both toggles and their combinations are recorded.
 Capture, replay, coverage and native-equivalence checks apply the mask before each
 frame, including transitions back to zero and replay-prefix handoff. Unsupported
 bits are rejected. Recordings without cheats retain the existing version 1/2 format;
@@ -933,7 +1000,8 @@ old recordings replay with cheats disabled.
 The initial 35,000-frame cheat replay supplied four more native entry hints
 (`023008`, `02301b`, `017e0a`, `017e1f`). Recordings made with the earlier,
 both-aircraft invincibility can have different final checksums after the local-only
-correction; start new sessions from an uncheated prefix.
+correction or subsequent hit-reaction changes; start new sessions from
+an uncheated prefix.
 
 In the local `complete-20261109d.inputs` recording, frame 28,500 is live UFO combat
 with player health remaining. Frame 30,354 is already after the player's destruction,

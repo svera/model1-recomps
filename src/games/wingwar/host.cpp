@@ -130,17 +130,29 @@ public:
 
 	std::vector<menu_item> menu_items_after_controls() override
 	{
-		return { { "Cheats", "Optional invincibility.", {}, {},
+		return { { "Cheats", "Optional invincibility and infinite missiles.", {}, {},
 			[this] {
 				menu_page page{"Cheats", "", {}};
 				page.items.push_back({ "Invincibility",
-					"On prevents damage to your aircraft only; CPU opponents remain vulnerable. "
-					"Does not change flight controls, restore lost health or stop the stage timer. "
+					"On prevents damage and hit-induced spinning for your aircraft only; CPU opponents are unchanged. "
+					"Releases an active hit reaction without changing normal flight controls, "
+					"restore lost health or stop the stage timer. "
 					"Recorded per frame for deterministic replay. Off by default; resets when the game restarts.",
 					[this] { return ctx->machine.cheats() & INVINCIBILITY ? "On" : "Off"; },
 					[this](int) {
 						if (!ctx->machine.set_cheats(ctx->machine.cheats() ^ INVINCIBILITY)) {
 							fprintf(stderr, "Wing War: invincibility is unavailable\n");
+							std::abort();
+						}
+					} });
+				page.items.push_back({ "Infinite missiles",
+					"On replenishes your aircraft's missile magazine, even if empty. CPU opponents are unchanged. "
+					"Normal launch and reload timing still apply. Off leaves the remaining missiles available. "
+					"Recorded per frame; off by default and resets when the game restarts.",
+					[this] { return ctx->machine.cheats() & INFINITE_MISSILES ? "On" : "Off"; },
+					[this](int) {
+						if (!ctx->machine.set_cheats(ctx->machine.cheats() ^ INFINITE_MISSILES)) {
+							fprintf(stderr, "Wing War: infinite missiles are unavailable\n");
 							std::abort();
 						}
 					} });
