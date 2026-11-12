@@ -303,8 +303,8 @@ Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
 | Throttle | W / S | Right trigger |
 | Machine gun | Z | A / Cross |
 | Missile | X | B / Circle |
-| Smoke | C | X / Square |
-| View 1 / 2 / 3 / 4 | F5 / F6 / F7 / F8 | Y / Triangle, RB, LB, left-stick click |
+| Smoke | V | X / Square |
+| Change view | C | Y / Triangle |
 | Start | 1 | Start |
 | Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
@@ -345,33 +345,6 @@ Model 1 interpreter instead.
 | --- | --- |
 | ![A Yak-141 chasing an Apache over the forest](assets/games/wingwar/screenshots/forest.png) | ![A Yak-141 flying low along a canyon river](assets/games/wingwar/screenshots/canyon.png) |
 
-### For developers
-
-Build and run it from source (see [Build and test](#build-and-test)):
-
-```sh
-make swa
-build/bin/swa
-```
-
-For Wing War, run `make wingwar` and then `build/bin/wingwar`.
-
-Developers can also record and replay play sessions; an input recording should be replayed at
-the aspect ratio it was recorded in. See
-[how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
-
-Release packaging is enabled for Virtua Racing, Star Wars Arcade, and Wing War on macOS, Windows,
-and Linux. Each platform's `package.sh` builds all three by default, or the named games
-(`package.sh swa wingwar`).
-
-Useful shared checks:
-
-```sh
-make test-model1io-adc
-make test-host-gamepads
-make test-vr-profile test-vr-gameplay test-vr-tgp-track
-make test-wingwar-profile
-```
 
 ## Shared Model 1 implementation
 

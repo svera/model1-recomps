@@ -37,6 +37,20 @@ struct gameplay_state : game::gameplay_state
 	std::array<credits_points, 2> credits;
 };
 
+// Change view: a host-only bit in the player byte, consumed before the frame and recorded inputs.
+inline constexpr uint8_t VIEW_CYCLE_INPUT = 0x80;
+inline constexpr uint32_t CURRENT_VIEW = 0x40f380;   // 0-3: the cabinet's View 1-4
+
+// Presses the cabinet's next view button for a few frames on each Change view press.
+class view_cycle
+{
+public:
+	void update(model1 &machine, bool pressed);
+private:
+	bool m_pressed = false;
+	int m_frames = 0, m_view = 0;
+};
+
 gameplay_callbacks create_gameplay(model1 &machine);
 void set_lod(model1 &machine, bool enabled);
 void set_extended_draw_distance(model1 &machine, bool enabled);

@@ -721,8 +721,8 @@ transfer path. The common legacy I/O board used by VF, VR and SWA remains unchan
 The analog channels are stick X, stick Y, and throttle. Their neutral values are `0x80`, `0x80`,
 and `0x01`; X is reversed, Y is not, and throttle spans `1` through `255`. The host maps the left
 stick to flight control and the right trigger to throttle. The four view selectors are split across
-the system and player input bytes, so the control profile routes their bits to the correct byte;
-weapon buttons remain on the player byte. These values enter through the Advanced board's input
+the system and player input bytes; the host presses them through a single Change view control
+(see "Wing War's Change view button"). Weapon buttons remain on the player byte. These values enter through the Advanced board's input
 callbacks and ADC, then the board firmware transfers them to dual-port RAM for the V60.
 
 The shared MAME-derived V60, TGP, video, and sound implementations handle the game, and its profile
@@ -1240,6 +1240,21 @@ Replay bypasses play-style coin edits and retains cold arcade behavior.
 credits and acceptance after coins, cold/warm hidden boot, default and custom coinage
 restoration, persisted settings, unchanged assignments, invalid coinage rejection and
 replay isolation. UI appearance remains a manual check.
+
+### Wing War's Change view button
+
+The cabinet has four view buttons: View 1-3 are system-byte bits `0x20`/`0x40`/`0x80` and View 4
+is player-byte bit `0x01`. Like VR's camera and SWA's VR button, the host offers one Change view
+control (default C and Y / Triangle). It is a host-only player-byte bit (`0x80`) that the host
+clears before the frame runs and before the frame's inputs are recorded. Each new press reads the
+game's current view from `0x40F380` (0-3 for View 1-4; `0x40F30B` holds the same value) and holds
+the next view's cabinet button for six frames, so the game makes the change itself and recordings
+keep the original buttons. The address was found by pressing each view button from the same
+recorded gameplay frame and diffing RAM, then confirmed at four points in both committed
+recordings. Smoke moved from C to V; a saved Smoke key still on C (`p1_key_button_3`) moves to V,
+and other saved keys are kept. The four direct view bindings are gone; their saved entries are
+ignored. `make test-wingwar-profile` checks the bindings and key migration, and
+`make test-wingwar-host` checks the press sequence, wrap-around and that holding changes once.
 
 ### Wing War's model detail
 

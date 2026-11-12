@@ -165,6 +165,13 @@ public:
 	// restart itself, after a recording (whose RAM hash covers the settings) has been saved.
 	restart menu_closed() override { return assignments_changed ? restart::game : restart::none; }
 
+	void before_frame() override
+	{
+		const bool pressed = !(ctx->machine.m_inputs[1] & VIEW_CYCLE_INPUT);
+		ctx->machine.m_inputs[1] |= VIEW_CYCLE_INPUT;
+		views.update(ctx->machine, pressed);
+	}
+
 	bool before_restart() override
 	{
 		apply_assignments();
@@ -247,6 +254,7 @@ private:
 	std::array<int, 7> choices{};
 	bool assignments_changed = false;
 	int64_t arcade_coin = -1;
+	view_cycle views;
 };
 
 }

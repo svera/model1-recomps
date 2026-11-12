@@ -1,6 +1,7 @@
 #include "../../../src/host/game_host.h"
 #include "../../../src/games/wingwar/profile.h"
 #include "../../../src/games/wingwar/assignments.h"
+#include "../../../src/games/wingwar/gameplay.h"
 #include "../../../src/host/regions.h"
 #include "../../../src/host/input_replay.h"
 #include <cassert>
@@ -56,6 +57,28 @@ int main(int argc, char **argv)
 	assert(input_replay::apply(machine, both_recorded).empty() && machine.cheats() == 3);
 	machine.reset();
 	assert(invincibility.value() == "Off" && missiles.value() == "Off" && machine.nvram() == before_cheat);
+	{
+		// Change view presses the cabinet's next view button for six frames, from the game's own view
+		auto press_view = [&](int view, bool held) {
+			std::fill_n(machine.m_inputs, 3, uint8_t(0xff));
+			if (held) machine.m_inputs[1] &= uint8_t(~game::wingwar::VIEW_CYCLE_INPUT);
+			machine.write8(game::wingwar::CURRENT_VIEW, uint8_t(view));
+			host->before_frame();
+			assert(machine.m_inputs[1] & game::wingwar::VIEW_CYCLE_INPUT);
+			return std::array<uint8_t, 2>{ uint8_t(~machine.m_inputs[0]), uint8_t(~machine.m_inputs[1]) };
+		};
+		assert((press_view(0, true) == std::array<uint8_t, 2>{ 0x40, 0 }));
+		for (int f = 1; f < 6; f++) assert((press_view(1, true) == std::array<uint8_t, 2>{ 0x40, 0 }));
+		assert((press_view(1, true) == std::array<uint8_t, 2>{ 0, 0 }));   // held: one change per press
+		assert((press_view(1, false) == std::array<uint8_t, 2>{ 0, 0 }));
+		assert((press_view(1, true) == std::array<uint8_t, 2>{ 0x80, 0 }));
+		for (int f = 1; f < 6; f++) press_view(2, false);
+		assert((press_view(2, true) == std::array<uint8_t, 2>{ 0, 0x01 }));
+		for (int f = 1; f < 6; f++) press_view(3, false);
+		assert((press_view(3, true) == std::array<uint8_t, 2>{ 0x20, 0 }));
+		for (int f = 1; f < 6; f++) press_view(0, false);
+		assert((press_view(0, false) == std::array<uint8_t, 2>{ 0, 0 }));
+	}
 	assert(host->has_play_style());
 	const auto items = host->game_menu_items();
 	assert(items.size() == 7 && items.back().label == "Service menu");

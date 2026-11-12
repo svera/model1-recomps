@@ -41,12 +41,23 @@ int main()
 	expect(C_MACHINE_GUN, 0, 0x10);
 	expect(C_MISSILE, 0, 0x20);
 	expect(C_SMOKE, 0, 0x40);
-	expect(C_VIEW_1, 0x20, 0);
-	expect(C_VIEW_2, 0x40, 0);
-	expect(C_VIEW_3, 0x80, 0);
-	expect(C_VIEW_4, 0, 0x01);
+	expect(C_VIEW, 0, VIEW_CYCLE_INPUT);
+	assert(CONTROLS.keys[0][C_VIEW] == SDL_SCANCODE_C && CONTROLS.pad[C_VIEW] == SDL_GAMEPAD_BUTTON_NORTH);
+	assert(CONTROLS.keys[0][C_SMOKE] == SDL_SCANCODE_V);
 	assert(CONTROLS.start_bits[0] == 0x10);
-	assert(CONTROLS.pad_actions.size() == 10);
+	assert(CONTROLS.pad_actions.size() == 7);
+	{
+		// saved Smoke on C (its old settings name) moves to V; another key stays
+		player_controls c = player_controls::defaults(0, CONTROLS);
+		c.load({ { "p1_key_button_3", "C" } }, 0, CONTROLS);
+		assert(c.key[C_SMOKE] == SDL_SCANCODE_V && c.key[C_VIEW] == SDL_SCANCODE_C);
+		c = player_controls::defaults(0, CONTROLS);
+		c.load({ { "p1_key_button_3", "B" } }, 0, CONTROLS);
+		assert(c.key[C_SMOKE] == SDL_SCANCODE_B);
+		c = player_controls::defaults(0, CONTROLS);
+		c.load({ { "p1_key_smoke", "C" }, { "p1_key_view", "Q" } }, 0, CONTROLS);
+		assert(c.key[C_SMOKE] == SDL_SCANCODE_C && c.key[C_VIEW] == SDL_SCANCODE_Q);
+	}
 	assert(game::get_video(ID).smooth_frames && game::get_video(ID).separate_parts);
 	assert(game::get_video(ID).default_fps == 30);
 	assert(!game::get_video(ID).stretch_backdrops);

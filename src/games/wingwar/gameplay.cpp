@@ -356,4 +356,18 @@ void set_extended_draw_distance(model1 &machine, bool enabled)
 	std::static_pointer_cast<gameplay_state>(machine.game_state())->extended_draw_distance = enabled;
 }
 
+void view_cycle::update(model1 &machine, bool pressed)
+{
+	if (pressed && !m_pressed) {
+		m_view = (machine.read8(CURRENT_VIEW) + 1) & 3;
+		m_frames = 6;
+	}
+	m_pressed = pressed;
+	if (!m_frames) return;
+	// View 1-3 are system-byte bits 0x20/0x40/0x80; View 4 is player-byte bit 0x01.
+	if (m_view < 3) machine.m_inputs[0] &= uint8_t(~(0x20 << m_view));
+	else machine.m_inputs[1] &= uint8_t(~0x01);
+	m_frames--;
+}
+
 }

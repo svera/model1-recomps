@@ -19,11 +19,11 @@ then confirm. Windows may show SmartScreen for the same reason.
 
 CONTROLS
 Open the menu with Esc or View/Select, then Controls, to see or change bindings.
-Keyboard: Left/Right yaw, Up/Down pitch, W/S throttle, Z machine gun, X missile, C smoke,
-F5-F8 select views 1-4, 1 starts and 5 inserts a coin.
+Keyboard: Left/Right yaw, Up/Down pitch, W/S throttle, Z machine gun, X missile, V smoke,
+C changes the view, 1 starts and 5 inserts a coin.
 Gamepad: left stick or D-pad flies, right trigger controls throttle, A fires the machine gun,
-B launches a missile, X releases smoke, Y / Triangle and the shoulder buttons and left-stick
-click select the four views, Start starts and D-pad Up inserts a coin.
+B launches a missile, X releases smoke, Y / Triangle changes the view, Start starts and
+D-pad Up inserts a coin.
 
 Wing War recompiles your ROM's V60 program to native code at startup. Use --interp to
 run on the Model 1 interpreter instead.
