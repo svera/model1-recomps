@@ -16,7 +16,7 @@
 # GAMES: the games named (all enabled games when none); rejects disabled games.
 release_games()
 {
-	ALL="vr swa "
+	ALL="vr swa wingwar "
 	GAMES=${*:-$ALL}
 	for G in $GAMES; do
 		case " $ALL" in *" $G "*) ;; *) echo "usage: $0 [game ...] (games: $ALL)" >&2; exit 2 ;; esac

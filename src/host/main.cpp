@@ -518,8 +518,7 @@ struct settings
 
 // The player's own game, the first time: there are no ROMs in their data folder yet (or not a
 // complete set), so ask for the game's MAME set (vf.zip, vr.zip) with a file picker, copy it in
-// and check it. A model1io.zip beside it (the real I/O board's program) comes along too; without it
-// the stand-in board runs.
+// and check it. The matching I/O board BIOS archive beside it comes along too when required.
 // Only those two zips are ever read, so a roms folder shared with other games, or a wrong pick,
 // can't get in the way. Returns false if they cancel (or there's no way to pick a file).
 // A folder of its own (a "roms" folder next to the program: the Steam Deck's, a portable Windows
@@ -561,8 +560,9 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 	auto zips_in = [&](const fs::path &dir) {
 		std::vector<std::string> z;
 		std::error_code ec;
-		for (const char *name : { set.zip, "model1io.zip" })
-			if (fs::is_regular_file(dir / name, ec)) z.push_back((dir / name).string());
+		if (fs::is_regular_file(dir / set.zip, ec)) z.push_back((dir / set.zip).string());
+		const char *io_zip = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+		if (fs::is_regular_file(dir / io_zip, ec)) z.push_back((dir / io_zip).string());
 		return z;
 	};
 	auto zips_here = [&] { return zips_in(roms); };
@@ -571,7 +571,8 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 		if (kept == roms || !folder.empty()) return;
 		std::error_code ec;
 		fs::create_directories(kept, ec);
-		for (const char *name : { set.zip, "model1io.zip" }) {
+		const char *io_zip = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+		for (const char *name : { set.zip, io_zip }) {
 			if (!fs::is_regular_file(roms / name, ec)) continue;
 			if (fs::is_regular_file(kept / name, ec) && fs::file_size(kept / name, ec) == fs::file_size(roms / name, ec)) continue;
 			std::string why;
@@ -649,8 +650,9 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 			note = "Couldn't copy it into " + dest.string() + ": " + why + "\n\nChoose your " + zip + ".";
 			continue;
 		}
-		const fs::path io = fs::path(f).parent_path() / "model1io.zip";    // its neighbour, if any
-		if (fs::exists(io, ec)) copy_whole(io, dest / "model1io.zip", why);
+		const char *io_name = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+		const fs::path io = fs::path(f).parent_path() / io_name;    // its neighbour, if any
+		if (fs::exists(io, ec)) copy_whole(io, dest / io_name, why);
 		romset::result r = romset::load(set, zips_in(dest));
 		if (r.ok) { keep_copy(); out = std::move(r.regions); return true; }
 		note = r.error + "\n\nChoose " + mame + ".";
@@ -3061,6 +3063,7 @@ int main(int argc, char **argv)
 	int link_player = 0, link_port = 19792;
 	bool link_port_set = false;
 	std::string replay_path, record_path;
+	std::string recompiler_map;
 	long replay_until = -1;   // --replay-until N: hand over after the recording's first N frames
 	input_replay::recording replay, record;
 	bool recording = false;
@@ -3091,6 +3094,13 @@ int main(int argc, char **argv)
 		else if (a == "--roms" && i + 1 < argc) arg_roms = argv[++i];
 		else if (a.rfind("--roms=", 0) == 0) arg_roms = a.substr(7);
 		else if (a == "--interp") interp = true;      // MAME's V60 interpreter instead of the recompiled code
+		else if (a == "--recompiler-map") {
+			if (i + 1 == argc || argv[i + 1][0] == '-') {
+				fprintf(stderr, "--recompiler-map needs a file path\n");
+				return 2;
+			}
+			recompiler_map = argv[++i];
+		}
 		else if (a == "--arcade") arg_arcade = true;  // boot screen, credits and coins as on the cabinet
 		else if (a == "--preview-credits") preview_credits = true;
 		else if (a == "--replay-inputs" && i + 1 < argc) replay_path = argv[++i];
@@ -3122,13 +3132,24 @@ int main(int argc, char **argv)
 		}
 		replay_path = credits_recording_path();
 	}
+	if (!recompiler_map.empty()) {
+#ifndef M1_NATIVE
+		fprintf(stderr, "--recompiler-map requires a native executable\n");
+		return 2;
+#endif
+		if (interp || split_screen || link_player) {
+			fprintf(stderr, "--recompiler-map requires single-cabinet native execution without --interp\n");
+			return 2;
+		}
+	}
 	const bool replay_mode = !replay_path.empty();
 	if (split_layout_set && !split_screen) {
 		fprintf(stderr, "--split-layout needs --split-screen\n");
 		return 2;
 	}
 	const bool automatic_local_multiplayer = host_game().name == "vr" && !split_screen &&
-		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() && !getenv("M1_SCRIPT");
+		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() &&
+		recompiler_map.empty() && !getenv("M1_SCRIPT");
 	const bool local_pair_mode = split_screen || automatic_local_multiplayer;
 	if (local_pair_mode && (host_game().name != "vr" || link_player || link_port_set || arg_arcade ||
 		replay_mode || !record_path.empty() || getenv("M1_SCRIPT") ||
@@ -3165,8 +3186,8 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	if (replay_mode) {
-		if (host_game().name != "swa" || getenv("M1_SCRIPT")) {
-			fprintf(stderr, "--replay-inputs is experimental SWA-only and cannot be combined with M1_SCRIPT\n");
+		if ((host_game().name != "swa" && host_game().name != "wingwar") || getenv("M1_SCRIPT")) {
+			fprintf(stderr, "--replay-inputs supports SWA and Wing War and cannot be combined with M1_SCRIPT\n");
 			return 2;
 		}
 		if (const auto error = input_replay::load(replay_path, host_game(), replay); !error.empty()) {
@@ -3310,8 +3331,11 @@ int main(int argc, char **argv)
 		ee_path = dir + (m.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav");
 	if (!replay_mode) {
 		load_blob(nv_path, m.nvram().data(), m.nvram().size());
-		load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE);
-	}
+		if (!load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE)) {
+			const auto fresh = game_part.new_eeprom(m);   // (no saves yet: a new player's settings)
+			if (fresh.size() == model1::EEPROM_SIZE) memcpy(m.eeprom(), fresh.data(), fresh.size());
+		}
+	} else input_replay::start(m, replay);
 	// the backup as loaded: the autosave in the loop writes it once it differs (free play set at
 	// boot, the game's first settings, an arcade setting changed in the first seconds)
 	auto backup_hash = [&] {
@@ -3349,7 +3373,9 @@ int main(int argc, char **argv)
 #ifdef M1_NATIVE
 	// The game's code, recompiled to native code from this ROM, now (tens of milliseconds); the
 	// address map says where the code is. Without it the game runs on the interpreter.
-	const std::string map_path = find_assets() + "/" + std::string(game::get(host_game()).recompiler_map);
+	const std::string map_path = recompiler_map.empty()
+		? find_assets() + "/" + std::string(game::get(host_game()).recompiler_map)
+		: recompiler_map;
 	auto recompile = [&] {
 		rec::hints map;
 		std::vector<uint8_t> mem = m.maincpu_rom();
@@ -3385,6 +3411,7 @@ int main(int argc, char **argv)
 		if (!g_pc_mode) { sync.start(); return; }
 		m.set_drawing(false);
 		for (int i = 0; game::get(host_game()).camera_ram && i < 900 && !m.past_boot(); i++) m.run_frame();
+		game_part.skip_boot();
 		m.set_drawing(true);
 		m.m_audio_out.clear();
 		sync.start();
@@ -4133,6 +4160,9 @@ int main(int argc, char **argv)
 	};
 	auto reset_game = [&](bool keep_settings = true, bool force_code = false) {
 		if (recording) { save_recording("reset ends the recording"); recording = false; }
+		// (after a replay's handoff a reset ends its reproduction: the game's settings, coins and play
+		// style apply as in normal play. Saves stay isolated: replay_mode)
+		game_ctx.replay = false;
 		arcade_picture_pending = false;
 		arcade_next_picture = 0;
 		if (keep_settings) game_part.keep_arcade_settings();     // (Arcade: as the service menu may have left them)
@@ -4319,6 +4349,7 @@ int main(int argc, char **argv)
 				cfg.effects = std::clamp(cfg.effects + 10 * d, 0, 100); cfg_dirty = true;
 				m.set_volumes(cfg.music / 100.0f, cfg.effects / 100.0f);
 			} });
+		for (menu_item &i : game_part.sound_menu_items()) p.items.push_back(std::move(i));
 		p.items.push_back(back_item());
 		return p;
 	};
@@ -4781,12 +4812,13 @@ int main(int argc, char **argv)
 			pstate[0] = pstate[1] = pad_state{};
 			resume_clock();
 			SDL_SetWindowTitle(win, preview_credits ? "SWA: credits preview - P to play, Esc for display settings" :
-				"SWA: manual handoff paused - P to play");
+				(std::string(host_title()) + ": manual handoff paused - P to play").c_str());
 			fprintf(stderr, "input replay: %s %zu frames, RAM hash %016llx in %.1f s; paused for manual control (P to play)\n",
 				replay_until < 0 ? "verified" : "replayed the first", replay.frames.size(), (unsigned long long)actual,
 				double(SDL_GetTicksNS() - replay_start) / 1e9);
 			if (!record_path.empty()) {
 				record.frames = replay.frames;
+				record.eeprom = replay.eeprom;
 				recording = true;
 				fprintf(stderr, "input recording: on; saved to %s when you pause (P), reset or quit\n", record_path.c_str());
 			}
@@ -4907,7 +4939,7 @@ int main(int argc, char **argv)
 				if (e.key.scancode == SDL_SCANCODE_ESCAPE) open_menu();
 				else if (e.key.scancode == SDL_SCANCODE_P) {
 					paused = !paused;
-					if (replay_mode) SDL_SetWindowTitle(win, paused ? "SWA: manual play paused - P to play" : host_title());
+					if (replay_mode) SDL_SetWindowTitle(win, paused ? (std::string(host_title()) + ": manual play paused - P to play").c_str() : host_title());
 					if (paused) save_recording("paused");
 				}
 				else if (e.key.scancode == SDL_SCANCODE_F9) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }

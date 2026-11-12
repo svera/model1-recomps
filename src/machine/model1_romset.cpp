@@ -98,6 +98,7 @@ const rom CPU_BOARD[] = {
 	{ "opr14748.bin", 0x4a532cb8, OTHER_OTHER_DATA, 0x0, RAW },
 };
 const uint32_t IOBOARD_CRC = 0x2d093304;   // epr-14869b.25, in model1io.zip
+const uint32_t ADVANCED_IOBOARD_CRC = 0xa33f84d1;   // epr-16891.6, in model1io2.zip
 
 void place(std::vector<uint8_t> &r, const rom &ro, const std::vector<uint8_t> &d)
 {
@@ -191,7 +192,20 @@ result load(const definition &set, const std::vector<std::string> &zips)
 		res.regions.tgp_program = d;
 		res.has_tgp = true;
 	}
-	if (auto [z, e] = find("epr-14869b.25", nullptr, IOBOARD_CRC); z && z->read(*e, d)) { res.regions.ioboard = d; res.has_ioboard = true; }
+	if (set.use_ioboard)
+		if (auto [z, e] = find("epr-14869b.25", nullptr, IOBOARD_CRC); z && z->read(*e, d)) {
+			res.regions.ioboard = d;
+			res.has_ioboard = true;
+		}
+	if (set.use_advanced_ioboard) {
+		auto [z, e] = find("epr-16891.6", nullptr, ADVANCED_IOBOARD_CRC);
+		if (!z || !z->read(*e, d)) {
+			res.error = "Missing or damaged Advanced Model 1 I/O BIOS epr-16891.6 (model1io2.zip).";
+			return res;
+		}
+		res.regions.ioboard2 = d;
+		res.has_advanced_ioboard = true;
+	}
 	res.ok = true;
 	return res;
 }

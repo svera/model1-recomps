@@ -43,6 +43,8 @@ struct definition
 	std::span<const rom> roms;  // the game's own (the CPU board's are added)
 	uint32_t main_crc;          // a ROM only this set has: tells it from another zip when picked
 	const supplement *tgp_program = nullptr;   // when it is not in the classic set (and so not in roms)
+	bool use_ioboard = true;    // the shared Model 1 I/O board firmware; false for a different board
+	bool use_advanced_ioboard = false;
 };
 
 // in a game's romset.cpp: static const romset::registration REGISTERED{ ROMSET };
@@ -66,7 +68,7 @@ struct result
 	bool ok = false;
 	std::string error;              // for the player: what's missing or wrong
 	model1::regions regions;
-	bool has_tgp = false, has_ioboard = false;
+	bool has_tgp = false, has_ioboard = false, has_advanced_ioboard = false;
 };
 
 // zips: the game's set, and optionally model1io.zip (the I/O board's program) or a newer set

@@ -29,6 +29,8 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	model1 a(load_regions(dir, title)), b(load_regions(dir, title));
+	play->prepare(a);
+	play->prepare(b);
 	a.reset();
 	b.reset();
 	rec::attach(b.cpu(), title.name);
@@ -51,6 +53,10 @@ int main(int argc, char **argv)
 	for (int f = 1; f <= frames; f++) {
 		// scripted inputs, identical for both
 		const game::script_inputs in = play->frame(f, a);
+		if (!a.set_cheats(in.cheats) || !b.set_cheats(in.cheats)) {
+			fprintf(stderr, "%s has no such cheats\n", game::get(title).display_name.data());
+			return 1;
+		}
 		for (size_t c = 0; c < in.analog.size(); c++)
 			if (in.analog[c] >= 0 && (!a.set_analog_input(c, uint8_t(in.analog[c])) || !b.set_analog_input(c, uint8_t(in.analog[c])))) {
 				fprintf(stderr, "%s lockstep requires the Model 1 I/O board ROM (model1io.zip)\n", game::get(title).display_name.data());

@@ -4,7 +4,7 @@
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
 This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
-multiple games; this repository currently supports Virtua Racing and Star Wars Arcade.
+multiple games; this repository currently supports Virtua Racing, Star Wars Arcade, and Wing War.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
@@ -13,10 +13,26 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 </p>
 
 <p align="center">
+  <a href="#common-features">Features</a> ·
   <a href="#virtua-racing">Virtua Racing</a> ·
-  <a href="#star-wars">Star Wars Arcade (1993)</a>
+  <a href="#star-wars">Star Wars Arcade (1993)</a> ·
+  <a href="#wing-war">Wing War (1994)</a>
  </p>
 
+<h2 align="center" id="common-features">Features</h2>
+
+Every game includes:
+
+- Sharper graphics, with widescreen and ultrawide views (up to 32:9) that don't stretch the HUD.
+- Original arcade motion or smoother 60 / 120 FPS.
+- Full-detail models and full draw distance by default, with options to restore the arcade's own
+  LOD and draw distance.
+- Keyboard and gamepad support, with customizable controls.
+- PC play style without coins, or Arcade play style with the cabinet's coin settings.
+- Saved settings and the arcade's own difficulty options.
+- Packages for macOS, Windows and Steam Deck / Linux.
+
+Each game's section below lists what is specific to that game.
 
 <h2 align="center" id="virtua-racing">Virtua Racing Recomp</h2>
 
@@ -39,15 +55,12 @@ multiple games; this repository currently supports Virtua Racing and Star Wars A
 ### Features
 
 - All three courses, four camera views, and the original arcade racing.
-- Sharper graphics, widescreen and ultrawide views without stretching the HUD.
-- Original arcade motion or smoother 60 / 120 FPS.
-- Full-detail models by default, with an optional LOD toggle for simpler distant models. in Live Monitor, LOD on will restore original Virt McPolygon intermittent disappearance behavior due to polygon budget.
-- Full draw distance for scenery and distant cars, including the Live Monitor; Arcade restores the original limits.
-- Keyboard and gamepad support, with customizable controls.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
-- Saved settings and high scores.
-- Car color, language, difficulty, and course settings.
+- Full draw distance also covers distant cars and the Live Monitor. In the Live Monitor, turning
+  LOD on restores Virt McPolygon's original intermittent disappearance caused by the polygon budget.
+- Saved high scores.
+- Car color, language, and course settings.
 
 ### Getting started
 
@@ -153,12 +166,8 @@ disconnects, the game returns to solo play.
 - The whole arcade game, in both the Rebel Attack and Training missions.
 - Two players on one machine: the **Pilot** flies and fires, the **Gunner** aims a second laser.
   Gunner assist lets one player fly with both lasers firing.
-- Sharper graphics, widescreen and ultrawide views. The X-wing cockpit is continued out to the
-  screen edges and the HUD is not stretched.
-- Original arcade motion or smoother 60 / 120 FPS.
-- Full-detail models and a longer draw distance by default, with options for the arcade's own.
-- Keyboard and gamepad support, with customizable controls.
-- Saved settings and rankings, difficulty settings and the arcade's service menu.
+- In widescreen, the X-wing cockpit continues out to the screen edges.
+- Saved rankings and the arcade's service menu.
 
 Online multiplayer is not supported.
 
@@ -239,29 +248,98 @@ or frame rate.
 | --- | --- |
 | ![Star Destroyers in the asteroid field](assets/games/swa/screenshots/asteroid-field.png) | ![Flying over the Death Star's surface](assets/games/swa/screenshots/death-star-surface.png) |
 
-### For developers
+<h2 align="center" id="wing-war">Wing War Recomp</h2>
 
-Build and run it from source (see [Build and test](#build-and-test)):
+<p align="center">
+  <img src="assets/games/wingwar/screenshots/city-harbor.png" alt="A Mustang barrel-rolling over the harbor in widescreen" width="900">
+</p>
 
-```sh
-make swa
-build/bin/swa
-```
+> [!IMPORTANT]
+> You need your own MAME World **`wingwar.zip`** and **`model1io2.zip`** (the Advanced I/O board)
+> ROM archives. Neither is included. Both are needed for the flight stick, throttle and buttons
+> to work. This is an unofficial fan project, not affiliated with or supported by SEGA.
 
-Developers can also record and replay play sessions; an input recording should be replayed at
-the aspect ratio it was recorded in. See
-[how SWA is built, run and tested](docs/HOW-IT-WAS-MADE.md#building-running-and-testing-swa).
+<p align="center">
+  <a href="https://github.com/svera/model1-recomps/releases">Download</a> ·
+  <a href="#getting-started-2">Getting started</a> ·
+  <a href="#controls-2">Controls</a> ·
+  <a href="https://github.com/svera/model1-recomps/issues">Report a bug</a>
+</p>
 
-Release packaging is enabled for Virtua Racing and Star Wars Arcade on macOS, Windows, and Linux.
-Each platform's `package.sh` builds both by default, or the games named (`package.sh swa`).
+### Features
 
-Useful shared checks:
+- The whole single-cabinet arcade game.
+- Optional cheats: invincibility and infinite missiles.
 
-```sh
-make test-model1io-adc
-make test-host-gamepads
-make test-vr-profile test-vr-gameplay test-vr-tgp-track
-```
+Linked-cabinet play is not supported.
+
+### Getting started
+
+1. [Download](https://github.com/svera/model1-recomps/releases) the package for your system and extract it.
+2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the same folder. Leave them zipped.
+3. Start the game and select **`wingwar.zip`** when asked. It remembers your files for next time.
+4. Press **1** on the keyboard or **Start** on your gamepad to play.
+
+**macOS:** open **Wing War Recomp.app**. If macOS blocks it, allow it through
+**System Settings > Privacy & Security**.
+
+**Windows:** run the included executable. Windows may show a SmartScreen warning for preview builds.
+
+**Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
+**WingWar.sh** instead of using a file picker. On Steam Deck, add the launcher as a
+Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
+
+### Controls
+
+| Action | Keyboard | Gamepad |
+| --- | --- | --- |
+| Yaw | Left / Right | Left stick X or D-pad |
+| Pitch | Up / Down | Left stick Y or D-pad |
+| Throttle | W / S | Right trigger |
+| Machine gun | Z | A / Cross |
+| Missile | X | B / Circle |
+| Smoke | V | X / Square |
+| Change view | C | Y / Triangle |
+| Start | 1 | Start |
+| Insert coin (Arcade mode) | 5 | D-pad Up |
+| Open menu | Esc | View / Select |
+
+To see or change your actual controller bindings, open **Esc > Controls**. Coins are only
+needed in Arcade play style. Hold **Tab** to fast-forward; **P** pauses and resumes.
+
+### Useful settings
+
+Open the menu with **Esc** or **View / Select**:
+
+- **Display:** change sharpness, screen shape (up to 32:9), fullscreen, and frame rate. 30 FPS shows the
+  game as the arcade drew it; 60 and 120 smooth the motion between pictures.
+- **Display > LOD:** Off (default) keeps the highest-detail scenery models at every distance.
+  On uses the arcade's simpler distant models.
+- **Display > Draw distance:** Full (default) draws distant scenery the arcade left out, without
+  changing game timing or collisions. Aircraft and other moving objects keep their original
+  visibility. Arcade restores the original scenery limits.
+- **Game > Play style:** PC mode (default) skips the startup tests and starts without coins;
+  Arcade mode shows the cabinet's boot screen and uses its coin settings.
+- **Game:** the arcade's Game Assignments: difficulty (1 easy - 8 hard, default 1), expert-mode
+  time and aircraft life. Changing one restarts the game when the menu closes.
+- **Game > Service menu:** opens the arcade's own test menu. **9** moves and **F2** selects;
+  choose EXIT to return.
+- **Cheats:** invincibility (your aircraft takes no damage and doesn't spin when hit) and infinite
+  missiles. CPU opponents are unchanged. Both are off by default and reset when the game restarts.
+- **Sound:** adjust the audio levels and the arcade's attract-mode sound.
+
+Higher graphics settings need a faster computer. If play feels slow, lower the render scale
+or frame rate.
+
+Wing War recompiles your ROM's V60 program to native code at startup; use `--interp` to run on the
+Model 1 interpreter instead.
+
+### Screenshots
+
+| Forest dogfight | Canyon river |
+| --- | --- |
+| ![A Yak-141 chasing an Apache over the forest](assets/games/wingwar/screenshots/forest.png) | ![A Yak-141 flying low along a canyon river](assets/games/wingwar/screenshots/canyon.png) |
+
 
 ## Shared Model 1 implementation
 
@@ -290,8 +368,8 @@ Development requires a C++20 compiler, zlib, SDL 3, and FreeType. On macOS, inst
 Every game has the same make targets, made from its `src/games/<game>/game.mk`: `<game>`, `<game>-native`,
 `<game>-regions`, `<game>-coverage`, `<game>-static`, `<game>-lockstep`, and `<game>-native-lockstep`.
 
-Release packaging is enabled only for Virtua Racing on macOS, Windows, and Linux. Each platform's
-`package.sh` builds VR by default.
+Release packaging is enabled for Virtua Racing, Star Wars Arcade, and Wing War on macOS, Windows,
+and Linux. Each platform's `package.sh` builds all enabled games by default.
 
 Useful shared checks:
 
@@ -300,6 +378,7 @@ make test-model1io-adc
 make test-host-gamepads
 make test-host-graphics
 make test-vr-profile test-vr-gameplay test-vr-tgp-track
+make test-wingwar-profile
 ```
 
 `test-host-graphics` needs a working SDL graphics driver (it uses a hidden window).

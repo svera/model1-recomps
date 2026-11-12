@@ -14,6 +14,11 @@
 
 namespace rec {
 
+struct code_range
+{
+	uint32_t first, last;
+};
+
 enum class insn_kind { normal, branch, jump, call, ret, bad };
 
 struct insn
@@ -38,8 +43,9 @@ struct hints
 	std::set<uint32_t> entries;                     // reached at run time
 	std::map<uint32_t, std::set<uint32_t>> edges;   // indirect jump/call at a -> where it went
 	std::set<uint32_t> covered;                     // instructions seen running (optional)
+	std::vector<code_range> ram;                   // mutable executable ranges, exclusive end
 
-	// The hint file: "entry A", "edge A B", "irq L A", and "pc A N" lines (hex); others ignored.
+	// The hint file: "entry A", "edge A B", "irq L A", "pc A N", and "ram A B" (hex); others ignored.
 	bool read(const std::string &path);
 };
 
@@ -48,10 +54,13 @@ struct program
 	std::map<uint32_t, insn> insns;
 	std::vector<function> functions;
 	std::map<uint32_t, std::set<uint32_t>> edges;   // the hints' real indirect jumps and calls
+	std::vector<code_range> ram;
 };
 
 // mem: the main CPU's address space as the recompiler sees it (16 MB: 24-bit addresses).
-program analyse(const std::vector<uint8_t> &mem, const hints &h, bool keep_text = false);
+// Empty ranges use the ROM windows; explicit ranges restrict discovery to those windows.
+program analyse(const std::vector<uint8_t> &mem, const hints &h, bool keep_text = false,
+	const std::vector<code_range> &ranges = {});
 
 // Writes the listing tools/recomp/emit.py reads.
 void write_listing(const program &p, const char *path);

@@ -4047,6 +4047,13 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 1 && std::string(argv[1]) == "--record-interpolation") {
+		model1_video_test::scenery_records();
+		model1_video_test::swaying_camera();
+		model1_video_test::culled_records();
+		puts("Record interpolation metadata tests passed");
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--vr-menu-backdrops") {
 		model1_video_test::vr_menu_backdrops(argv[1]);
 		return 0;

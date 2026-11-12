@@ -3,7 +3,7 @@
 # ad-hoc signed: players right-click > Open the first time), README.txt and LICENSES.txt:
 #   tools/mac/package.sh [game ...]   ->  build/mac/<game>/<FILE>Recomp-mac.zip
 #                                         (VirtuaRacingRecomp-mac.zip)
-# With no game named, every game enabled in tools/release/games.sh is packaged (currently VR and SWA;
+# With no game named, every game enabled in tools/release/games.sh is packaged (currently VR, SWA and Wing War;
 # settings: tools/games/<game>/release/game.sh). Nothing from the ROMs goes in them: the maps contain
 # addresses only, and each game asks for the player's own set at launch.
 set -e

@@ -6,3 +6,4 @@ refs/
 *.bin
 *.sav
 .DS_Store
+/.github/copilot-instructions.md
