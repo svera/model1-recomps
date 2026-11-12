@@ -268,12 +268,7 @@ or frame rate.
 
 ### Features
 
-- The whole single-cabinet arcade game, through the UFO stage and the ending, with all four
-  cockpit views.
-- In widescreen, the sky and the distant city, coast and countryside extend across the wider
-  picture; the 2D artwork keeps its arcade proportions.
-- Native code recompiled from your ROM at startup.
-- The arcade's service menu.
+- The whole single-cabinet arcade game.
 - Optional cheats: invincibility and infinite missiles.
 
 Linked-cabinet play is not supported.
