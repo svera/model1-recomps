@@ -13,11 +13,26 @@ multiple games; this repository currently supports Virtua Racing, Star Wars Arca
 </p>
 
 <p align="center">
+  <a href="#common-features">Features</a> ·
   <a href="#virtua-racing">Virtua Racing</a> ·
   <a href="#star-wars">Star Wars Arcade (1993)</a> ·
   <a href="#wing-war">Wing War (1994)</a>
  </p>
 
+<h2 align="center" id="common-features">Features</h2>
+
+Every game includes:
+
+- Sharper graphics, with widescreen and ultrawide views (up to 32:9) that don't stretch the HUD.
+- Original arcade motion or smoother 60 / 120 FPS.
+- Full-detail models and full draw distance by default, with options to restore the arcade's own
+  LOD and draw distance.
+- Keyboard and gamepad support, with customizable controls.
+- PC play style without coins, or Arcade play style with the cabinet's coin settings.
+- Saved settings and the arcade's own difficulty options.
+- Packages for macOS, Windows and Steam Deck / Linux.
+
+Each game's section below lists what is specific to that game.
 
 <h2 align="center" id="virtua-racing">Virtua Racing Recomp</h2>
 
@@ -40,15 +55,12 @@ multiple games; this repository currently supports Virtua Racing, Star Wars Arca
 ### Features
 
 - All three courses, four camera views, and the original arcade racing.
-- Sharper graphics, widescreen and ultrawide views without stretching the HUD.
-- Original arcade motion or smoother 60 / 120 FPS.
-- Full-detail models by default, with an optional LOD toggle for simpler distant models. in Live Monitor, LOD on will restore original Virt McPolygon intermittent disappearance behavior due to polygon budget.
-- Full draw distance for scenery and distant cars, including the Live Monitor; Arcade restores the original limits.
-- Keyboard and gamepad support, with customizable controls.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
-- Saved settings and high scores.
-- Car color, language, difficulty, and course settings.
+- Full draw distance also covers distant cars and the Live Monitor. In the Live Monitor, turning
+  LOD on restores Virt McPolygon's original intermittent disappearance caused by the polygon budget.
+- Saved high scores.
+- Car color, language, and course settings.
 
 ### Getting started
 
@@ -154,12 +166,8 @@ disconnects, the game returns to solo play.
 - The whole arcade game, in both the Rebel Attack and Training missions.
 - Two players on one machine: the **Pilot** flies and fires, the **Gunner** aims a second laser.
   Gunner assist lets one player fly with both lasers firing.
-- Sharper graphics, widescreen and ultrawide views. The X-wing cockpit is continued out to the
-  screen edges and the HUD is not stretched.
-- Original arcade motion or smoother 60 / 120 FPS.
-- Full-detail models and a longer draw distance by default, with options for the arcade's own.
-- Keyboard and gamepad support, with customizable controls.
-- Saved settings and rankings, difficulty settings and the arcade's service menu.
+- In widescreen, the X-wing cockpit continues out to the screen edges.
+- Saved rankings and the arcade's service menu.
 
 Online multiplayer is not supported.
 
@@ -242,36 +250,49 @@ or frame rate.
 
 <h2 align="center" id="wing-war">Wing War Recomp</h2>
 
+<p align="center">
+  <img src="assets/games/wingwar/screenshots/city-harbor.png" alt="A Mustang barrel-rolling over the harbor in widescreen" width="900">
+</p>
+
 > [!IMPORTANT]
-> You need your own MAME **World `wingwar.zip`** ROM set and the matching Advanced I/O BIOS
-> **`model1io2.zip`**. Neither is included. This build runs the board BIOS for Wing War's digital
-> and analog inputs.
-> This is an unofficial fan project, not affiliated with or supported by SEGA.
+> You need your own MAME World **`wingwar.zip`** and **`model1io2.zip`** (the Advanced I/O board)
+> ROM archives. Neither is included. Both are needed for the flight stick, throttle and buttons
+> to work. This is an unofficial fan project, not affiliated with or supported by SEGA.
+
+<p align="center">
+  <a href="https://github.com/svera/model1-recomps/releases">Download</a> ·
+  <a href="#getting-started-2">Getting started</a> ·
+  <a href="#controls-2">Controls</a> ·
+  <a href="https://github.com/svera/model1-recomps/issues">Report a bug</a>
+</p>
 
 ### Features
 
-- The original single-cabinet Wing War flight game, with all four cockpit views.
-- **Game > Play style:** PC (default) skips startup tests and enables free play. Arcade shows the cabinet boot screen and requires coins, preserving your arcade coin settings when switching styles.
-- Sharper graphics, widescreen support, and optional smooth motion.
-- The polygon sky and distant city, coast and striped-countryside ground perimeters extend across widescreen views, including banked 21:9 views, without stretching sky bands or interior ground contours.
-- **Display > Draw distance:** Full (default) adds distant static scenery in the renderer without changing game timing or collisions. Arcade restores the original scenery limits. Moving objects retain their original visibility.
-- **Display > LOD:** Off (default) keeps the highest-detail single-piece scenery models; On restores the arcade's model selection. Full draw distance's extra scenery uses single-piece models in either mode.
-- Keyboard and gamepad controls for the flight stick, throttle, weapons, and views.
+- The whole single-cabinet arcade game, through the UFO stage and the ending, with all four
+  cockpit views.
+- In widescreen, the sky and the distant city, coast and countryside extend across the wider
+  picture; the 2D artwork keeps its arcade proportions.
+- Native code recompiled from your ROM at startup.
+- The arcade's service menu.
+- Optional cheats: invincibility and infinite missiles.
+
+Linked-cabinet play is not supported.
 
 ### Getting started
 
 1. [Download](https://github.com/svera/model1-recomps/releases) the package for your system and extract it.
-2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the package's `roms` folder on Steam Deck / Linux,
-   or place them together before selecting `wingwar.zip` when prompted.
-3. Leave both archives zipped; the app checks them and remembers your choice.
-4. Press **1** or **Start** to play. In Arcade play style, first insert coins with **5** or **D-pad Up**.
+2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the same folder. Leave them zipped.
+3. Start the game and select **`wingwar.zip`** when asked. It remembers your files for next time.
+4. Press **1** on the keyboard or **Start** on your gamepad to play.
 
 **macOS:** open **Wing War Recomp.app**. If macOS blocks it, allow it through
 **System Settings > Privacy & Security**.
 
 **Windows:** run the included executable. Windows may show a SmartScreen warning for preview builds.
 
-**Steam Deck / Linux:** place both ROM archives in the package's `roms` folder and run `WingWar.sh`.
+**Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
+**WingWar.sh** instead of using a file picker. On Steam Deck, add the launcher as a
+Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
 
 ### Controls
 
@@ -285,11 +306,44 @@ or frame rate.
 | Smoke | C | X / Square |
 | View 1 / 2 / 3 / 4 | F5 / F6 / F7 / F8 | Y / Triangle, RB, LB, left-stick click |
 | Start | 1 | Start |
-| Insert coin | 5 | D-pad Up |
+| Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
 
-Wing War currently runs on the V60 interpreter; it does not yet use startup native recompilation.
-Use **Esc > Controls** to see or change bindings.
+To see or change your actual controller bindings, open **Esc > Controls**. Coins are only
+needed in Arcade play style. Hold **Tab** to fast-forward; **P** pauses and resumes.
+
+### Useful settings
+
+Open the menu with **Esc** or **View / Select**:
+
+- **Display:** change sharpness, screen shape (up to 32:9), fullscreen, and frame rate. 30 FPS shows the
+  game as the arcade drew it; 60 and 120 smooth the motion between pictures.
+- **Display > LOD:** Off (default) keeps the highest-detail scenery models at every distance.
+  On uses the arcade's simpler distant models.
+- **Display > Draw distance:** Full (default) draws distant scenery the arcade left out, without
+  changing game timing or collisions. Aircraft and other moving objects keep their original
+  visibility. Arcade restores the original scenery limits.
+- **Game > Play style:** PC mode (default) skips the startup tests and starts without coins;
+  Arcade mode shows the cabinet's boot screen and uses its coin settings.
+- **Game:** the arcade's Game Assignments: difficulty (1 easy - 8 hard, default 1), expert-mode
+  time and aircraft life. Changing one restarts the game when the menu closes.
+- **Game > Service menu:** opens the arcade's own test menu. **9** moves and **F2** selects;
+  choose EXIT to return.
+- **Cheats:** invincibility (your aircraft takes no damage and doesn't spin when hit) and infinite
+  missiles. CPU opponents are unchanged. Both are off by default and reset when the game restarts.
+- **Sound:** adjust the audio levels and the arcade's attract-mode sound.
+
+Higher graphics settings need a faster computer. If play feels slow, lower the render scale
+or frame rate.
+
+Wing War recompiles your ROM's V60 program to native code at startup; use `--interp` to run on the
+Model 1 interpreter instead.
+
+### Screenshots
+
+| Forest dogfight | Canyon river |
+| --- | --- |
+| ![A Yak-141 chasing an Apache over the forest](assets/games/wingwar/screenshots/forest.png) | ![A Yak-141 flying low along a canyon river](assets/games/wingwar/screenshots/canyon.png) |
 
 ### For developers
 

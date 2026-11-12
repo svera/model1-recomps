@@ -26,6 +26,8 @@ class auto_play
 {
 public:
 	virtual ~auto_play() = default;
+	// before the cold boot (the machine's reset): the saves the run starts from (a recording's EEPROM)
+	virtual void prepare(model1 &m) {}
 	// frame f's inputs (f from 1, each frame asked for once, in order)
 	virtual script_inputs frame(int f) = 0;
 	// Feedback-driven runs inspect the reference machine, but still emit controls only.

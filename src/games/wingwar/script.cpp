@@ -1,7 +1,14 @@
 #include "../script.h"
+#include "../../host/input_replay.h"
 #include "../../machine/model1.h"
+#include "profile.h"
 
 namespace game::wingwar {
+
+// the recorded human runs the "recording" and "complete" scenarios replay, from the repository's folder:
+// a playthrough without cheats, and a run to the end of the credits (invincibility in the UFO stage)
+constexpr const char *RECORDING = "tests/games/wingwar/recordings/manual-playthrough.inputs",
+	*COMPLETE_RECORDING = "tests/games/wingwar/recordings/manual-complete-game.inputs";
 namespace {
 
 class play final : public auto_play
@@ -59,6 +66,8 @@ private:
 
 std::unique_ptr<auto_play> make_auto_play(const std::string &scenario, uint32_t, bool checks)
 {
+	if (scenario == "recording" || scenario == "complete")
+		return input_replay::recorded_scenario(scenario == "complete" ? COMPLETE_RECORDING : RECORDING, ID, "Wing War");
 	if (scenario != "" && scenario != "attract" && scenario != "boot") return nullptr;
 	return std::make_unique<play>(scenario == "boot", checks);
 }

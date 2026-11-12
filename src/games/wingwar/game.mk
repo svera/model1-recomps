@@ -1,5 +1,7 @@
-# Wing War (World): ROM-backed runtime and controls.
+# Wing War (World): ROM-backed runtime and controls. Native recompilation from
+# assets/games/wingwar/wingwar_map.txt (strict lockstep, all scenarios).
 GAMES += wingwar
+wingwar_HOST_REC = native
 $(BIN)/wingwar_sky_test: $(OBJ)/tests/games/wingwar/sky_test.o $(GAMES_LINK)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
@@ -11,9 +13,18 @@ $(BIN)/wingwar_host_test: $(OBJ)/tests/games/wingwar/host_test.o $(OBJ)/src/game
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(SDL_LIBS)
 test-wingwar-host: $(BIN)/wingwar_host_test wingwar-regions
 	$(BIN)/wingwar_host_test build/wingwar
-wingwar_COV_SCENARIOS = boot attract
+wingwar_COV_SCENARIOS = boot attract recording complete
 wingwar_COV_FRAMES_boot ?= 700
 wingwar_COV_FRAMES_attract ?= 7200
+wingwar_COV_FRAMES_recording ?= 40896   # the recorded runs (tests/games/wingwar/recordings), each to its last frame
+wingwar_COV_FRAMES_complete ?= 36542
+wingwar_LOCK_SCENARIOS = boot attract recording complete
+wingwar_LOCK_FRAMES_boot ?= 700
+wingwar_LOCK_FRAMES_attract ?= 7200
+wingwar_LOCK_FRAMES_recording ?= 40896
+wingwar_LOCK_FRAMES_complete ?= 36542
+# the generated C++ has no RAM code (40D000..40E000): those calls take the interpreter, so not --strict
+wingwar_GEN_LOCK_FLAGS =
 wingwar_EXTRA_HINTS = src/games/wingwar/native_entries.txt
 wingwar_EXTRA_HINTS += $(wildcard build/cov/wingwar/coverage-human-*.txt)
 

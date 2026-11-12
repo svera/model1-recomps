@@ -42,6 +42,7 @@ int main(int argc, char **argv)
 	if (replay_path.empty() && !play) { fprintf(stderr, "%s has no scenario \"%s\"\n", game::get(title).display_name.data(), opt.scenario.c_str()); return 2; }
 	model1 m(load_regions(dir, title));
 	input_replay::start(m, replay);
+	if (play) play->prepare(m);
 	m.reset();
 	std::map<uint32_t, uint64_t> pcs;
 	std::map<uint8_t, uint64_t> ops;

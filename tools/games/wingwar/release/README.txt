@@ -25,7 +25,8 @@ Gamepad: left stick or D-pad flies, right trigger controls throttle, A fires the
 B launches a missile, X releases smoke, Y / Triangle and the shoulder buttons and left-stick
 click select the four views, Start starts and D-pad Up inserts a coin.
 
-Wing War currently runs on the V60 interpreter, not startup native recompilation.
+Wing War recompiles your ROM's V60 program to native code at startup. Use --interp to
+run on the Model 1 interpreter instead.
 
 CREDITS
 Built on MAME's work on the Model 1 (the V60 CPU, TGP, sound and video), Musashi, ymfm, sljit,

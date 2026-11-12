@@ -256,6 +256,8 @@ IOBOARD2_ZIP = $(wildcard roms/model1io2.zip)
 #   <game>_EXTRA_HINTS     address-only continuation hints supplementing the coverage runs
 #   <game>_LOCK_SCENARIOS  the runs <game>-lockstep and <game>-native-lockstep check
 #   <game>_LOCK_FRAMES     their length (<game>_LOCK_FRAMES_<scenario>: one scenario's own)
+#   <game>_GEN_LOCK_FLAGS  <game>-lockstep's model1lock flags (default --strict: no interpreter fallback;
+#                          empty for code the generated C++ can't hold, such as Wing War's RAM code)
 # The targets for a game g:
 #   g                  build/bin/g, the desktop build (and build/g from roms/g.zip, when there)
 #   g-native           build/bin/g-native, the release build: native code made at start-up
@@ -327,8 +329,9 @@ $$(BIN)/$(1)script-static: $$(MODEL1SCRIPT_OBJS) $$(OBJ)/build/gen/$(1)_rec.o $$
 $$(BIN)/$(1)lock-static: $$(OBJ)/tools/model1lock.o $$(call objs,$$(CORE) $$(MACHINE) $$(SOUND) $$(RT) $$(NATIVE)) $$(OBJ)/build/gen/$(1)_rec.o $$(SLJIT_OBJ) $$(MUSASHI_OBJ) $$(Z80_OBJ) $$(CORO_OBJ)
 	@mkdir -p $$(dir $$@)
 	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS)
+$(1)_GEN_LOCK_FLAGS ?= --strict
 $(1)-lockstep: $$(BIN)/$(1)lock-static
-	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/$(1)lock-static --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
+	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/$(1)lock-static --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) $$($(1)_GEN_LOCK_FLAGS) --scenarios $$(call scenario_flag,$$(s)) &&) true
 $(1)-native-lockstep: $$(BIN)/model1lock $$($(1)_LOCAL_REGIONS)
 	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/model1lock --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) --native --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
 

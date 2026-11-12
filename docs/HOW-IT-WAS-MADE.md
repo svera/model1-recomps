@@ -879,9 +879,8 @@ missing-function fallbacks. None of these tests compare pixels.
 For investigation only, the test binary accepts `--collect-fallbacks` after its regions
 and map arguments: it still checks state equivalence but allows/logs missing-function
 entries instead of stopping at the first. The default make target remains strict.
-Wing War's ordinary desktop build is still interpreter-based. Broader gameplay/service
-coverage, native performance measurement, and manual gameplay validation are required
-before changing the default or packaging a full native map.
+Wing War's desktop build and release packages now use this native backend by default
+(see "Wing War as a native build" below).
 
 ### Wing War human gameplay recordings
 
@@ -1134,7 +1133,8 @@ fallbacks.
 `make test-wingwar-recording` validates seed generation, recorded-input coverage, and
 native/interpreter seed equivalence without inspecting pixels. Multiple human sessions
 should cover different aircraft, weapons, views, deaths, continues, and progression.
-Neither recordings nor copyrighted ROM data are added to source control by these commands.
+Apart from the two runs kept as lockstep scenarios (below), neither recordings nor
+copyrighted ROM data are added to source control by these commands.
 
 ### Wing War's Game Assignments
 
@@ -1147,7 +1147,39 @@ the interpreter through boot and attract mode. The bundled map also passed stric
 of the current 52,263-frame human recording: 22,159,512 scanline CPU states, identical
 RAM, TGP/I/O timing, display lists and camera hooks, and zero function fallbacks.
 This does not establish complete
-service-mode or all-gameplay coverage; the default `wingwar` executable remains interpreted.
+service-mode or all-gameplay coverage.
+
+Two human runs are kept in source control as the `recording` and `complete` scenarios, as
+SWA's are: `tests/games/wingwar/recordings/manual-playthrough.inputs` (40,896 frames, no
+cheats) and `manual-complete-game.inputs` (36,542 frames to the end of the credits, with
+invincibility through the UFO stage). Both record the EEPROM they started from; the shared
+`input_replay::recorded_play` restores it before the cold boot (`auto_play::prepare`), and
+`model1lock` now applies each frame's cheat flags to both machines. `make
+wingwar-native-lockstep` runs boot, attract and both recordings strictly (registers every
+scanline, RAM and picture every frame, the recording's final RAM hash); all four passed
+with zero fallbacks (about 13 minutes). `make wingwar-coverage` replays them for the
+recompile's hints (24,760 and 22,925 unique instruction addresses), so the generated map
+no longer needs local `coverage-human-*.txt` files (they are still merged when present).
+
+### Wing War as a native build
+
+`wingwar_HOST_REC = native`: `make wingwar` now copies `build/bin/wingwar-native`, and the
+release packages build `wingwar-native` (`tools/games/wingwar/release/game.sh`), as SWA and VR do.
+`--interp` still runs the interpreter. The bundled map was regenerated with the two recordings'
+coverage: the same 2,023 functions, plus 1,318 indirect-jump edges they reached. With it, `make
+wingwar-native-lockstep` again passed all four scenarios (boot 700, attract 7,200, recording
+40,896, complete 36,542 frames) strictly with zero fallbacks, and `make test-wingwar-native-map`
+passed. The generated-C++ build has no RAM code, so its calls into `40D000..40E000` take the
+interpreter; `wingwar_GEN_LOCK_FLAGS` is therefore empty (not `--strict`), and `make
+wingwar-lockstep` compares registers, RAM and pictures with those fallbacks allowed. All four
+scenarios were identical there too.
+
+Native execution brings no speed gain yet. Headless replay of the 36,298-frame completion run
+gave 218 frames/s native against 222 interpreted with drawing on (software rendering
+dominates), and 1,046 against 1,177 with drawing off: the backend emits few instructions as
+host code and calls MAME's handlers for the rest. Service mode is not covered by any scenario;
+a path missing from the map falls back to the interpreter (correct, slower) and
+`REC_VERBOSE=1` reports it. Appearance still requires a manual play check.
 
 The desktop Game menu exposes six settings from the ROM's Game Assignments menu;
 advertise sound is under Sound. None requires service-mode navigation. Difficulty is 1-8; expert mode time is

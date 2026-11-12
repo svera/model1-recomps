@@ -2,9 +2,11 @@
 #include "../games/script.h"
 #include "../machine/model1.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 
 namespace input_replay {
@@ -127,6 +129,47 @@ inline std::string apply(model1 &m, const game::script_inputs &frame)
 			return "replay uses unavailable analog channel " + std::to_string(i);
 	for (size_t i = 0; i < frame.pressed.size(); i++) m.m_inputs[i] = uint8_t(~frame.pressed[i]);
 	return {};
+}
+
+// A human's recorded run as a scripted one (a game's "recording" scenarios), for the recompile's
+// coverage and the native and generated-C++ lockstep: paths only manual play reaches. Its saves,
+// its cabinet inputs and cheats frame by frame; after its last frame, nothing pressed and the axes
+// left where they were. The checks: the RAM hash at its last frame, the recorded run's.
+class recorded_play final : public game::auto_play
+{
+public:
+	recorded_play(recording r, std::string name) : m_rec(std::move(r)), m_name(std::move(name)) {}
+	void prepare(model1 &m) override { start(m, m_rec); }
+	game::script_inputs frame(int f) override
+	{
+		return size_t(f - 1) < m_rec.frames.size() ? m_rec.frames[size_t(f - 1)] : game::script_inputs{};
+	}
+	std::string check(int f, model1 &m) override
+	{
+		if (size_t(f) != m_rec.frames.size()) return {};
+		if (ram_hash(m) != m_rec.expected_ram)
+			return m_name + " recording diverged: RAM hash differs from the recorded run's at its last frame";
+		m_matched = true;
+		return {};
+	}
+	std::string finish() override { return m_matched ? std::string() : m_name + " recording: the run ended before the recording's last frame"; }
+	int min_frames() const override { return int(m_rec.frames.size()); }
+
+private:
+	recording m_rec;
+	std::string m_name;
+	bool m_matched = false;
+};
+
+// path: from the repository's folder (the tools' working directory); nullptr when it won't load
+inline std::unique_ptr<game::auto_play> recorded_scenario(const char *path, game::id title, const std::string &name)
+{
+	recording r;
+	if (const auto error = load(path, title, r); !error.empty()) {
+		fprintf(stderr, "%s recording scenario (run from the repository's folder): %s\n", name.c_str(), error.c_str());
+		return nullptr;
+	}
+	return std::make_unique<recorded_play>(std::move(r), name);
 }
 
 }
