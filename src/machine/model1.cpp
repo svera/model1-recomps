@@ -1108,6 +1108,7 @@ void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 // The 2D layers are drawn at the arcade's resolution and scaled up to the render's.
 void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags)
 {
+	if (m_free_cam && layer != 4 && layer != 6) return;
 	static const int skip = getenv("M1_TILE_SKIP") ? strtol(getenv("M1_TILE_SKIP"), nullptr, 16) : 0;
 	if (skip & (1 << layer)) return;
 	std::array<float, SCREEN_H> slide_rows;

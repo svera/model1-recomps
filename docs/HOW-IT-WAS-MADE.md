@@ -643,9 +643,11 @@ management and actual Vulkan/Direct3D 12 driver switching still need Windows run
 ## Free camera, paths and recording
 
 The free-camera and recording features from upstream commits `e82fe453` and `441f03e` are adapted
-for Virtua Racing and Star Wars Arcade, rather than enabled for Virtua Fighter. The shared machine
-applies an extra transform after the game's camera transform; this is an offset from the game camera,
-not a world-anchored replacement. The host disables gameplay controls while free camera is active.
+for Virtua Racing, Star Wars Arcade, and Wing War, rather than enabled for Virtua Fighter. **F4** or
+**View/Back + R3** toggles the camera, which can also be enabled from **Display > Free camera**. The
+shared machine applies an extra transform after the game's camera transform; this is an offset from
+the game camera, not a world-anchored replacement. The host disables gameplay controls while free
+camera is active.
 
 VR's default local-multiplayer mode uses a separate host loop, even with only one player.
 That loop has its own F4 handler, movement controls and Display menu entry, applying the free-camera
@@ -654,7 +656,7 @@ F4 toggling and menu activation.
 
 ### Scripted camera paths
 
-In the standard VR/SWA host, set `M1_TEST_FREECAM_PATH` to a text file. Lines support `key` camera
+In the standard VR/SWA/Wing War host, set `M1_TEST_FREECAM_PATH` to a text file. Lines support `key` camera
 poses and `at` events; `#` starts a comment. Times are game frames, and a leading `+` makes a time
 relative to the previous line:
 
@@ -672,7 +674,7 @@ are in degrees; `lookat game` points back toward that origin. Events are `on`, `
 
 ### Recording
 
-Set `M1_RECORD` to an output directory to record a run in the standard VR/SWA host.
+Set `M1_RECORD` to an output directory to record a run in the standard VR/SWA/Wing War host.
 FFmpeg must be available on `PATH`; the directory receives `video.mp4` and stereo `sound.wav`.
 `M1_RECORD_FROM` and `M1_RECORD_TO` select an inclusive game-frame range (default: from frame 0
 through the end), and `M1_RECORD_HZ` sets the video rate (default: 60, range: 1–240).

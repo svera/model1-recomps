@@ -139,10 +139,10 @@ struct pad_state
 	bool menu_was = false, touch_was = false, sticks_was = false;   // the menu's other buttons (edges)
 	int coin_frames = 0, start_delay = -1, start_frames = 0;
 	bool key_start_was = false, key_coin_was = false, pad_coin_was = false, key_menu_was = false;
-	bool lb_was = false, rb_was = false;
+	bool lb_was = false, rb_was = false, right_stick_was = false;
 };
 
-enum class hotkey { none, menu, scale, aspect };
+enum class hotkey { none, menu, scale, aspect, free_cam };
 
 // The game's test menu, from our menu: the test button pressed for a moment, then, while the test
 // menu is up, Down is the service button (move) and Start the test button (select). The game's mode
@@ -262,12 +262,18 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -dead) press(C_LEFT);
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > dead) press(C_RIGHT);
 			if (back) {
-				// View held: hotkeys on Start, LB and RB, not moves
+				// View held: hotkeys on Start, LB, RB and R3, not moves
 				const bool pstart = btn(SDL_GAMEPAD_BUTTON_START);
 				const bool lb = btn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), rb = btn(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+				const bool right_stick = btn(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
 				if (pstart && !st.start_was) { hk = hotkey::menu; st.back_combo = true; }
 				if (lb && !st.lb_was) { hk = hotkey::scale; st.back_combo = true; }
 				if (rb && !st.rb_was) { hk = hotkey::aspect; st.back_combo = true; }
+				if (right_stick && (!st.right_stick_was || !st.back_was) &&
+					(m.title().name == "vr" || m.title().name == "swa" || m.title().name == "wingwar")) {
+					hk = hotkey::free_cam;
+					st.back_combo = true;
+				}
 				st.lb_was = lb; st.rb_was = rb;
 			} else {
 				for (int a : prof.pad_actions)
@@ -275,6 +281,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 				if (start && !st.start_was) press_start();
 				start_held |= start;
 			}
+			st.right_stick_was = btn(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
 			// View tapped on its own: whichever of Menu and Coin it's set as
 			if (!back && st.back_was && !st.back_combo) {
 				if (menu_code == SDL_GAMEPAD_BUTTON_BACK) hk = hotkey::menu;
@@ -310,6 +317,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 		for (auto [addr, v] : fr.pokes) m.nvram()[(addr - 0x400000) & 0xffff] = v;
 		for (auto [addr, v] : fr.work_pokes) m.work_ram()[(addr - 0x500000) % m.work_ram().size()] = v;
 	}
+	if (hk == hotkey::free_cam) m.set_free_cam(!m.free_cam());
 	if (m.free_cam()) {
 		in[1] = in[2] = 0;
 		in[0] &= uint8_t(~(IN0_COIN1 | IN0_COIN2 | IN0_START1 | IN0_START2));
@@ -2790,6 +2798,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (action == hotkey::aspect) {
 					set_shape((cabinets[0]->config.aspect + 1) % N_ASPECTS);
 				}
+				if (action == hotkey::free_cam) {
+					set_free_camera(c.machine.free_cam());
+					fprintf(stderr, "two cabinets: free camera %s\n", c.machine.free_cam() ? "on" : "off");
+				}
 				c.game->before_frame();
 			}
 			if (paused) { frame_clock.reset(); if (audio) SDL_ClearAudioStream(audio.get()); break; }
@@ -3088,7 +3100,8 @@ int main(int argc, char **argv)
 	// test runs (M1_HIDDEN): a background process on macOS, so no Dock icon appears for each one
 	if (getenv("M1_HIDDEN")) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
 	game_host &game_part = the_game();
-	const bool free_cam_supported = host_game().name == "vr" || host_game().name == "swa";
+	const bool free_cam_supported = host_game().name == "vr" || host_game().name == "swa" ||
+		host_game().name == "wingwar";
 	const control_profile &controls = game_part.controls();
 	std::string dir = "build/" + std::string(host_game().name);
 	// A package can keep preassembled regions beside the program.
@@ -4679,7 +4692,7 @@ int main(int argc, char **argv)
 	freecam::path free_cam_path;
 	const bool free_cam_path_enabled = getenv("M1_TEST_FREECAM_PATH") != nullptr;
 	if (free_cam_path_enabled && !free_cam_supported) {
-		fprintf(stderr, "free-camera paths are supported only in Virtua Racing and Star Wars Arcade\n");
+		fprintf(stderr, "free-camera paths are supported only in Virtua Racing, Star Wars Arcade, and Wing War\n");
 		return 1;
 	}
 	if (const char *file = getenv("M1_TEST_FREECAM_PATH")) {
@@ -4693,7 +4706,7 @@ int main(int argc, char **argv)
 	const bool record_requested = record_dir_env != nullptr;
 	const std::string record_dir = record_dir_env ? record_dir_env : "";
 	if (record_requested && !free_cam_supported) {
-		fprintf(stderr, "recording is supported only in Virtua Racing and Star Wars Arcade\n");
+		fprintf(stderr, "recording is supported only in Virtua Racing, Star Wars Arcade, and Wing War\n");
 		return 1;
 	}
 	int64_t record_from = 0, record_to = INT64_MAX;
@@ -4791,6 +4804,10 @@ int main(int argc, char **argv)
 		case hotkey::menu: open_menu(); break;
 		case hotkey::scale: player_scale_to(cfg.scale % 4 + 1); break;
 		case hotkey::aspect: set_shape((aspect_i + 1) % N_ASPECTS); break;
+		case hotkey::free_cam:
+			menu.toast(m.free_cam() ? "Free camera on (View + R3 to toggle)" : "Free camera off");
+			if (paused) redraw_if_stopped();
+			break;
 		case hotkey::none: break;
 		}
 		if (menu.is_open()) return false;

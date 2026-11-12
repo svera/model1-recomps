@@ -27,6 +27,10 @@ Every game includes:
 - Original arcade motion or smoother 60 / 120 FPS.
 - Full-detail models and full draw distance by default, with options to restore the arcade's own
   LOD and draw distance.
+- Free camera: press **F4**, **View/Back + R3** on a controller, or choose **Display > Free camera**.
+  Use **W/A/S/D** to move,
+  **Q/E** to move vertically, the **arrow keys** to look, and **R** to reset; hold **Shift**
+  to move faster. Game controls are disabled while it's active.
 - Keyboard and gamepad support, with customizable controls.
 - PC play style without coins, or Arcade play style with the cabinet's coin settings.
 - Saved settings and the arcade's own difficulty options.
@@ -356,10 +360,6 @@ original timing. The screen's refresh rate and available performance limit the v
 The CPU renderer reproduces the arcade's 1x picture. Optional higher render scales, antialiasing, and GPU rendering
 are host-side features. On supported systems, the GPU renderer is checked against the CPU renderer and falls back
 to the CPU if it detects a difference or error.
-
-In Virtua Racing and Star Wars Arcade, **Display > Free camera** or **F4** enables free camera. Use **W/A/S/D** to move,
-**Q/E** to move vertically, the **arrow keys** to look, and **R** to reset. Holding **Shift** moves faster.
-Game controls are disabled while the free camera is active.
 
 The recompiler translates the V60 program at startup using an address-only function map and SLJIT. It reads the
 game program from the user's ROM set; ROM bytes are not shipped. The developer-only ahead-of-time path emits C++

@@ -182,6 +182,36 @@ struct model1_video_test
 		puts("Free-camera path: interpolation, event timing, and invalid input checked");
 	}
 
+	static void free_camera_hides_tile_layers()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "wingwar" };
+		model1 m(std::move(regions));
+		m.set_free_cam(true);
+		m.m_bitmap.allocate(model1::SCREEN_W, model1::SCREEN_H);
+		m.m_tile_tmp.allocate(model1::SCREEN_W, model1::SCREEN_H);
+		m.m_frame = 1;
+		constexpr uint32_t background = 0x00123456, backdrop = 0x00abcdef;
+		m.m_pens[0] = background;
+		m.m_pens[1] = backdrop;
+		for (int i = 0; i < 16; i++) m.m_tiles.char_w(16 + i, 0x1111, 0xffff);
+		m.m_tiles.tile_w(0x2001, 1, 0xffff);
+		m.m_tiles.tile_w(0x3000, 1, 0xffff);
+		m.m_tiles.tile_w(0x6800, 0x8000, 0xffff);
+		m.m_tiles.update(m.m_pens);
+		for (int layer = 0; layer < 8; layer++) {
+			const int flags = layer == 4 || layer == 6 ? segas24_tile::DRAW_OPAQUE : 0;
+			m.m_bitmap.fill(background);
+			m.draw_tiles(m.m_bitmap, m.m_bitmap.cliprect(), layer, flags);
+			bool retained = false;
+			for (int y = 0; y < model1::SCREEN_H; y++)
+				for (int x = 0; x < model1::SCREEN_W; x++)
+					retained |= m.m_bitmap.pix(y, x) == backdrop;
+			assert(retained == (layer == 4 || layer == 6));
+		}
+		puts("Free camera: opaque backdrops retained, overlay tile layers hidden");
+	}
+
 	static void cockpit_coverage()
 	{
 		constexpr uint32_t soft = 0x80ffffff, blue = 0x000000ff;
@@ -4094,6 +4124,7 @@ int main(int argc, char **argv)
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();
 	model1_video_test::free_camera_path();
+	model1_video_test::free_camera_hides_tile_layers();
 	model1_video_test::narrow_screen_backdrops();
 	if (argc > 2 && std::string(argv[2]) == "--swa-name-fall") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_name_fall(argv[1], aspect);
