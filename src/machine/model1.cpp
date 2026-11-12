@@ -540,6 +540,52 @@ void model1::set_aspect(float aspect)
 	resize_frame();
 }
 
+void model1::set_free_cam(bool on)
+{
+	m_free_cam = on;
+	free_cam_reset();
+}
+
+void model1::free_cam_reset()
+{
+	m_free_cam_pose = {};
+	m_free_cam_matrix = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
+}
+
+void model1::free_cam_move(float forward, float right, float up, float yaw, float pitch)
+{
+	constexpr float TAU = 6.283185307179586f;
+	m_free_cam_pose.yaw = std::remainder(m_free_cam_pose.yaw + yaw, TAU);
+	m_free_cam_pose.pitch = std::clamp(m_free_cam_pose.pitch + pitch, -1.55334f, 1.55334f);
+	const float sy = std::sin(m_free_cam_pose.yaw), cy = std::cos(m_free_cam_pose.yaw);
+	const float sp = std::sin(m_free_cam_pose.pitch), cp = std::cos(m_free_cam_pose.pitch);
+	m_free_cam_pose.position[0] += forward * sy * cp + right * cy;
+	m_free_cam_pose.position[1] += forward * sp + up;
+	m_free_cam_pose.position[2] += forward * cy * cp - right * sy;
+	set_free_cam_pose(m_free_cam_pose);
+}
+
+void model1::set_free_cam_pose(const free_cam_pose &pose)
+{
+	for (float p : pose.position) if (!std::isfinite(p)) return;
+	if (!std::isfinite(pose.yaw) || !std::isfinite(pose.pitch)) return;
+	m_free_cam_pose = pose;
+	m_free_cam_pose.yaw = std::remainder(m_free_cam_pose.yaw, 6.283185307179586f);
+	m_free_cam_pose.pitch = std::clamp(m_free_cam_pose.pitch, -1.55334f, 1.55334f);
+	const float cy = std::cos(m_free_cam_pose.yaw), sy = std::sin(m_free_cam_pose.yaw);
+	const float cp = std::cos(m_free_cam_pose.pitch), sp = std::sin(m_free_cam_pose.pitch);
+	m_free_cam_matrix = {
+		cy, 0, -sy,
+		-sp * sy, cp, -sp * cy,
+		cp * sy, sp, cp * cy,
+		0, 0, 0
+	};
+	for (int row = 0; row < 3; row++)
+		m_free_cam_matrix[9 + row] = -m_free_cam_matrix[row * 3] * m_free_cam_pose.position[0]
+			- m_free_cam_matrix[row * 3 + 1] * m_free_cam_pose.position[1]
+			- m_free_cam_matrix[row * 3 + 2] * m_free_cam_pose.position[2];
+}
+
 void model1::resize_frame()
 {
 	const int w = (SCREEN_W + 2 * m_ext) * m_scale, h = SCREEN_H * m_scale;
@@ -1062,12 +1108,13 @@ void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 // The 2D layers are drawn at the arcade's resolution and scaled up to the render's.
 void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags)
 {
+	if (m_free_cam && layer != 4 && layer != 6) return;
 	static const int skip = getenv("M1_TILE_SKIP") ? strtol(getenv("M1_TILE_SKIP"), nullptr, 16) : 0;
 	if (skip & (1 << layer)) return;
 	std::array<float, SCREEN_H> slide_rows;
 	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
 	const bool slide_motion = m_tile_slide_interpolating && m_tile_slide_layer == layer;
-	if (m_scale == 1 && m_ext == 0 && !smooth_slide && !slide_motion) {
+	if (m_scale == 1 && m_ext == 0 && !smooth_slide && !slide_motion && !(m_free_cam && layer == 4)) {
 		m_tiles.m_ox = 0;
 		m_tiles.draw(bitmap, cliprect, layer, 0, flags);
 		return;
@@ -1129,7 +1176,10 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 	}
 	// smooth motion: the sky between two game frames, moved by the blended scroll at full resolution
 	float sdx = 0, sdy = 0;
-	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) smooth_sky_shift(sdx, sdy);
+	if (layer == 4 && (flags & segas24_tile::DRAW_OPAQUE)) {
+		smooth_sky_shift(sdx, sdy);
+		if (m_free_cam) sdx += m_free_cam_pose.yaw * (2048.0f / 6.283185307179586f);
+	}
 	// a hi-res sky draws over every row of this layer: nothing to draw beneath it
 	if (sky && m_sky_now) { draw_sky(bitmap, sdx, sdy); return; }
 	// the tile layer itself moves no more than 24 pixels (its padding is 32: more showed its clamped

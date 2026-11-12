@@ -17,6 +17,8 @@
 #include "audio_frame_clock.h"
 #include "background_saver.h"
 #include "input_replay.h"
+#include "free_cam_path.h"
+#include "frame_recorder.h"
 #include "local_link.h"
 #include "cabinet_display.h"
 #include "../machine/linked_pair.h"
@@ -48,6 +50,7 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #endif
 #include <string>
 #include <sstream>
+#include <fstream>
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -136,10 +139,10 @@ struct pad_state
 	bool menu_was = false, touch_was = false, sticks_was = false;   // the menu's other buttons (edges)
 	int coin_frames = 0, start_delay = -1, start_frames = 0;
 	bool key_start_was = false, key_coin_was = false, pad_coin_was = false, key_menu_was = false;
-	bool lb_was = false, rb_was = false;
+	bool lb_was = false, rb_was = false, right_stick_was = false;
 };
 
-enum class hotkey { none, menu, scale, aspect };
+enum class hotkey { none, menu, scale, aspect, free_cam };
 
 // The game's test menu, from our menu: the test button pressed for a moment, then, while the test
 // menu is up, Down is the service button (move) and Start the test button (select). The game's mode
@@ -259,12 +262,18 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -dead) press(C_LEFT);
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > dead) press(C_RIGHT);
 			if (back) {
-				// View held: hotkeys on Start, LB and RB, not moves
+				// View held: hotkeys on Start, LB, RB and R3, not moves
 				const bool pstart = btn(SDL_GAMEPAD_BUTTON_START);
 				const bool lb = btn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), rb = btn(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+				const bool right_stick = btn(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
 				if (pstart && !st.start_was) { hk = hotkey::menu; st.back_combo = true; }
 				if (lb && !st.lb_was) { hk = hotkey::scale; st.back_combo = true; }
 				if (rb && !st.rb_was) { hk = hotkey::aspect; st.back_combo = true; }
+				if (right_stick && (!st.right_stick_was || !st.back_was) &&
+					(m.title().name == "vr" || m.title().name == "swa" || m.title().name == "wingwar")) {
+					hk = hotkey::free_cam;
+					st.back_combo = true;
+				}
 				st.lb_was = lb; st.rb_was = rb;
 			} else {
 				for (int a : prof.pad_actions)
@@ -272,6 +281,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 				if (start && !st.start_was) press_start();
 				start_held |= start;
 			}
+			st.right_stick_was = btn(SDL_GAMEPAD_BUTTON_RIGHT_STICK);
 			// View tapped on its own: whichever of Menu and Coin it's set as
 			if (!back && st.back_was && !st.back_combo) {
 				if (menu_code == SDL_GAMEPAD_BUTTON_BACK) hk = hotkey::menu;
@@ -307,6 +317,11 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 		for (auto [addr, v] : fr.pokes) m.nvram()[(addr - 0x400000) & 0xffff] = v;
 		for (auto [addr, v] : fr.work_pokes) m.work_ram()[(addr - 0x500000) % m.work_ram().size()] = v;
 	}
+	if (hk == hotkey::free_cam) m.set_free_cam(!m.free_cam());
+	if (m.free_cam()) {
+		in[1] = in[2] = 0;
+		in[0] &= uint8_t(~(IN0_COIN1 | IN0_COIN2 | IN0_START1 | IN0_START2));
+	}
 	for (int i = 0; i < 3; i++)
 		m.m_inputs[i] = uint8_t(~in[i]);
 	if (m.real_ioboard()) {
@@ -327,20 +342,22 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 			// the host's 0-255 (io_profile::analog_port maps it onto the channel's range)
 			const uint8_t neutral = profile.analog_host(channel, profile.analog_neutral[channel]);
 			const game::host_axis axis = ctl[p].analog_axis[channel];
-			uint8_t value = axis == game::host_axis::none || !pad
+			uint8_t value = m.free_cam() || axis == game::host_axis::none || !pad
 				? neutral
 				: player_controls::analog_value(player_controls::axis_value(pad, axis),
 												profile.analog_kinds[channel], neutral);
-			for (const auto &k : prof.analog_keys) {
-				if (k.channel != int(channel)) continue;
-				auto held = [&](int action) {
-					if (action < 0) return false;
-					if (key(ctl[p].key[action])) return true;
-					const SDL_GamepadButton b = dpad_button(action);
-					return k.dpad && pad && b != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(pad, b);
-				};
-				value = game_part.analog_key_input(m, int(channel), held(k.low), held(k.high), value,
-					ctl[p].standard_steering);
+			if (!m.free_cam()) {
+				for (const auto &k : prof.analog_keys) {
+					if (k.channel != int(channel)) continue;
+					auto held = [&](int action) {
+						if (action < 0) return false;
+						if (key(ctl[p].key[action])) return true;
+						const SDL_GamepadButton b = dpad_button(action);
+						return k.dpad && pad && b != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(pad, b);
+					};
+					value = game_part.analog_key_input(m, int(channel), held(k.low), held(k.high), value,
+						ctl[p].standard_steering);
+				}
 			}
 			m.set_analog_input(int(channel), profile.analog_port(channel, value));
 		}
@@ -1573,6 +1590,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		next_picture = {};
 		return true;
 	};
+	auto set_free_camera = [&](bool enabled) {
+		for (int p = 0; p < instance_count(); p++)
+			if (cabinets[p]) cabinets[p]->machine.set_free_cam(enabled);
+		next_picture = {};
+	};
 	auto fullscreen_key = [&](const SDL_KeyboardEvent &key) {
 		if (key.scancode == SDL_SCANCODE_F11 ||
 			(key.scancode == SDL_SCANCODE_RETURN && (key.mod & SDL_KMOD_ALT))) return true;
@@ -1786,6 +1808,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				cabinets[0]->config.live_monitor = wrap_choice(cabinets[0]->config.live_monitor + direction, 3);
 				cabinets[0]->settings_dirty = true;
 				monitor_change_requested = true;
+			}});
+		page.items.push_back({"Free camera", "Fly around the picture without changing the game's state or controls. (F4)",
+			[&] { return cabinets[0]->machine.free_cam() ? "On" : "Off"; },
+			[&](int) {
+				set_free_camera(!cabinets[0]->machine.free_cam());
+				join_overlay.refresh();
 			}});
 		page.items.push_back(back_item());
 		return page;
@@ -2109,6 +2137,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (join_overlay.ready() && !join_overlay.is_open()) join_overlay.open(main_page());
 	};
 	uint64_t last = SDL_GetTicksNS(), next_save = last + 60000000000ull;
+	uint64_t free_cam_last = last;
 	uint64_t fps_started = last;
 	int fps_presents = 0;
 	audio_frame_clock frame_clock(FRAME_HZ);
@@ -2340,11 +2369,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (pass == passes) {
 					SDL_Event event{};
 					if (!strcmp(name, "status")) {
-						fprintf(stderr, "two cabinets: status frame=%d cabinets=%d mode=%u phase=%02x join=%d role=%u fullscreen=%d arcade=%d icon=%d\n",
+						fprintf(stderr, "two cabinets: status frame=%d cabinets=%d mode=%u phase=%02x join=%d role=%u fullscreen=%d arcade=%d icon=%d free_camera=%d\n",
 							frames, cabinet_count, cabinets[0]->machine.game_mode(),
 							cabinets[0]->machine.work_ram()[0x1138], join_pending, cabinets[0]->machine.read8(0x40dc8c),
 							bool(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN),
-							!pc_mode, cabinets[0]->display->icon_set);
+							!pc_mode, cabinets[0]->display->icon_set, cabinets[0]->machine.free_cam());
 						for (int p = 0; p < cabinet_count; p++)
 							fprintf(stderr, "two cabinets: picture player=%d aspect=%.6f picture_shape=%d\n",
 								p + 1, cabinets[p]->machine.aspect(), cabinets[p]->config.aspect);
@@ -2556,6 +2585,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					open_menu();
 					continue;
 				}
+				if (event.key.scancode == SDL_SCANCODE_F4 && !join_overlay.is_open()) {
+					const bool enabled = !cabinets[0]->machine.free_cam();
+					set_free_camera(enabled);
+					fprintf(stderr, "two cabinets: free camera %s\n", enabled ? "on" : "off");
+					if (join_overlay.ready()) join_overlay.toast(enabled ? "Free camera on" : "Free camera off");
+					continue;
+				}
 				if (on_demand && event.key.scancode == bindings[1].key[C_START] && !request_join()) return 1;
 				for (int p = 0; p < cabinet_count; p++)
 					if (event.key.scancode == bindings[p].key[C_START]) {
@@ -2676,6 +2712,23 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (join_overlay.is_open()) paused = true;
 		if (!running) break;
+		const uint64_t camera_now = SDL_GetTicksNS();
+		const float camera_dt = float(std::clamp(double(camera_now - free_cam_last) / 1e9, 0.0, 0.1));
+		free_cam_last = camera_now;
+		if (cabinets[0]->machine.free_cam() && !join_overlay.is_open()) {
+			const bool *keys = SDL_GetKeyboardState(nullptr);
+			const float speed = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] ? 4.0f : 1.0f;
+			const float forward = float(int(keys[SDL_SCANCODE_W]) - int(keys[SDL_SCANCODE_S])) * 35.0f * speed * camera_dt;
+			const float right = float(int(keys[SDL_SCANCODE_D]) - int(keys[SDL_SCANCODE_A])) * 35.0f * speed * camera_dt;
+			const float up = float(int(keys[SDL_SCANCODE_E]) - int(keys[SDL_SCANCODE_Q])) * 35.0f * speed * camera_dt;
+			const float yaw = float(int(keys[SDL_SCANCODE_RIGHT]) - int(keys[SDL_SCANCODE_LEFT])) * 1.5f * camera_dt;
+			const float pitch = float(int(keys[SDL_SCANCODE_UP]) - int(keys[SDL_SCANCODE_DOWN])) * 1.5f * camera_dt;
+			if (forward || right || up || yaw || pitch) {
+				for (int p = 0; p < instance_count(); p++)
+					if (cabinets[p]) cabinets[p]->machine.free_cam_move(forward, right, up, yaw, pitch);
+				next_picture = {};
+			}
+		}
 		if (shape_restart && !join_overlay.is_open()) {
 			shape_restart = false;
 			if (!reset_both(false)) return 1;
@@ -2744,6 +2797,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				if (action == hotkey::aspect) {
 					set_shape((cabinets[0]->config.aspect + 1) % N_ASPECTS);
+				}
+				if (action == hotkey::free_cam) {
+					set_free_camera(c.machine.free_cam());
+					fprintf(stderr, "two cabinets: free camera %s\n", c.machine.free_cam() ? "on" : "off");
 				}
 				c.game->before_frame();
 			}
@@ -3043,6 +3100,8 @@ int main(int argc, char **argv)
 	// test runs (M1_HIDDEN): a background process on macOS, so no Dock icon appears for each one
 	if (getenv("M1_HIDDEN")) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
 	game_host &game_part = the_game();
+	const bool free_cam_supported = host_game().name == "vr" || host_game().name == "swa" ||
+		host_game().name == "wingwar";
 	const control_profile &controls = game_part.controls();
 	std::string dir = "build/" + std::string(host_game().name);
 	// A package can keep preassembled regions beside the program.
@@ -4323,6 +4382,17 @@ int main(int argc, char **argv)
 		p.items.push_back({ "Show FPS", "Shows the frame rate in the top right corner.",
 			[&] { return on_off(cfg.show_fps); },
 			[&](int) { cfg.show_fps = !cfg.show_fps; cfg_dirty = true; if (!cfg.show_fps) menu.set_fps(""); } });
+		if (free_cam_supported)
+			p.items.push_back({ "Free camera", "Fly around the picture without changing the game's state or controls. (F4)",
+				[&] { return on_off(m.free_cam()); },
+				[&](int) {
+					m.set_free_cam(!m.free_cam());
+					m.set_stopped(true);
+					m.redraw();
+					m.set_stopped(false);
+					still_dirty = true;
+					menu.refresh();
+				} });
 		p.items.push_back({ "Fullscreen", "Play fullscreen or in a window. (F11, F or Alt+Enter)",
 			[&] { return on_off(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN); },
 			[&](int) { set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)); } });
@@ -4414,7 +4484,7 @@ int main(int argc, char **argv)
 							const SDL_Scancode k = e.key.scancode == SDL_SCANCODE_BACKSPACE || e.key.scancode == SDL_SCANCODE_DELETE ? SDL_SCANCODE_UNKNOWN : e.key.scancode;
 							// the game's own keys (pause, reset, the menu's shortcuts, the cabinet's coin and
 							// test buttons) stay theirs: wait for another key
-							static const SDL_Scancode RESERVED[] = { SDL_SCANCODE_P, SDL_SCANCODE_TAB, SDL_SCANCODE_F3,
+							static const SDL_Scancode RESERVED[] = { SDL_SCANCODE_P, SDL_SCANCODE_TAB, SDL_SCANCODE_F3, SDL_SCANCODE_F4,
 								SDL_SCANCODE_F5, SDL_SCANCODE_F6, SDL_SCANCODE_F9, SDL_SCANCODE_F11, SDL_SCANCODE_F12 };
 							for (SDL_Scancode r : RESERVED) if (k == r) return false;
 							for (const auto &sk : SYS_KEYS) if (k == sk.key) return false;
@@ -4618,6 +4688,63 @@ int main(int argc, char **argv)
 	// presses those keys 6 frames apart from frame 30
 	const int quit_after = getenv("M1_QUIT_AFTER") ? atoi(getenv("M1_QUIT_AFTER")) : -1;
 	int64_t frames_run = 0;            // passes of the loop (test hooks)
+	int64_t free_cam_paused_ticks = 0;
+	freecam::path free_cam_path;
+	const bool free_cam_path_enabled = getenv("M1_TEST_FREECAM_PATH") != nullptr;
+	if (free_cam_path_enabled && !free_cam_supported) {
+		fprintf(stderr, "free-camera paths are supported only in Virtua Racing, Star Wars Arcade, and Wing War\n");
+		return 1;
+	}
+	if (const char *file = getenv("M1_TEST_FREECAM_PATH")) {
+		std::ifstream input(file);
+		if (!input || !free_cam_path.load(input)) {
+			fprintf(stderr, "free-camera path: %s\n", input ? free_cam_path.last_error().c_str() : "can't open path file");
+			return 1;
+		}
+	}
+	const char *record_dir_env = getenv("M1_RECORD");
+	const bool record_requested = record_dir_env != nullptr;
+	const std::string record_dir = record_dir_env ? record_dir_env : "";
+	if (record_requested && !free_cam_supported) {
+		fprintf(stderr, "recording is supported only in Virtua Racing, Star Wars Arcade, and Wing War\n");
+		return 1;
+	}
+	int64_t record_from = 0, record_to = INT64_MAX;
+	auto read_record_frame = [&](const char *name, int64_t &value) {
+		const char *text = getenv(name);
+		if (!text) return true;
+		char *end = nullptr;
+		errno = 0;
+		const long long parsed = strtoll(text, &end, 10);
+		if (errno || end == text || *end || parsed < 0) {
+			fprintf(stderr, "record: invalid %s value '%s'\n", name, text);
+			return false;
+		}
+		value = parsed;
+		return true;
+	};
+	if (record_requested && (record_dir.empty() ||
+		!read_record_frame("M1_RECORD_FROM", record_from) ||
+		!read_record_frame("M1_RECORD_TO", record_to) || record_to < record_from)) {
+		fprintf(stderr, "record: expected M1_RECORD=directory and a nonnegative frame range with TO >= FROM\n");
+		return 1;
+	}
+	int record_fps = 60;
+	if (const char *text = getenv("M1_RECORD_HZ")) {
+		char *end = nullptr;
+		errno = 0;
+		const long parsed = strtol(text, &end, 10);
+		if (errno || end == text || *end) {
+			fprintf(stderr, "record: invalid M1_RECORD_HZ value '%s'\n", text);
+			return 1;
+		}
+		record_fps = int(std::clamp(parsed, 1l, 240l));
+	}
+	frame_recorder recorder;
+	bool record_started = false, record_failed = false;
+	int64_t record_game_start = 0;
+	uint64_t recorded_frames = 0, recorded_stopped_frames = 0, recorded_silent_samples = 0;
+	double record_pause_fraction = 0;
 	const bool hidden = getenv("M1_HIDDEN") != nullptr;
 	std::vector<std::string> test_keys;
 	if (const char *k = getenv("M1_MENU_KEYS"))
@@ -4677,6 +4804,10 @@ int main(int argc, char **argv)
 		case hotkey::menu: open_menu(); break;
 		case hotkey::scale: player_scale_to(cfg.scale % 4 + 1); break;
 		case hotkey::aspect: set_shape((aspect_i + 1) % N_ASPECTS); break;
+		case hotkey::free_cam:
+			menu.toast(m.free_cam() ? "Free camera on (View + R3 to toggle)" : "Free camera off");
+			if (paused) redraw_if_stopped();
+			break;
 		case hotkey::none: break;
 		}
 		if (menu.is_open()) return false;
@@ -4732,6 +4863,12 @@ int main(int argc, char **argv)
 					float sa; int older, newer;
 					m.smooth_state(sa, older, newer);
 					if (older < 0 || uint64_t(older) + 1 < hold_from) m.smooth_cut();
+				}
+				if (recorder.active() && !recorder.write_audio(m.m_audio_out)) {
+					fprintf(stderr, "record: %s\n", recorder.error().c_str());
+					record_failed = true;
+					running = false;
+					recorder.finish();
 				}
 				if (audio && !ff) {
 					if (SDL_GetAudioStreamQueued(audio.get()) == 0) perf.starved++;   // the sound ran dry: a crackle
@@ -4937,6 +5074,15 @@ int main(int argc, char **argv)
 			}
 			else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
 				if (e.key.scancode == SDL_SCANCODE_ESCAPE) open_menu();
+				else if (e.key.scancode == SDL_SCANCODE_F4 && free_cam_supported && !menu.is_open()) {
+					m.set_free_cam(!m.free_cam());
+					menu.toast(m.free_cam() ? "Free camera on (WASD, Q/E, arrow keys; R resets)" : "Free camera off");
+					if (paused) redraw_if_stopped();
+				}
+				else if (e.key.scancode == SDL_SCANCODE_R && m.free_cam()) {
+					m.free_cam_reset();
+					if (paused) redraw_if_stopped();
+				}
 				else if (e.key.scancode == SDL_SCANCODE_P) {
 					paused = !paused;
 					if (replay_mode) SDL_SetWindowTitle(win, paused ? (std::string(host_title()) + ": manual play paused - P to play").c_str() : host_title());
@@ -4985,6 +5131,73 @@ int main(int argc, char **argv)
 			pstate[0].back_combo = pstate[1].back_combo = true;
 			pstate[0].start_was = pstate[1].start_was = true;
 			for (pad_state &s : pstate) s.menu_was = s.touch_was = s.sticks_was = true;
+		}
+		if (paused || menu.is_open()) free_cam_paused_ticks++;
+		const double free_cam_time = double(game_run + free_cam_paused_ticks);
+		free_cam_path.events_through(free_cam_time, [&](const std::string &action) {
+			if (action == "on") m.set_free_cam(true);
+			else if (action == "off") m.set_free_cam(false);
+			else if (action == "pause") paused = true;
+			else if (action == "unpause") paused = false;
+			else if (action == "quit") running = false;
+		});
+		if (free_cam_path_enabled) {
+			freecam::pose pose;
+			if (free_cam_path.at(free_cam_time, pose)) {
+				model1::free_cam_pose machine_pose;
+				std::copy(std::begin(pose.position), std::end(pose.position), std::begin(machine_pose.position));
+				machine_pose.yaw = pose.yaw;
+				machine_pose.pitch = pose.pitch;
+				m.set_free_cam_pose(machine_pose);
+			}
+		}
+		static uint64_t free_cam_last = SDL_GetTicksNS();
+		const uint64_t free_cam_now = SDL_GetTicksNS();
+		const float free_cam_dt = float(std::clamp(double(free_cam_now - free_cam_last) / 1e9, 0.0, 0.1));
+		free_cam_last = free_cam_now;
+		if (m.free_cam() && !free_cam_path_enabled && !menu.is_open()) {
+			const bool *keys = SDL_GetKeyboardState(nullptr);
+			const float speed = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT] ? 4.0f : 1.0f;
+			const float forward = float(int(keys[SDL_SCANCODE_W]) - int(keys[SDL_SCANCODE_S])) * 35.0f * speed * free_cam_dt;
+			const float right = float(int(keys[SDL_SCANCODE_D]) - int(keys[SDL_SCANCODE_A])) * 35.0f * speed * free_cam_dt;
+			const float up = float(int(keys[SDL_SCANCODE_E]) - int(keys[SDL_SCANCODE_Q])) * 35.0f * speed * free_cam_dt;
+			const float yaw = float(int(keys[SDL_SCANCODE_RIGHT]) - int(keys[SDL_SCANCODE_LEFT])) * 1.5f * free_cam_dt;
+			const float pitch = float(int(keys[SDL_SCANCODE_UP]) - int(keys[SDL_SCANCODE_DOWN])) * 1.5f * free_cam_dt;
+			if (forward || right || up || yaw || pitch) {
+				m.free_cam_move(forward, right, up, yaw, pitch);
+				if (paused) redraw_if_stopped();
+			}
+		}
+		uint64_t record_frames_due = 0;
+		if (record_requested && !record_started && !record_failed && game_run >= record_from) {
+			int width = 0, height = 0;
+			if (!SDL_GetRenderOutputSize(ren, &width, &height) || !recorder.start(record_dir, width, height, record_fps)) {
+				fprintf(stderr, "record: %s\n", recorder.error().empty() ? SDL_GetError() : recorder.error().c_str());
+				record_failed = true;
+				running = false;
+			} else {
+				record_started = true;
+				record_game_start = game_run;
+				record_pause_fraction = 0;
+				fprintf(stderr, "record: starting at game frame %lld, %dx%d at %d FPS in %s\n",
+					(long long)game_run, width & ~1, height & ~1, record_fps, record_dir.c_str());
+			}
+		}
+		if (recorder.active()) {
+			if (paused || menu.is_open()) {
+				record_pause_fraction += double(free_cam_dt) * record_fps;
+				record_frames_due = uint64_t(record_pause_fraction);
+				record_pause_fraction -= record_frames_due;
+			} else {
+				const double now = double(game_run - record_game_start) +
+					std::clamp(frame_clock - double(game_run), 0.0, 1.0);
+				const uint64_t wanted = 1 + uint64_t(std::max(0.0, now) * record_fps / FRAME_HZ);
+				if (wanted > recorded_frames) record_frames_due = wanted - recorded_frames;
+			}
+			if (game_run > record_to) {
+				record_frames_due = 0;
+				running = false;
+			}
 		}
 		if (paused || menu.is_open()) { restart_clock(); picture_budget = 1; }   // (no catching up afterwards)
 		if (wake_clock.update()) {
@@ -5275,6 +5488,7 @@ int main(int argc, char **argv)
 			show_frame = stopped && still_dirty;
 			if (show_frame) still_dirty = false;
 		}
+		if (recorder.active()) show_frame = true;
 		SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
 		SDL_RenderClear(ren);
 		// A game can suppress a transition without hiding the host menu.
@@ -5287,6 +5501,27 @@ int main(int argc, char **argv)
 		crt_on = cfg.crt_colours || cfg.brightness != 100 || cfg.gamma != 100;
 		draw_filter();
 		menu.render();
+		for (uint64_t i = 0; i < record_frames_due && recorder.active(); i++) {
+			if (!recorder.write_frame(ren)) {
+				fprintf(stderr, "record: %s\n", recorder.error().c_str());
+				record_failed = true;
+				running = false;
+				recorder.finish();
+				break;
+			}
+			recorded_frames++;
+			if (paused || menu.is_open()) recorded_stopped_frames++;
+		}
+		if (recorder.active() && (paused || menu.is_open())) {
+			const uint64_t silence_to = recorded_stopped_frames * 44100 / record_fps;
+			if (silence_to > recorded_silent_samples &&
+				!recorder.write_silence(silence_to - recorded_silent_samples)) {
+				fprintf(stderr, "record: %s\n", recorder.error().c_str());
+				record_failed = true;
+				running = false;
+				recorder.finish();
+			} else recorded_silent_samples = silence_to;
+		}
 		static const int shot_at = getenv("M1_SHOT_AT") ? atoi(getenv("M1_SHOT_AT")) : -1;   // testing: the window at that pass too
 		if ((quit_after >= 0 && frames_run == quit_after) || (shot_at >= 0 && frames_run == shot_at)) {
 			int lw, lh;
@@ -5413,6 +5648,15 @@ int main(int argc, char **argv)
 
 	}
 
+	if (recorder.active()) {
+		if (!recorder.finish()) {
+			fprintf(stderr, "record: %s\n", recorder.error().c_str());
+			record_failed = true;
+		} else {
+			fprintf(stderr, "record: finished %llu video frames in %s\n",
+				(unsigned long long)recorded_frames, record_dir.c_str());
+		}
+	}
 	if (g3) fprintf(stderr, "the 3D at the end: %llu pictures drawn by the GPU, %llu checked against the CPU's, %llu differ; %llu drawn by the CPU instead, %llu GPU errors\n",
 					(unsigned long long)m.m_g3.pictures, (unsigned long long)m.m_g3.checked, (unsigned long long)m.m_g3.differ,
 					(unsigned long long)m.m_g3.cpu_fallback, (unsigned long long)m.m_g3.failed);
@@ -5438,5 +5682,5 @@ int main(int argc, char **argv)
 		save_settings();
 	}
 	SDL_Quit();
-	return 0;
+	return record_failed ? 1 : 0;
 }
