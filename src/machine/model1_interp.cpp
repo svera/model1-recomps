@@ -40,13 +40,14 @@ glm::mat4 camera_matrix(const float *m)
 	return r;
 }
 
-// A camera that turns over 25 degrees or jumps over 8 units in a game frame (a car's move is about 3)
-bool camera_cut(const glm::mat4 &from, const glm::mat4 &to)
+// A camera that turns over 25 degrees or jumps over max_jump units in a game frame
+// (video_traits::camera_cut_distance: 8 by default, a car's move being about 3)
+bool camera_cut(const glm::mat4 &from, const glm::mat4 &to, float max_jump)
 {
 	const glm::mat3 turn = glm::mat3(to) * glm::transpose(glm::mat3(from));
 	const float angle = std::acos(std::clamp((turn[0][0] + turn[1][1] + turn[2][2] - 1) / 2, -1.0f, 1.0f));
 	const float jump = glm::length(glm::vec3(glm::affineInverse(to)[3]) - glm::vec3(glm::affineInverse(from)[3]));
-	return angle > glm::radians(25.0f) || jump > 8;
+	return angle > glm::radians(25.0f) || jump > max_jump;
 }
 
 // a turn as a rotation vector (the shorter way round) and back
@@ -95,17 +96,25 @@ void model1::list_written(int buffer, uint32_t word)
 	}
 	if ((!m_smooth && !m_gameplay.object) || !m_video->records) return;
 	const game::draw_records &r = *m_video->records;
+	if (m_smooth && m_gameplay.draw_camera) {
+		const auto camera = m_gameplay.draw_camera(buffer);
+		m_list_has_camera[buffer] = camera.has_value();
+		if (camera) m_list_camera[buffer] = *camera;
+	}
 	std::vector<uint32_t> &owners = m_list_owner[buffer];
 	if (owners.empty()) owners.assign(0x8000, 0);
 	uint32_t owner = 0;
 	for (const game::matrix_writer &w : r.writers)
 		if (m_maincpu.pc() == w.pc) {
 			if (w.caller && read32(m_maincpu.reg(31)) != w.caller) continue;
-			const uint32_t rec = m_maincpu.reg(w.record_register);
+			uint32_t rec = m_maincpu.reg(w.record_register) + w.record_offset;
+			if (w.indirect) rec = read32(rec);
 			owner = rec >= r.records_from && rec < r.records_to ? rec : 1;
 			if (!m_smooth) break;
-			memcpy(m_list_camera[buffer].data(), &m_ram_b[r.camera - 0x500000], sizeof m_list_camera[buffer]);
-			m_list_has_camera[buffer] = true;
+			if (!m_gameplay.draw_camera) {
+				memcpy(m_list_camera[buffer].data(), &m_ram_b[r.camera - 0x500000], sizeof m_list_camera[buffer]);
+				m_list_has_camera[buffer] = true;
+			}
 			if (m_list_visibility_frame[buffer] != m_frame) {
 				m_list_visibility[buffer].clear();
 				m_list_visibility_frame[buffer] = m_frame;
@@ -212,7 +221,7 @@ void model1::index_objects(logic_frame &lf)
 void model1::retain_culled_records(logic_frame &frame, const logic_frame &previous)
 {
 	if (!m_gameplay.record_visibility || !frame.has_camera || !previous.has_camera ||
-		frame.frame - previous.frame != 2 || camera_cut(camera_matrix(previous.camera.data()), camera_matrix(frame.camera.data())))
+		frame.frame - previous.frame != 2 || camera_cut(camera_matrix(previous.camera.data()), camera_matrix(frame.camera.data()), m_video->camera_cut_distance))
 		return;
 	const glm::mat4 old_inverse = glm::affineInverse(camera_matrix(previous.camera.data()));
 	const glm::mat4 camera = camera_matrix(frame.camera.data());
@@ -928,9 +937,17 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 			}
 			// (a proper turn: places in a plane, the Death Star's trench, fit its mirror image as
 			// well, and the iteration came out at that: the cells' axes turned inside out by it,
-			// their faces culled, the trench gone, black, for a picture)
+			// their faces culled, the trench gone, black, for a picture. Nor one the iteration hadn't
+			// settled on: Wing War's "Take control!" floor, 256 tiles in one sloping plane with a
+			// plane and controls by them, left it a shear, a row 1.73 long, that fit the tiles'
+			// places as well as the move did; each tile's matrix taken back by it lay 150 units off,
+			// the floor jumping that far on every few lists and sliding back.)
 			const double det = Mn[0][0] * (Mn[1][1] * Mn[2][2] - Mn[1][2] * Mn[2][1]) - Mn[0][1] * (Mn[1][0] * Mn[2][2] - Mn[1][2] * Mn[2][0]) + Mn[0][2] * (Mn[1][0] * Mn[2][1] - Mn[1][1] * Mn[2][0]);
-			if (det > 0) {
+			bool orthonormal = true;
+			for (int r = 0; r < 3 && orthonormal; r++)
+				for (int c = 0; c < 3; c++)
+					orthonormal &= std::fabs(Mn[0][r] * Mn[0][c] + Mn[1][r] * Mn[1][c] + Mn[2][r] * Mn[2][c] - (r == c ? 1.0 : 0.0)) <= 1e-3;
+			if (det > 0 && orthonormal) {
 				memcpy(R, Mn, sizeof R);
 				for (int r = 0; r < 3; r++) T[r] = cq[r] - (R[r][0] * cp[0] + R[r][1] * cp[1] + R[r][2] * cp[2]);
 				settle();
@@ -1269,7 +1286,31 @@ int model1::repair_by_camera(const logic_frame &a, const logic_frame &b, std::ve
 				m_ship[k] = 1;
 				continue;
 			}
-			if (pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.02f) { by_camera(k); continue; }
+			if (pair[k] >= 0 && m_cam_res[k] >= 0 && m_cam_res[k] <= 0.02f) {
+				by_camera(k);
+				// (the fit is by places: a part turning about its own, Wing War's planes spinning on
+				// the match screen, sat on the move, and blended from the camera's older pose of it
+				// its own turn was lost, the plane held a list and then jumped 22 degrees. Turned off
+				// the camera's move by its own (over 5 degrees), it is blended by its own pair.)
+				const float *po = a.slots[pair[k]].mat, *pc = m_cam_older[k].data();
+				bool own = false;
+				for (int c = 0; c < 9 && !own; c += 3) {
+					const float lo = po[c] * po[c] + po[c + 1] * po[c + 1] + po[c + 2] * po[c + 2];
+					const float lc = pc[c] * pc[c] + pc[c + 1] * pc[c + 1] + pc[c + 2] * pc[c + 2];
+					const float dot = po[c] * pc[c] + po[c + 1] * pc[c + 1] + po[c + 2] * pc[c + 2];
+					own = lo > 1e-12f && lc > 1e-12f && dot < 0.996f * std::sqrt(lo * lc);
+				}
+				if (own) m_cam_res[k] = -1;
+				// (nor a part the game held in place, the match screen's letters, while the
+				// background panned: carried by the pan's move, a list's 0.15 units at 55 deep,
+				// they drifted with it and snapped back at each list, shaking.)
+				const float *pb = b.slots[k].mat;
+				const float depth = std::max(std::sqrt(pb[9] * pb[9] + pb[10] * pb[10] + pb[11] * pb[11]), 1.0f);
+				const float stay = std::hypot(pb[9] - po[9], pb[10] - po[10], pb[11] - po[11]);
+				const float carried = std::hypot(pc[9] - po[9], pc[10] - po[10], pc[11] - po[11]);
+				if (stay <= 1e-4f * depth && carried > 1e-3f * depth) m_cam_res[k] = -1;
+				continue;
+			}
 			const float *pb = b.slots[k].mat;
 			const pt q{ pb[9], pb[10], pb[11] };
 			int best = -1;
@@ -1856,9 +1897,16 @@ void model1::smooth_turn(logic_frame &lf, const logic_frame &before)
 	glm::quat est = q;
 	glm::vec3 rate(0);
 	lf.turn_age = 1;
-	if (before.has_camera && before.turn_age > 0 && !camera_cut(camera_matrix(before.camera.data()), cam)) {
+	const glm::mat4 before_cam = camera_matrix(before.camera.data());
+	const glm::vec3 step = before.has_camera ? turn_vector(q * glm::inverse(glm::quat_cast(glm::mat3(before_cam)))) : glm::vec3(0);
+	const glm::vec3 last_step(before.turn_step[0], before.turn_step[1], before.turn_step[2]);
+	// (camera_swings) A fast swing's steps over the cut's limit, the step before it at least half as
+	// far and within 30 degrees of its axis; the camera's own move still under the limit
+	const bool swinging = m_video->camera_swings && before.has_camera && before.turn_age == 2 && glm::length(last_step) * 2 >= glm::length(step)
+		&& glm::dot(step, last_step) >= std::cos(glm::radians(30.0f)) * glm::length(step) * glm::length(last_step)
+		&& glm::length(glm::vec3(glm::affineInverse(cam)[3]) - glm::vec3(glm::affineInverse(before_cam)[3])) <= m_video->camera_cut_distance;
+	if (before.has_camera && before.turn_age > 0 && (swinging || !camera_cut(before_cam, cam, m_video->camera_cut_distance))) {
 		lf.turn_age = 2;
-		const glm::vec3 step = turn_vector(q * glm::inverse(glm::quat_cast(glm::mat3(camera_matrix(before.camera.data())))));
 		lf.turn_step = { step.x, step.y, step.z };
 		if (before.turn_age == 1)                    // the first move after a cut: its speed as it is
 			rate = step;
@@ -1866,7 +1914,6 @@ void model1::smooth_turn(logic_frame &lf, const logic_frame &before)
 			constexpr float ALPHA = 0.4f, BETA = 0.1f, LIMIT = glm::radians(1.0f);
 			constexpr int TURN_HOLD = 8;
 			const glm::vec3 last_rate(before.turn_rate[0], before.turn_rate[1], before.turn_rate[2]);
-			const glm::vec3 last_step(before.turn_step[0], before.turn_step[1], before.turn_step[2]);
 			// The camera swinging back over a degree from a turn of its own (swaying about a car it keeps
 			// in place, after the bridge in the attract drive): its own turn, for a while after the last
 			// swing. Evened out, the car swung on screen, also as the swaying slowed.
@@ -1960,7 +2007,9 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 	const glm::mat3 turn = glm::mat3(cb) * glm::transpose(glm::mat3(ca));
 	const float angle = std::acos(std::clamp((turn[0][0] + turn[1][1] + turn[2][2] - 1) / 2, -1.0f, 1.0f));
 	const float jump = glm::length(glm::vec3(ib[3]) - glm::vec3(glm::affineInverse(ca)[3]));
-	m_blend_cut = camera_cut(ca, cb);
+	// (camera_swings: a swing smooth_turn carried on from a, b's list before it, isn't one)
+	m_blend_cut = camera_cut(ca, cb, m_video->camera_cut_distance) && !(m_video->camera_swings && b.turn_age == 2 &&
+		((&a == &m_logic[0] && &b == &m_logic[1]) || (&a == &m_logic_prev && &b == &m_logic[0])));
 	auto first = [](const slot &sl) { return sl.polys.empty() ? 0u : sl.polys[0]; };
 	const std::vector<uint32_t> &overlays = m_video->foreground_objects;
 	auto overlay = [&](const slot &sl) { return sl.screen_space ||

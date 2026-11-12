@@ -29,6 +29,7 @@ struct context::state
 	const rec_entry *table = rec_table;
 	size_t table_size = rec_table_size;
 	std::shared_ptr<const void> code;
+	std::function<bool(uint32_t)> resolve;
 	size_t fallbacks = 0;
 	uint32_t first_fallback = 0xffffffff;
 };
@@ -110,11 +111,13 @@ static void interpret_until_return(uint32_t addr)
 	}
 }
 
-void use_table(const rec_entry *t, size_t n, std::shared_ptr<const void> owner)
+void use_table(const rec_entry *t, size_t n, std::shared_ptr<const void> owner,
+	std::function<bool(uint32_t)> resolve)
 {
 	active->table = t;
 	active->table_size = n;
 	active->code = std::move(owner);
+	active->resolve = std::move(resolve);
 }
 
 size_t fallback_count()
@@ -140,7 +143,7 @@ void call(uint32_t addr)
 		[](const rec_entry &a, uint32_t v) { return a.addr < v; });
 	if (e != table + active->table_size && e->addr == addr)
 		e->fn(*cpu);
-	else {
+	else if (!active->resolve || !active->resolve(addr)) {
 		if (!active->fallbacks) active->first_fallback = addr;
 		active->fallbacks++;
 		interpret_until_return(addr);

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <string_view>
 #include <memory>
+#include <functional>
 
 struct rec_entry { uint32_t addr; void (*fn)(v60_device &); };
 extern const rec_entry rec_table[];
@@ -16,7 +17,9 @@ extern int cycles;
 
 void after_insn_slow();
 void call(uint32_t addr);               // runs the code at addr until it returns
-void use_table(const rec_entry *t, size_t n, std::shared_ptr<const void> owner = {});   // the recompiled functions (the C++ build's by default)
+// resolve runs mutable code not in the fixed table, returning false for an unhandled address.
+void use_table(const rec_entry *t, size_t n, std::shared_ptr<const void> owner = {},
+	std::function<bool(uint32_t)> resolve = {});
 size_t fallback_count();
 uint32_t first_fallback_address();
 void reset_fallbacks();

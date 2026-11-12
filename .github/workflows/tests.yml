@@ -59,4 +59,5 @@ jobs:
             test-vf-gameplay \
             test-vr-profile \
             test-vr-gameplay \
-            test-vr-tgp-track
+            test-vr-tgp-track \
+            test-wingwar-profile

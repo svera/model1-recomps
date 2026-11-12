@@ -212,8 +212,11 @@ public:
 				if (win) m = ~m;
 				if (m & (0x8000 >> ((mx & 127) >> 3))) continue;
 				int i = (h + x) & 511;
-				if (srct[i] == tpri || (flags_in & DRAW_OPAQUE))
+				if (srct[i] == tpri || (flags_in & DRAW_OPAQUE)) {
 					*dst = m_pens[src[i] & 0x1fff];
+					if (m_coord) m_coord[size_t(y) * bitmap.width() + m_ox + x] =
+						uint32_t(l) << 18 | uint32_t(sy * 512 + i);
+				}
 			}
 		}
 	}
@@ -289,9 +292,12 @@ private:
 		}
 	}
 public:
-	// When set (a buffer the size of the destination), draw_rect also records where each pixel
-	// it draws came from: map << 18 | y * 512 + x. For replacing the sky with a hi-res picture.
-	uint32_t *m_coord = nullptr;
+	// When set (a buffer the size of the destination), draw() also records where each pixel it
+	// draws came from: map << 18 | y * 512 + x. For replacing the sky with a hi-res picture, and
+	// telling a widescreen curtain's pattern. (Per thread: layers draw in parallel.)
+	static inline thread_local uint32_t *m_coord = nullptr;
+	// a recorded pixel's pen (its colour's index within its palette)
+	uint8_t pen_at(uint32_t coord) const { return uint8_t(pix[(coord >> 18) & 3][coord & 0x3ffff] & 0xf); }
 private:
 
 	void draw_scrolled(bitmap_rgb32 &bm, const rectangle &c, int l, int scrollx, int scrolly, uint16_t tpri, int fl)

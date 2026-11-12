@@ -16,13 +16,31 @@ struct native_fn
 	uint32_t entry = 0;
 	void *code = nullptr;
 	std::unordered_map<uint32_t, sljit_uw> labels;   // V60 address -> native address in the function
+	code_range range{};
+	std::vector<uint8_t> bytes;
+	std::unordered_map<uint32_t, uint32_t> lengths;
+	std::shared_ptr<native_overlay_stats> overlays;
+	~native_fn() { if (code) sljit_free_code(code, nullptr); }
+
+	bool current(uint32_t address) const
+	{
+		if (bytes.empty()) return true;
+		const auto it = lengths.find(address);
+		if (it == lengths.end()) return false;
+		for (uint32_t i = 0; i < it->second; i++)
+			if (cpu->data_read8(address + i) != bytes[address + i - range.first]) return false;
+		return true;
+	}
 };
 
 struct native_program
 {
-	std::vector<native_fn> functions;
+	std::vector<std::unique_ptr<native_fn>> functions;
 	std::vector<rec_entry> table;
-	~native_program() { for (auto &f : functions) if (f.code) sljit_free_code(f.code, nullptr); }
+	std::vector<code_range> ram;
+	std::vector<uint8_t> mem;
+	std::shared_ptr<native_overlay_stats> overlays = std::make_shared<native_overlay_stats>();
+	bool resolve(uint32_t address);
 };
 
 // ---- what the native code calls ----
@@ -47,9 +65,19 @@ void SLJIT_FUNC rt_bad(sljit_uw at) { bad(uint32_t(at)); }
 // Where in function `fn` to carry on for the current PC (0: not in it).
 sljit_uw SLJIT_FUNC rt_dispatch(sljit_uw fn)
 {
-	const auto &m = reinterpret_cast<const native_fn *>(fn)->labels;
+	const auto &f = *reinterpret_cast<const native_fn *>(fn);
+	if (!f.current(PC)) return 0;
+	const auto &m = f.labels;
 	auto it = m.find(PC);
 	return it == m.end() ? 0 : it->second;
+}
+
+sljit_u32 SLJIT_FUNC rt_current(sljit_uw fn, sljit_uw address)
+{
+	const auto &f = *reinterpret_cast<const native_fn *>(fn);
+	if (f.current(uint32_t(address))) return 1;
+	f.overlays->stale_instructions++;
+	return 0;
 }
 
 void SLJIT_FUNC rt_leave(sljit_uw fn)
@@ -74,6 +102,12 @@ struct gen
 	void call1(void *f, sljit_s32 args, sljit_sw a)
 	{
 		sljit_emit_op1(c, SLJIT_MOV, SLJIT_R0, 0, SLJIT_IMM, a);
+		sljit_emit_icall(c, SLJIT_CALL, args, SLJIT_IMM, sljit_sw(f));
+	}
+	void call2(void *f, sljit_s32 args, sljit_sw a, sljit_sw b)
+	{
+		sljit_emit_op1(c, SLJIT_MOV, SLJIT_R0, 0, SLJIT_IMM, a);
+		sljit_emit_op1(c, SLJIT_MOV, SLJIT_R1, 0, SLJIT_IMM, b);
 		sljit_emit_icall(c, SLJIT_CALL, args, SLJIT_IMM, sljit_sw(f));
 	}
 	void jump_if_pc(uint32_t addr)        // PC (in R0) == addr: go to its label
@@ -208,6 +242,16 @@ struct gen
 			const uint32_t next = a + in.len;
 			labels[a] = sljit_emit_label(c);
 			st.instructions++;
+			if (!out.bytes.empty()) {
+				if (a < out.range.first || a + in.len > out.range.last) {
+					fprintf(stderr, "rec: RAM instruction %06x crosses its executable range\n", a);
+					sljit_free_compiler(c);
+					return false;
+				}
+				out.lengths[a] = in.len;
+				call2((void *)rt_current, SLJIT_ARGS2(32, W, W), sljit_sw(&out), a);
+				to_dispatch.push_back(sljit_emit_cmp(c, SLJIT_EQUAL | SLJIT_32, SLJIT_R0, 0, SLJIT_IMM, 0));
+			}
 			if (in.kind == insn_kind::bad) {
 				call1((void *)rt_bad, SLJIT_ARGS1V(W), a);
 				sljit_emit_return_void(c);
@@ -285,28 +329,90 @@ struct gen
 	}
 };
 
+bool native_program::resolve(uint32_t address)
+{
+	const auto range = std::find_if(ram.begin(), ram.end(), [address](const code_range &r) {
+		return address >= r.first && address < r.last;
+	});
+	if (range == ram.end()) return false;
+	std::vector<uint8_t> bytes(range->last - range->first);
+	for (uint32_t a = range->first; a < range->last; a++) bytes[a - range->first] = cpu->data_read8(a);
+	for (const auto &f : functions)
+		if (f->entry == address && f->range.first == range->first && f->bytes == bytes) {
+			overlays->cache_hits++;
+			reinterpret_cast<void (*)(v60_device &)>(f->code)(*cpu);
+			return true;
+		}
+	std::copy(bytes.begin(), bytes.end(), mem.begin() + range->first);
+	hints h;
+	h.entries.insert(address);
+	const program p = analyse(mem, h, true, {*range});
+	const auto fn = std::find_if(p.functions.begin(), p.functions.end(), [address](const function &f) {
+		return f.entry == address;
+	});
+	if (fn == p.functions.end()) {
+		fprintf(stderr, "rec: cannot decode RAM code at %06x\n", address);
+		std::abort();
+	}
+	auto f = std::make_unique<native_fn>();
+	f->range = *range;
+	f->bytes = std::move(bytes);
+	f->overlays = overlays;
+	native_stats st;
+	gen g{nullptr, p, *fn};
+	if (!g.build(*f, st)) {
+		fprintf(stderr, "rec: couldn't compile RAM code at %06x\n", address);
+		std::abort();
+	}
+	void *entry = f->code;
+	functions.push_back(std::move(f));
+	overlays->compilations++;
+	reinterpret_cast<void (*)(v60_device &)>(entry)(*cpu);
+	return true;
+}
+
 } // namespace
 
 bool build_native(const std::vector<uint8_t> &mem, const hints &map, native_stats *stats)
 {
 	const auto t0 = std::chrono::steady_clock::now();
 	native_stats st;
+	for (size_t i = 0; i < map.ram.size(); i++) {
+		const auto &r = map.ram[i];
+		const bool mapped = (r.first >= 0x400000 && r.last <= 0x410000) ||
+			(r.first >= 0x500000 && r.last <= 0x540000);
+		if (!mapped || r.first >= r.last || r.last > mem.size()) {
+			fprintf(stderr, "rec: invalid mutable code range %06x..%06x\n", r.first, r.last);
+			return false;
+		}
+		for (size_t j = 0; j < i; j++)
+			if (r.first < map.ram[j].last && r.last > map.ram[j].first) {
+				fprintf(stderr, "rec: overlapping mutable code ranges at %06x\n", r.first);
+				return false;
+			}
+	}
 	program p = analyse(mem, map, true);
 	auto code = std::make_shared<native_program>();
+	code->ram = map.ram;
+	if (!code->ram.empty()) {
+		code->mem = mem;
+		st.overlays = code->overlays;
+	}
 	auto &fns = code->functions;
 	fns.resize(p.functions.size());
 	for (size_t i = 0; i < p.functions.size(); i++) {
+		fns[i] = std::make_unique<native_fn>();
 		gen g{ nullptr, p, p.functions[i] };
-		if (!g.build(fns[i], st)) {
+		if (!g.build(*fns[i], st)) {
 			fprintf(stderr, "rec: couldn't make native code for %06x\n", p.functions[i].entry);
 			return false;
 		}
 		st.functions++;
 	}
-	for (const native_fn &f : fns)
-		code->table.push_back({ f.entry, reinterpret_cast<void (*)(v60_device &)>(f.code) });
+	for (const auto &f : fns)
+		code->table.push_back({ f->entry, reinterpret_cast<void (*)(v60_device &)>(f->code) });
 	std::sort(code->table.begin(), code->table.end(), [](const rec_entry &a, const rec_entry &b) { return a.addr < b.addr; });
-	use_table(code->table.data(), code->table.size(), code);
+	use_table(code->table.data(), code->table.size(), code, [code](uint32_t address) { return code->resolve(address); });
 	st.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 	if (stats) *stats = st;
 	return true;

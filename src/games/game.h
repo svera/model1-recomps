@@ -6,6 +6,7 @@
 #include <istream>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +42,7 @@ struct profile
 	uint8_t test_menu_mode;
 	// The V60's average cycles per instruction (the cores charge MAME's estimate of 8 each).
 	double cpu_cycles_per_instruction = 8;
+	std::span<const std::array<uint32_t, 2>> recompiler_ram; // mutable executable ranges, exclusive end
 };
 
 struct io_profile
@@ -58,6 +60,7 @@ struct io_profile
 	struct analog_range { uint8_t low = 0, high = 255; bool reverse = false; };
 	std::array<analog_range, 8> analog_ranges{};
 	std::array<uint8_t, 8> analog_player{};                // whose pad and keys drive the channel (0, 1)
+	bool standin_analog = false;                           // direct inputs for a game-specific I/O bridge
 
 	uint8_t analog_port(size_t channel, uint8_t host) const
 	{
@@ -85,6 +88,7 @@ struct tgp_hle_callbacks
 struct gameplay_state
 {
 	virtual ~gameplay_state() = default;
+	uint32_t cheats = 0;
 };
 
 // Optional per-object effects, in model coordinates and BGR555 colour components.
@@ -128,6 +132,7 @@ struct record_visibility
 
 struct gameplay_callbacks
 {
+	uint32_t supported_cheats = 0;
 	std::shared_ptr<gameplay_state> state;
 	std::function<void()> reset;
 	std::function<void()> frame_begin;
@@ -154,6 +159,8 @@ struct gameplay_callbacks
 	// display-list halfword written; the callback may set it to an earlier matrix command of the
 	// same list, whose extras the result then replaces (an empty result removes them).
 	std::function<std::vector<render_object>(uint32_t &)> matrix_objects;
+	// World-to-view camera recovered from completed matrix writes, for games without camera RAM.
+	std::function<std::optional<std::array<float, 12>>(int)> draw_camera;
 	// Snapshot active records when a relevant matrix is written, before visibility advances.
 	std::function<std::vector<game::record_visibility>(uint32_t)> record_visibility;
 	std::function<void()> render_begin;
@@ -166,6 +173,8 @@ struct gameplay_callbacks
 	std::function<std::vector<uint32_t>(std::string_view)> screen_hashes;
 	std::function<std::optional<std::string_view>(uint32_t)> screen_name;
 	std::function<bool(uint32_t, bool)> wide_scene;
+	// Tile artwork known to repeat horizontally: continue its map across a wide scene at 1:1.
+	std::function<bool(int layer)> repeat_tile_layer;
 	// Widescreen: a tile layer as drawn this game frame, `ext` columns each side of the
 	// arcade's 496 (`width` = 496 + 2 * ext, pixels 0x00rrggbb, 0xff000000 for nothing). The game may
 	// fill the sides, which are otherwise empty (or map-wrapped for a narrow screen's opaque
@@ -209,20 +218,23 @@ struct unset_texture_pen
 // What the game itself says each part of its 3D is, read as it writes its display list (see
 // blend_by_records): each instruction writing a matrix command and the register then holding the
 // record of the thing drawn (records lie in [records_from, records_to); any other value: the still
-// world), and where the camera is in RAM B as the list is written (12 floats: the rotation taking
+// world), and where the camera is in RAM B as the list is written (or gameplay's draw_camera).
+// The camera's 12 floats are the rotation taking
 // the world to the view, by columns, then the view's translation, like a list's matrix).
 struct matrix_writer
 {
 	uint32_t pc;
 	int record_register;
 	uint32_t caller = 0;             // optional return address at SP; first matching writer wins
+	int32_t record_offset = 0;
+	bool indirect = false;          // read the record pointer at register + offset
 };
 
 struct draw_records
 {
 	std::vector<matrix_writer> writers;
 	uint32_t records_from, records_to;
-	uint32_t camera;
+	uint32_t camera;                 // RAM B address; zero when gameplay supplies draw_camera
 };
 
 struct hud_view
@@ -246,11 +258,20 @@ struct video_traits
 {
 	bool smooth_frames = false;      // the 3D blended between game frames (a 30 Hz game's)
 	bool separate_parts = false;     // the parts are separate objects (ships, shots), not a fighter's limbs
+	float camera_cut_distance = 8;   // (records) a camera move a game frame beyond this is a cut, not blended
+	// (records) a turn over camera_cut's limit carrying on a swing (the list before turned at least half
+	// as far about much the same axis) is blended: Wing War's ending whips round its landing aircraft
+	bool camera_swings = false;
 	int default_fps = 120;           // the Frame rate setting's first-run choice (30: the arcade's, no blending)
 	bool pin_hud_edges = false;      // move off-center, non-full-screen HUD graphics into widescreen sides
 	// widescreen: the opaque tile layers (the backdrop) stretched across the width; else drawn 1:1,
 	// the sides of each the colour of its edges where those are one colour, black where not
 	bool stretch_backdrops = true;
+	uint8_t centered_scroll_layers = 0;
+	int centered_scroll_y0 = 0, centered_scroll_y1 = 0; // line-scrolled panel kept within the arcade width
+	// widescreen: a row a layer covers edge to edge repeats its edge's pattern across the side
+	// (else carries its edge pixel out, the plain curtain)
+	bool repeat_curtains = false;
 	std::vector<uint32_t> foreground_objects;   // screen-space 3D overlays, sorted after world geometry
 	std::vector<uint32_t> right_edge_objects;   // whole screen-space models anchored to the right edge
 	std::vector<hud_view> edge_views;           // HUD projection translations, separate from the world camera

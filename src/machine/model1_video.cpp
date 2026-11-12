@@ -154,12 +154,12 @@ void model1::cross_product(point_t* o, const point_t* p, const point_t* q) const
 
 float model1::view_determinant(const point_t *p1, const point_t *p2, const point_t *p3) const
 {
-	float x1 = p2->x - p1->x;
-	float y1 = p2->y - p1->y;
-	float z1 = p2->z - p1->z;
-	float x2 = p3->x - p1->x;
-	float y2 = p3->y - p1->y;
-	float z2 = p3->z - p1->z;
+	double x1 = double(p2->x) - p1->x;
+	double y1 = double(p2->y) - p1->y;
+	double z1 = double(p2->z) - p1->z;
+	double x2 = double(p3->x) - p1->x;
+	double y2 = double(p3->y) - p1->y;
+	double z2 = double(p3->z) - p1->z;
 
 	return p1->x * (y1 * z2 - y2 * z1) + p1->y * (z1 * x2 - z2 * x1) + p1->z * (x1 * y2 - x2 * y1);
 }
@@ -885,7 +885,9 @@ bool model1::fclip_isc_bottom(view_t *view, point_t *p)
 
 void model1::fclip_clip_bottom(view_t *view, point_t *pt, point_t *p1, point_t *p2)
 {
-	float t = (p2->z * view->a_bottom-p2->y) / ((p2->z - p1->z) * view->a_bottom - (p2->y - p1->y));
+	// Horizon-sized faces can cancel large coordinates at the viewport; interpolate in double.
+	double t = (double(p2->z) * view->a_bottom-p2->y) /
+		((double(p2->z) - p1->z) * view->a_bottom - (double(p2->y) - p1->y));
 	pt->x = p1->x * t + p2->x * (1 - t);
 	pt->y = p1->y * t + p2->y * (1 - t);
 	pt->z = p1->z * t + p2->z * (1 - t);
@@ -899,7 +901,8 @@ bool model1::fclip_isc_top(view_t *view, point_t *p)
 
 void model1::fclip_clip_top(view_t *view, point_t *pt, point_t *p1, point_t *p2)
 {
-	float t = (p2->z * view->a_top - p2->y) / ((p2->z - p1->z) * view->a_top - (p2->y - p1->y));
+	double t = (double(p2->z) * view->a_top - p2->y) /
+		((double(p2->z) - p1->z) * view->a_top - (double(p2->y) - p1->y));
 	pt->x = p1->x * t + p2->x * (1 - t);
 	pt->y = p1->y * t + p2->y * (1 - t);
 	pt->z = p1->z * t + p2->z * (1 - t);
@@ -913,7 +916,8 @@ bool model1::fclip_isc_left(view_t *view, point_t *p)
 
 void model1::fclip_clip_left(view_t *view, point_t *pt, point_t *p1, point_t *p2)
 {
-	float t = (p2->z * view->a_left - p2->x) / ((p2->z - p1->z) * view->a_left - (p2->x - p1->x));
+	double t = (double(p2->z) * view->a_left - p2->x) /
+		((double(p2->z) - p1->z) * view->a_left - (double(p2->x) - p1->x));
 	pt->x = p1->x * t + p2->x * (1 - t);
 	pt->y = p1->y * t + p2->y * (1 - t);
 	pt->z = p1->z * t + p2->z * (1 - t);
@@ -927,7 +931,8 @@ bool model1::fclip_isc_right(view_t *view, point_t *p)
 
 void model1::fclip_clip_right(view_t *view, point_t *pt, point_t *p1, point_t *p2)
 {
-	float t = (p2->z * view->a_right - p2->x) / ((p2->z - p1->z) * view->a_right - (p2->x - p1->x));
+	double t = (double(p2->z) * view->a_right - p2->x) /
+		((double(p2->z) - p1->z) * view->a_right - (double(p2->x) - p1->x));
 	pt->x = p1->x * t + p2->x * (1 - t);
 	pt->y = p1->y * t + p2->y * (1 - t);
 	pt->z = p1->z * t + p2->z * (1 - t);

@@ -127,6 +127,7 @@ inline const control_profile CONTROLS = [] {
 	control_profile c;
 	c.title = ID;
 	c.show_player_2 = false;
+	c.pad_stick_vertical = false;
 	c.add(C_UP, "Shift Up");
 	c.add(C_DOWN, "Shift Down");
 	c.add(C_LEFT, "Steer Left");

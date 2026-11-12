@@ -1,6 +1,6 @@
 // The launch-time loader against tools/romset.py: every region built from the player's zip in C++
 // must match the one the Python tool writes to build/<game>/ (both need the player's own ROMs).
-//     romset_test <game> roms/<game>.zip [roms/model1io.zip] build/<game>
+//     romset_test <game> roms/<game>.zip [roms/model1io.zip] [roms/model1io2.zip] build/<game>
 // The games are the ones linked in (src/games/*/romset.cpp), found by name.
 #include "../src/machine/model1_romset.h"
 #include <algorithm>
@@ -91,6 +91,11 @@ int main(int argc, char **argv)
 	const std::string dir = argv[argc - 1];
 	const romset::result r = romset::load(set, zips);
 	if (!r.ok) { fprintf(stderr, "%s: %s\n", argv[1], r.error.c_str()); return 1; }
+	if (set.use_advanced_ioboard &&
+		(!r.has_advanced_ioboard || r.regions.ioboard2.size() != 0x10000)) {
+		fprintf(stderr, "%s: Advanced Model 1 I/O BIOS was not loaded\n", argv[1]);
+		return 1;
+	}
 	if (set.title.name == "swa" &&
 		(!swa_layout(r.regions) || !swa_rejects_unexpected_tgp(set, zips))) return 1;
 	if (r.regions.title != set.title) { fprintf(stderr, "%s: wrong title\n", argv[1]); return 1; }
@@ -100,7 +105,8 @@ int main(int argc, char **argv)
 	struct { const char *file; const std::vector<uint8_t> &got; } regions[] = {
 		{ "maincpu", r.regions.maincpu }, { "copro_tables", r.regions.copro_tables }, { "copro_data", r.regions.copro_data },
 		{ "polygons", r.regions.polygons }, { "sndcpu", r.regions.sndcpu }, { "pcm1", r.regions.pcm1 },
-		{ "pcm2", r.regions.pcm2 }, { "tgp_program", r.regions.tgp_program }, { "ioboard", r.regions.ioboard },
+		{ "pcm2", r.regions.pcm2 }, { "tgp_program", r.regions.tgp_program },
+		{ "ioboard", r.regions.ioboard }, { "ioboard2", r.regions.ioboard2 },
 		{ "mpegcpu", r.regions.mpegcpu }, { "mpeg", r.regions.mpeg },
 	};
 	int bad = 0, checked = 0;

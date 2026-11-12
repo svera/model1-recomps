@@ -29,7 +29,7 @@ ROMSET = src/machine/model1_romset.cpp
 GAMES_SRC = src/games/game.cpp $(filter-out %/host.cpp %/romset.cpp,$(wildcard src/games/*/*.cpp))
 # the tools' game parts (tools/tool_game.h: tools/games/<name>/tool.cpp), chosen at run time
 TOOL_GAME = tools/tool_game.cpp $(wildcard tools/games/*/tool.cpp)
-MACHINE = src/machine/model1.cpp src/machine/model1_tgp.cpp src/machine/model1_tgp_lle.cpp src/machine/model1_video.cpp src/machine/model1_sky.cpp src/machine/model1_interp.cpp src/machine/model1_gpu.cpp src/machine/model1_edge_aa.cpp src/machine/model1io.cpp $(GAMES_SRC)
+MACHINE = src/machine/model1.cpp src/machine/model1_tgp.cpp src/machine/model1_tgp_lle.cpp src/machine/model1_video.cpp src/machine/model1_sky.cpp src/machine/model1_interp.cpp src/machine/model1_gpu.cpp src/machine/model1_edge_aa.cpp src/machine/model1io.cpp src/machine/model1io2.cpp $(GAMES_SRC)
 Z80_OBJ = $(OBJ)/z80/z80.o
 DASM = third_party/mame/v60/v60d.cpp
 # the recompile done on the player's machine: analysis + native code (sljit, BSD-2)
@@ -244,6 +244,7 @@ $(BIN)/romset_test: $(call objs,tests/romset_test.cpp $(ROMSET) $(wildcard src/g
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 IOBOARD_ZIP = $(wildcard roms/model1io.zip)
+IOBOARD2_ZIP = $(wildcard roms/model1io2.zip)
 
 # ---- The games ----
 # Each game's folder has a game.mk with its name (GAMES += <game>) and these settings; GAME_RULES
@@ -252,8 +253,11 @@ IOBOARD_ZIP = $(wildcard roms/model1io.zip)
 #   <game>_COV_SCENARIOS   the scripted runs model1cov records as the recompile's hints ("default":
 #                          the game's plain run; none: only the runtime entries)
 #   <game>_COV_FRAMES      their length (<game>_COV_FRAMES_<scenario>: one scenario's own)
+#   <game>_EXTRA_HINTS     address-only continuation hints supplementing the coverage runs
 #   <game>_LOCK_SCENARIOS  the runs <game>-lockstep and <game>-native-lockstep check
 #   <game>_LOCK_FRAMES     their length (<game>_LOCK_FRAMES_<scenario>: one scenario's own)
+#   <game>_GEN_LOCK_FLAGS  <game>-lockstep's model1lock flags (default --strict: no interpreter fallback;
+#                          empty for code the generated C++ can't hold, such as Wing War's RAM code)
 # The targets for a game g:
 #   g                  build/bin/g, the desktop build (and build/g from roms/g.zip, when there)
 #   g-native           build/bin/g-native, the release build: native code made at start-up
@@ -276,13 +280,13 @@ endef
 
 define GAME_RULES
 $(1)_LOCAL_REGIONS = $$(if $$(wildcard roms/$(1).zip),build/$(1)/maincpu.bin)
-build/$(1)/maincpu.bin: roms/$(1).zip tools/romset.py tools/games/$(1)/romset.py $$(IOBOARD_ZIP)
+build/$(1)/maincpu.bin: roms/$(1).zip tools/romset.py tools/games/$(1)/romset.py $$(IOBOARD_ZIP) $$(IOBOARD2_ZIP)
 	python3 tools/romset.py --game $(1) roms/$(1).zip build/$(1)
 $(1)-regions: build/$(1)/maincpu.bin
 
 # the recompile's hints: the coverage runs, and the entries the generated code fell back to the
 # interpreter for (src/rt/rec_rt.cpp notes them in build/cov/$(1)/runtime_entries.txt)
-$(1)_HINTS = $$(foreach s,$$($(1)_COV_SCENARIOS),build/cov/$(1)/coverage-$$(s).txt) build/cov/$(1)/runtime_entries.txt
+$(1)_HINTS = $$(foreach s,$$($(1)_COV_SCENARIOS),build/cov/$(1)/coverage-$$(s).txt) $$($(1)_EXTRA_HINTS) build/cov/$(1)/runtime_entries.txt
 build/cov/$(1)/runtime_entries.txt:
 	@mkdir -p $$(dir $$@)
 	@touch $$@
@@ -325,8 +329,9 @@ $$(BIN)/$(1)script-static: $$(MODEL1SCRIPT_OBJS) $$(OBJ)/build/gen/$(1)_rec.o $$
 $$(BIN)/$(1)lock-static: $$(OBJ)/tools/model1lock.o $$(call objs,$$(CORE) $$(MACHINE) $$(SOUND) $$(RT) $$(NATIVE)) $$(OBJ)/build/gen/$(1)_rec.o $$(SLJIT_OBJ) $$(MUSASHI_OBJ) $$(Z80_OBJ) $$(CORO_OBJ)
 	@mkdir -p $$(dir $$@)
 	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS)
+$(1)_GEN_LOCK_FLAGS ?= --strict
 $(1)-lockstep: $$(BIN)/$(1)lock-static
-	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/$(1)lock-static --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
+	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/$(1)lock-static --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) $$($(1)_GEN_LOCK_FLAGS) --scenarios $$(call scenario_flag,$$(s)) &&) true
 $(1)-native-lockstep: $$(BIN)/model1lock $$($(1)_LOCAL_REGIONS)
 	$$(foreach s,$$($(1)_LOCK_SCENARIOS),$$(BIN)/model1lock --game $(1) build/$(1) $$(or $$($(1)_LOCK_FRAMES_$$(s)),$$($(1)_LOCK_FRAMES)) --native --strict --scenarios $$(call scenario_flag,$$(s)) &&) true
 
@@ -341,7 +346,7 @@ test-romset-tool:
 
 test-romset: test-romset-tool $(BIN)/romset_test $(foreach g,$(GAMES),$($(g)_LOCAL_REGIONS))
 	@[ -n "$(wildcard $(GAMES:%=roms/%.zip))" ] || { echo "test-romset: none of $(GAMES:%=roms/%.zip)" >&2; exit 1; }
-	@$(foreach g,$(GAMES),if [ -f roms/$(g).zip ]; then $(BIN)/romset_test $(g) roms/$(g).zip $(IOBOARD_ZIP) build/$(g) || exit 1; fi;) true
+	@$(foreach g,$(GAMES),if [ -f roms/$(g).zip ]; then $(BIN)/romset_test $(g) roms/$(g).zip $(IOBOARD_ZIP) $(IOBOARD2_ZIP) build/$(g) || exit 1; fi;) true
 
 clean:
 	rm -rf build/obj build/bin

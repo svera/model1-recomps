@@ -29,7 +29,7 @@ struct host_context
 	std::function<void(menu_page, int)> replace_page;
 	std::function<void(const std::string &, std::function<bool(const SDL_Event &)>, std::function<void()>)> capture;
 	std::function<void()> refresh_menu;
-	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings
+	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings, until a reset ends them
 	int link_player = 0;                     // local VR role: 1 master, 2 slave, 3 Live Monitor
 	bool standalone_cabinet = false;         // force standalone instead of restoring a saved link role
 };
@@ -55,6 +55,9 @@ public:
 	// Only renderer settings shared by local cabinets; excludes each player's game preferences.
 	virtual settings_map shared_display_settings() const { return {}; }
 
+	// The EEPROM a cold boot without saves starts from (a new player's, and new input recordings');
+	// empty: blank, the arcade's factory defaults.
+	virtual std::vector<uint8_t> new_eeprom(model1 &) { return {}; }
 	// The machine is made, its code not yet recompiled (an instruction the game changes goes in it).
 	virtual void start(host_context &) {}
 	// Once, before the first boot: the game's pictures, the settings it reads at boot.
@@ -63,6 +66,8 @@ public:
 	virtual bool before_restart() { return false; }
 	// After each boot (a reset); true: boot again (a setting the game reads at boot was put back).
 	virtual bool booted() { return false; }
+	// Games without camera RAM can run their PC-style boot unseen, with drawing already disabled.
+	virtual void skip_boot() {}
 
 	// The chosen picture shape (width / height; 0: fit the window), before the first boot and on every
 	// change. True: the running game must restart for it (a setting it reads at boot).
@@ -81,6 +86,7 @@ public:
 
 	// Game-specific choices in Display and Game, and main-menu pages after Game and Controls.
 	virtual std::vector<menu_item> display_menu_items() { return {}; }
+	virtual std::vector<menu_item> sound_menu_items() { return {}; }
 	virtual std::vector<menu_item> game_menu_items() { return {}; }
 	virtual std::vector<menu_item> cabinet_game_menu_items() { return game_menu_items(); }
 	virtual std::vector<menu_item> shared_game_menu_items() { return {}; }

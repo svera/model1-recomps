@@ -11,6 +11,7 @@
 #include <future>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include "../games/game.h"
@@ -21,6 +22,7 @@
 #include "../gpu/gpu3d.h"
 #include "m1audio.h"
 #include "model1io.h"
+#include "model1io2.h"
 #include "m1comm.h"
 #include "../core/v60_device.h"
 
@@ -33,6 +35,7 @@ class model1 : public v60_bus
 {
 	friend struct model1_sky_test;
 	friend struct model1_video_test;
+	friend struct model1_native_test;
 public:
 	// Screen: 496x384, 60 Hz (MAME: 16 MHz pixel clock, 656x426 total)
 	static constexpr int SCREEN_W = 496, SCREEN_H = 384;
@@ -42,6 +45,7 @@ public:
 		std::vector<uint8_t> maincpu, copro_tables, copro_data, polygons, sndcpu, pcm1, pcm2;
 		std::vector<uint8_t> tgp_program;   // 315-5724.bin, when the set has it
 		std::vector<uint8_t> ioboard;       // epr-14869b.25 (model1io), when there
+		std::vector<uint8_t> ioboard2;      // epr-16891.6 (advanced Model 1 I/O board), when there
 		std::vector<uint8_t> mpegcpu, mpeg; // DSB ROMs (SWA): enable_sound adds the board when present
 		game::id title;                 // the game (src/games: its own code and data)
 	};
@@ -108,6 +112,7 @@ public:
 	const std::vector<uint8_t> &polygon_rom() const { return m_regions.polygons; }
 	const std::vector<uint8_t> &coprocessor_data_rom() const { return m_regions.copro_data; }
 	const float *render_matrix() const { return m_view->translation; }
+	std::array<float, 2> render_zoom() const { return {m_view->zoomx, m_view->zoomy}; }
 	bool redrawing() const { return m_redrawing; }
 	bool replaying() const { return m_replaying; }
 	const float *polygon_data(bool ram) const { return ram ? reinterpret_cast<const float *>(m_poly_ram.get()) : reinterpret_cast<const float *>(m_poly_rom); }
@@ -118,6 +123,12 @@ public:
 	uint16_t palette_word(uint32_t i) const { return m_paletteram16[i]; }
 	void palette_write(uint32_t i, uint16_t v) { model1_paletteram_w(i, v, 0xffff); }
 	const std::shared_ptr<game::gameplay_state> &game_state() const { return m_gameplay.state; }
+	uint32_t cheats() const { return m_gameplay.state ? m_gameplay.state->cheats : 0; }
+	bool set_cheats(uint32_t flags) {
+		if ((flags & ~m_gameplay.supported_cheats) || (!m_gameplay.state && flags)) return false;
+		if (m_gameplay.state) m_gameplay.state->cheats = flags;
+		return true;
+	}
 	// Screen art for a screen the game names (game::gameplay_callbacks::screen_hashes)
 	bool load_screen(const std::string &name, std::vector<uint32_t> xrgb, int w, int h);
 	uint16_t peek16(uint32_t a) { return bus_read16(a); }               // the V60's view (ROM, RAM)
@@ -260,10 +271,13 @@ public:
 	}
 	bool in_test_menu_mode() const { return m_profile->mode_ram && game_mode() == m_profile->test_menu_mode; }
 	// Raw board EEPROM image for persistence; words are available only on the real I/O board.
-	uint8_t *eeprom() { return m_ioboard ? reinterpret_cast<uint8_t *>(m_ioboard->eeprom) : &m_dpram[0x100]; }
-	uint16_t *eeprom_words() { return m_ioboard ? m_ioboard->eeprom : nullptr; }
+	uint8_t *eeprom() { return m_ioboard ? reinterpret_cast<uint8_t *>(m_ioboard->eeprom) :
+		m_ioboard2 ? reinterpret_cast<uint8_t *>(m_ioboard2->eeprom) : &m_dpram[0x100]; }
+	uint16_t *eeprom_words() { return m_ioboard ? m_ioboard->eeprom : m_ioboard2 ? m_ioboard2->eeprom : nullptr; }
 	static constexpr size_t EEPROM_SIZE = 0x80;
-	bool real_ioboard() const { return bool(m_ioboard); }
+	bool real_ioboard() const { return bool(m_ioboard) || bool(m_ioboard2); }
+	uint64_t advanced_ioboard_cycles() const { return m_ioboard2 ? m_ioboard2->cycles_executed() : 0; }
+	uint8_t io_board_byte(size_t index) const { return index < sizeof(m_dpram) ? m_dpram[index] : 0xff; }
 	const std::vector<uint8_t> &maincpu_rom() const { return m_regions.maincpu; }   // for the recompiler
 	uint64_t frame_number() const { return m_frame; }
 
@@ -555,7 +569,16 @@ private:
 	// several pictures a frame and the tiles only change with the frame. With each row's drawn span,
 	// so the scaling skips what's empty (the HUD and text layers are mostly empty).
 	// `sides`: the game filled the widescreen sides (gameplay layer_sides), so no curtain is carried out
-	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; uint64_t gen = 0; bool sides = false; double slide_time = -1; };
+	// `curtain`: rows covered edge to edge whose edge pixels are carried out across the sides (rows
+	// repeating a pattern have it drawn into `px` instead); `coord`: where each pixel came from
+	struct layer_cache { uint64_t frame = ~0ull; int flags = -1, ext = -1; bool wide = false; bitmap_rgb32 px; std::vector<int16_t> x0, x1; std::vector<uint8_t> curtain; std::vector<uint32_t> coord; uint64_t gen = 0; bool sides = false; double slide_time = -1; };
+	void find_curtains(layer_cache &c, int layer, int flags) const;
+	uint32_t curtain_pixel(const layer_cache &c, int y, int x) const;
+	// A pattern band's stitch on one side: copies `q` columns apart, each row's cut `k` columns in
+	struct curtain_stitch { int q = 0; std::vector<int16_t> k; };
+	static curtain_stitch stitch_pattern(const uint8_t *pens, int rows, int p);
+	mutable std::mutex m_stitch_lock;
+	mutable std::unordered_map<uint64_t, curtain_stitch> m_stitches;   // by the band's pens
 	// the sky layer as last drawn (once a game frame, as the others; its panorama placing every time)
 	uint64_t m_l4_frame = ~0ull; int m_l4_ext = -1; bool m_l4_coords = false, m_l4_wide = false; uint64_t m_l4_gen = 0;
 	// The GPU's parts (model1_gpu.cpp)
@@ -611,6 +634,15 @@ private:
 	void widen_direct(point_t *points, quad_t *quads);
 	void draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int layer, int flags);
 	bool stretch_backdrops() const { return !m_video || m_video->stretch_backdrops; }
+	bool repeat_tile_layer(int layer) const {
+		return m_ext && m_wide_frame && m_gameplay.repeat_tile_layer && m_gameplay.repeat_tile_layer(layer);
+	}
+	bool extend_tile_row(int layer, int y) const {
+		return !m_video || !(m_video->centered_scroll_layers & (1u << layer)) ||
+			!(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) ||
+			y < m_video->centered_scroll_y0 || y >= m_video->centered_scroll_y1;
+	}
+	void clip_scrolling_sides(bitmap_rgb32 &pixels, int layer, int flags);
 	void fill_backdrop_sides(bitmap_rgb32 &pixels, int layer = -1, int flags = 0);
 	bitmap_rgb32 m_wrap_tmp;                 // fill_backdrop_sides: a layer drawn wrapping across the sides
 public:
@@ -699,6 +731,7 @@ private:
 	void sound_ready();
 	// I/O board stand-in (MAME 0.190's io_r/io_w/network_ctl): its Z80 program isn't in this set.
 	std::unique_ptr<model1io> m_ioboard;   // the real I/O board, when its program is there
+	std::unique_ptr<model1io2> m_ioboard2;
 	uint8_t io_board_r(int index);
 	void io_board_w(int index, uint8_t data);
 	void io_board_tick(int cycles);
