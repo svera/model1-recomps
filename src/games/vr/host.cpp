@@ -16,6 +16,26 @@ class host final : public game_host
 public:
 	const romset::definition &romset() const override { return ROMSET; }
 	const control_profile &controls() const override { return CONTROLS; }
+	bool supports_lan() const override { return true; }
+	std::vector<uint8_t> lan_settings() const override
+	{
+		const int language = language_value(ctx->machine);
+		const int race = machine_setting_value(ctx->machine, machine_setting::race_type);
+		const int course = machine_setting_value(ctx->machine, machine_setting::course_select);
+		if (language < 0 || race < 0 || course < 0) return {};
+		return {uint8_t(language), uint8_t(race), uint8_t(course)};
+	}
+	bool apply_lan_settings(std::span<const uint8_t> values) override
+	{
+		if (values.size() != 3 || values[0] > 1 || values[1] > 1 || values[2] > 3) {
+			fprintf(stderr, "VR LAN: invalid shared race settings\n");
+			return false;
+		}
+		set_language(ctx->machine, values[0]);
+		set_machine_setting(ctx->machine, machine_setting::race_type, values[1]);
+		set_machine_setting(ctx->machine, machine_setting::course_select, values[2]);
+		return lan_settings() == std::vector<uint8_t>(values.begin(), values.end());
+	}
 
 	uint8_t analog_key_input(model1 &machine, int channel, bool low, bool high, uint8_t value,
 		bool standard_steering = false) override

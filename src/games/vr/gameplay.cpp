@@ -382,10 +382,13 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		return records;
 	};
 	callbacks.wide_scene = [&machine](uint32_t camera, bool) {
+		if (machine.work_ram()[0x1138] == 0x0e) return false;
 		// LIVE uses a different camera record for the same painted course-selection screen.
 		if (machine.read8(0x40dc8c) == 3 && machine.work_ram()[0x1138] == 0x10) return false;
 		return camera != 0 && camera != TRACK_SELECT_CAMERA;
 	};
+	// The linked entry screen's beach is a fixed-width photograph, not a repeating panorama.
+	callbacks.extend_backdrops = [&machine] { return machine.work_ram()[0x1138] != 0x0e; };
 	callbacks.layer_sides = [&machine](int layer, uint32_t *pixels, int width, int height, int ext) {
 		if (layer != 4 || machine.tile_word(0x5002) || machine.tile_word(0x5006)) return false;
 		// Selection screens paint a 64x32 brick repeat, but the hidden map columns contain

@@ -68,6 +68,10 @@ for G in $GAMES; do
 	strip -S -x "$APP/Contents/MacOS/$NAME"
 	release_assets $G "$APP/Contents/Resources/assets"
 	ICON_KEY=
+	NETWORK_KEY=
+	if [ "$G" = vr ]; then
+		NETWORK_KEY="<key>NSLocalNetworkUsageDescription</key><string>Find and join Virtua Racing rooms on your local network.</string>"
+	fi
 	if [ -n "$ICON" ]; then
 		cp "$ICON" "$APP/Contents/Resources/"
 		ICON_KEY="<key>CFBundleIconFile</key><string>$(basename "$ICON" .icns)</string>"
@@ -83,6 +87,7 @@ for G in $GAMES; do
 	<key>CFBundleIdentifier</key><string>$ID</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	$ICON_KEY
+	$NETWORK_KEY
 	<key>CFBundleShortVersionString</key><string>$VERSION</string>
 	<key>CFBundleVersion</key><string>$VERSION</string>
 	<key>LSMinimumSystemVersion</key><string>11.0</string>

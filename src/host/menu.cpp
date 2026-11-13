@@ -281,6 +281,19 @@ void game_menu::move(int d)
 		i = (i + d + n) % n;
 		if (!p.items[i].info) { select(i); return; }
 	}
+
+}
+
+bool game_menu::update_page(menu_page page)
+{
+	if (!m_open || m_capture || m_stack.empty() || m_stack.back().name != page.name) return false;
+	const auto &old = m_stack.back().items;
+	const std::string label = m_sel >= 0 && size_t(m_sel) < old.size() ? old[m_sel].label : "";
+	int selected = 0;
+	for (size_t i = 0; i < page.items.size(); i++)
+		if (!page.items[i].info && page.items[i].label == label) { selected = int(i); break; }
+	replace(std::move(page), selected);
+	return true;
 }
 
 // A click on a choice: "<" steps back, the rest of the row forward; at either end a click goes round

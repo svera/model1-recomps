@@ -528,7 +528,11 @@ private:
 	std::vector<screen_art> m_screens;
 	const screen_art *m_screen_now = nullptr;
 	void draw_screen_sides(bitmap_rgb32 &bitmap);
-	bool extend_backdrops() const { return m_ext && !m_wide_frame && !m_screen_now; }
+	bool extend_backdrops() const
+	{
+		return m_ext && !m_wide_frame && !m_screen_now &&
+			(!m_gameplay.extend_backdrops || m_gameplay.extend_backdrops());
+	}
 	std::vector<uint32_t> m_tile_coord;             // where each m_tile_tmp pixel came from
 	sky_art *m_sky_now = nullptr, *m_sky_last = nullptr;
 	bool m_sky_smooth = false;

@@ -37,6 +37,7 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 BSD
 sec "ymfm (YM3438), Aaron Giles"; cat third_party/ymfm/LICENSE
 sec "sljit, Zoltan Herczeg"; cat third_party/sljit/LICENSE
+sec "arcade-lan"; cat third_party/arcade-lan/LICENSE
 sec "Musashi (68000), Karl Stenerud"; sed -n '/LICENSE AND COPYRIGHT/,/THE SOFTWARE\./p' third_party/musashi/readme.txt
 sec "Z80 core, Nicolas Allemand"; cat third_party/z80/LICENSE
 sec "RmlUi"; cat third_party/rmlui/LICENSE.txt

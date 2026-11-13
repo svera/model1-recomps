@@ -49,6 +49,40 @@ arcade's simpler distant models and better performance. Draw distance controls s
 Virtua Racing recompiles your ROM's V60 program to native code at startup. Use --interp to run on the
 Model 1 interpreter instead.
 
+LAN PLAY (EXPERIMENTAL)
+Race with friends on two to four computers, one player per computer, connected to
+the same Wi-Fi or wired network. Everyone needs the same game version and ROM set.
+No IP addresses or account are needed.
+
+1. On each computer, choose PC play style, use one local player and turn Live
+   Monitor off.
+2. Wait for the demo or course-selection screen. Open the menu (Esc on a keyboard)
+   and choose LAN.
+3. One player chooses Create room. This player is the host.
+4. The other players choose Find rooms, then select the host's room.
+5. Once everyone is ready, the host chooses Start linked race. Wait for the
+   game to load, then press your usual Start button to race.
+
+Choose race settings before creating the room. Everyone uses the host's
+language, race type and course-selection settings for this session. Your own
+display, sound, controls and car color stay unchanged.
+
+Pausing: opening the host's menu pauses everyone. Closing it resumes after
+a 3-2-1 countdown. The host can also press P to pause or resume. Other players'
+menus do not pause the race, and only the host can resume it.
+
+Leaving: choose LAN > Leave room. If a guest leaves or loses their connection,
+the remaining players keep racing while at least two are connected. If the host
+leaves, or only one player remains, the race ends and the remaining players return
+to rooms. To race together again, join the same room and have the host start a
+new session. Players cannot join a race already underway. LAN cannot be combined
+with local split-screen or Live Monitor.
+A disconnected player's car may remain on track until the current race ends.
+
+Room not appearing? Check that all computers are on the same network and running
+the same game version. Allow local-network access or firewall permission if asked.
+Try a regular home network instead of guest Wi-Fi, and disconnect any VPN.
+
 CREDITS
 Built on MAME's work on the Model 1 (the V60 CPU, TGP, sound and video), Musashi, ymfm, sljit,
-SDL, RmlUi and FreeType: see LICENSES.txt.
+SDL, RmlUi, FreeType and arcade-lan: see LICENSES.txt.

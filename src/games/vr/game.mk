@@ -33,6 +33,16 @@ $(BIN)/vr_link_test: $(OBJ)/tests/games/vr/link_test.o $(GAMES_LINK) $(call objs
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 test-vr-link: $(BIN)/vr_link_test
 	$(BIN)/vr_link_test
+$(BIN)/vr_lan_test: $(OBJ)/tests/games/vr/lan_test.o $(GAMES_LINK) $(call objs,$(RT) $(NATIVE)) $(REC_NONE) $(SLJIT_OBJ) $(CORO_OBJ) $(LAN_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(LAN_LIBS)
+test-vr-lan: $(BIN)/vr_lan_test
+	$(BIN)/vr_lan_test
+test-vr-lan-desktop: $(BIN)/vr-native vr-regions
+	python3 tests/games/vr/lan_desktop_test.py $(BIN)/vr-native build/vr
+test-vr-lan-desktop-four: $(BIN)/vr-native vr-regions
+	python3 tests/games/vr/lan_desktop_test.py $(BIN)/vr-native build/vr 4
+.PHONY: test-vr-lan test-vr-lan-desktop test-vr-lan-desktop-four
 test-vr-link-rom: $(BIN)/vr_link_test vr-regions
 	$(BIN)/vr_link_test --roms build/vr
 test-vr-two-cabinets: $(BIN)/vr_link_test vr-regions

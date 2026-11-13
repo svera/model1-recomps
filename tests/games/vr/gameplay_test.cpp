@@ -1196,6 +1196,18 @@ int main(int argc, char **argv)
 	assert(!callbacks.wide_scene(0x00502150, false));
 	assert(callbacks.wide_scene(1, false));
 	assert(callbacks.wide_scene(0x5020f0, false));
+	assert(callbacks.extend_backdrops && callbacks.extend_backdrops());
+	machine.work_ram()[0x1138] = 0x0e;
+	for (uint32_t camera : {0u, 0x502000u, 0x502150u, 0x5022d0u}) {
+		assert(!callbacks.wide_scene(camera, false));
+		assert(!callbacks.wide_scene(camera, true));
+	}
+	assert(!callbacks.extend_backdrops());
+	machine.work_ram()[0x1138] = 0x10;
+	assert(callbacks.extend_backdrops());
+	assert(!callbacks.wide_scene(0x502150, false));
+	machine.work_ram()[0x1138] = 0x14;
+	assert(callbacks.wide_scene(0x502000, false) && callbacks.extend_backdrops());
 	language_settings(false);
 	language_settings(true);
 	machine_settings(false);

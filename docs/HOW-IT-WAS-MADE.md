@@ -1896,6 +1896,98 @@ MAME's V60 charges 8 cycles to every instruction, "just an average"; the 16 MHz 
 3.5 MIPS. The game profile now has `cpu_cycles_per_instruction`, applied to the per-line instruction
 budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and runs exactly as before.
 
+## VR's LAN rooms
+
+The desktop's on-demand VR session also supports an experimental two-to-four-computer
+linked session. `src/host/lan_session.h` wraps a pinned BSD-licensed arcade-lan
+revision (provenance and local changes in `third_party/arcade-lan`). It owns
+discovery, membership and transport, polling the library at its expected 60 Hz
+independently of rendering and simulation. The library's small `max_devices`
+extension limits admission to four devices, one racer on each.
+The vendored linked transport also learns not-yet-direct peer addresses from later
+room lists: START can precede the list containing another newly joined guest.
+Without that refresh, some guests can reach the host but never each other.
+Same-computer peers can also converge from a LAN route to a same-port loopback
+source; strict IP pinning otherwise deadlocks mixed LAN/loopback discoveries.
+Changing to a new remote source IP or port is still rejected.
+The room host and the arcade master are distinct roles: a library room migration
+never changes an active cabinet ID.
+
+The linked waiting-for-entry screen (phase `0x0e`) stays at 4:3. Its beach is a
+fixed-width photographic tilemap, not a seamless panorama. VR disables both
+widescreen layout and narrow-screen backdrop extension for this phase, reusing
+the renderer's black side bars in whole-frame and GPU-parts composition.
+
+`src/host/model1_lan.h` advances one machine locally, ticks the board at vblank and
+publishes outgoing records independently of simulation, including while paused.
+`src/machine/link_packet.h` encodes 490 bytes: a versioned header with
+generation and sequence, master status bytes 6-15 and the cabinet's 452-byte output
+record. It does not send the whole 4 KB board RAM. Received blocks are checked for
+size, version, cabinet ID, generation and ordering. The original board code
+reconstructs the receive slots and retains unpublished records as before.
+Master/slave board modes remain 1/2; cabinet identities are separate, numbered 1-4.
+The host's active-racer mask is authoritative. Departed guests retain their slots,
+with their last valid car pose/model data but no participation votes or control;
+survivors never renumber during a session. The current race can still display the
+departed car, but subsequent races exclude it. Zeroing the entire record is unsafe:
+the ROM continues copying model pointers and can build an invalid display list.
+The board keeps its original slot count so the ROM can still index remaining
+cabinets by their stable IDs.
+Each packet also carries the board-frame counter. Simulation waits for every
+active peer to reach its current board frame, rather than allowing slower machines
+to lag through race initialization with uninitialized car-model pointers.
+New frame data publishes immediately; empty library heartbeats protect the roster
+while the ROM is still enabling its communication board, and heartbeats and pause
+control continue while waiting. The host can retire a guest stalled behind it for three seconds even when
+that guest's networking still responds.
+
+An acknowledged arcade-lan START supplies a ROM/build fingerprint, session generation
+and shared language/race-type/course settings. Each cabinet validates these before
+publishing any board data. The board does not tick until the first valid peer block,
+so both sides must accept the preparation before the arcade link comes alive.
+The fingerprint is a compatibility check, not authentication. This is a trusted-LAN
+feature, not an internet service.
+
+LAN preparation hides the arcade boot/settings screen and discards its audio,
+as normal PC startup does, until `past_boot()` becomes true. Unlike local startup,
+it advances through the event loop so discovery, peer data and disconnect handling
+continue; the window stays black with the normal preparation popover.
+
+Networking continues behind menus; in-game inputs are released while navigating.
+Only the session host can pause both cabinets, through its menu or P. Resume uses
+three one-second countdown steps; each is retransmitted until the peer acknowledges
+its epoch, state and active mask before advancing. Every remaining guest echoes host control state and
+cannot initiate pause/resume. Countdown timing uses local monotonic time, not
+synchronized OS clocks; transitions reach the guest with network latency, not
+frame-exact lockstep. Opening the host menu again cancels the countdown.
+Packet and discovery protocol version 3 excludes older two-player builds.
+The service inputs, fast-forward and local reset are gated during linked
+play. Startup allows fifteen seconds for the first board packet; after that, the
+host removes guests after departure or three seconds without valid data.
+Other racers continue while two or more remain. Host loss, local suspension or
+fewer than two racers ends the session, resets survivors to standalone and leaves
+each hosting an empty room.
+Original EEPROM bytes are used for saves throughout the session and restored on
+leaving, so session roles/settings do not replace standalone preferences. Rankings
+continue using the normal NVRAM save path.
+
+`make test-host-lan test-vr-lan` checks discovery/join/capacity/start, block delivery,
+host departure, socket reopen and packet encoding without ROMs or pixel checks.
+`build/bin/vr_lan_test --roms build/vr` runs independently paced cabinets through ten
+race cycles. `--impaired` adds seeded loss, delay, duplicates, reordering and 200 ms
+gaps; `--grand-prix` uses the existing feedback-driven driver for Grand Prix and
+can be combined with `--impaired`. `--players 2|3|4` selects the cabinet count;
+`--dropout` removes a guest during a race and exercises the next race (cabinet 2
+in a four-player session, to verify non-contiguous surviving IDs).
+`make test-vr-lan-desktop` exercises two real host processes through their menu/event
+path with CPU rendering and no screenshots or image comparisons. These checks do
+not establish cross-machine discovery or visual quality; those require manual
+two-computer validation.
+The desktop regression uses wall-clock `M1_EVENTS_MS` events so different rendering
+speeds cannot move guest checks outside the host's pause windows.
+`make test-vr-lan-desktop-four` runs the same nonvisual desktop path with four
+processes, including guest departures down to two and last-racer teardown.
+
 ## VR's local multiplayer entry and disconnect handling
 
 Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.
