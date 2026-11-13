@@ -1380,6 +1380,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		invalid("truncated object vertices", poly_adr);
 		return;
 	}
+	if (m_free_cam && foreground) return;
 	game::object_effects effect;
 	if (m_gameplay.object && !m_probing) effect = m_gameplay.object(owner, tex_adr, poly_adr, size, poly_data);
 	if (effect.hidden) return;
@@ -2363,9 +2364,11 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				break;
 			case 0x41:
 				// command 0x41 = object drawn above the HUD (e.g. SWA radar blips)
-				m_above_hud_seen = true;
-				if (pass == RENDER_ABOVE_HUD)
-					push_object(readi(list_offset + 2), readi(list_offset + 4), readi(list_offset + 6), old_z, owner);
+				if (!m_free_cam) {
+					m_above_hud_seen = true;
+					if (pass == RENDER_ABOVE_HUD)
+						push_object(readi(list_offset + 2), readi(list_offset + 4), readi(list_offset + 6), old_z, owner);
+				}
 				list_offset += 8;
 				break;
 			case 2:
