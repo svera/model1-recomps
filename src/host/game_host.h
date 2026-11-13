@@ -84,8 +84,10 @@ public:
 	virtual void keep_arcade_settings() {}
 	virtual void play_style_changed() {}
 
-	// Game-specific choices in Display and Game, and main-menu pages after Game and Controls.
-	virtual std::vector<menu_item> display_menu_items() { return {}; }
+	// Game-specific choices on the shared Display > Picture and Display > Quality pages.
+	virtual std::vector<menu_item> display_picture_menu_items() { return {}; }
+	virtual std::vector<menu_item> display_quality_menu_items() { return {}; }
+	// Game-specific choices in Game, and main-menu pages after Game and Controls.
 	virtual std::vector<menu_item> sound_menu_items() { return {}; }
 	virtual std::vector<menu_item> game_menu_items() { return {}; }
 	virtual std::vector<menu_item> cabinet_game_menu_items() { return game_menu_items(); }

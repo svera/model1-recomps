@@ -83,7 +83,7 @@ public:
 		set_lod(context.machine, lod);
 	}
 
-	std::vector<menu_item> display_menu_items() override
+	std::vector<menu_item> display_quality_menu_items() override
 	{
 		return { { "Draw distance", "Full shows distant scenery and cars in player and Live Monitor views. Arcade keeps the original visibility limits. Full can substantially lower performance. Applies to the next display list.",
 			[this] { return extended ? "Full" : "Arcade"; },
