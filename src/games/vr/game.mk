@@ -40,7 +40,9 @@ test-vr-lan: $(BIN)/vr_lan_test
 	$(BIN)/vr_lan_test
 test-vr-lan-desktop: $(BIN)/vr-native vr-regions
 	python3 tests/games/vr/lan_desktop_test.py $(BIN)/vr-native build/vr
-.PHONY: test-vr-lan test-vr-lan-desktop
+test-vr-lan-desktop-four: $(BIN)/vr-native vr-regions
+	python3 tests/games/vr/lan_desktop_test.py $(BIN)/vr-native build/vr 4
+.PHONY: test-vr-lan test-vr-lan-desktop test-vr-lan-desktop-four
 test-vr-link-rom: $(BIN)/vr_link_test vr-regions
 	$(BIN)/vr_link_test --roms build/vr
 test-vr-two-cabinets: $(BIN)/vr_link_test vr-regions

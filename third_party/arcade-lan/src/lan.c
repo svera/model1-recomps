@@ -998,6 +998,16 @@ static void heard_list(lan_device *device, reader *in)
 	device->members[0].address = device->host_address;
 	device->members[0].heard = device->clock;
 	give_slots(device);
+	if (linked(device) && device->role == LAN_PLAYING)
+		for (int index = 0; index < device->game_count; index++)
+		{
+			link_member *who = &device->game[index];
+			const int known = member_index(device, who->id);
+
+			/* START can precede the LIST containing a newly joined peer's address. */
+			if (!who->direct && known >= 0)
+				who->address = device->members[known].address;
+		}
 	if (device->role == LAN_JOINING)
 		device->role = LAN_IN_ROOM;
 }
@@ -1177,8 +1187,9 @@ static void heard_block(lan_device *device, reader *in, uint32_t sender, lan_add
 	who = link_member_of(device, sender);
 	if (in->short_of || device->role != LAN_PLAYING || serial != device->serial || !who || who->gone)
 		return;
-	if (who->direct && (who->address.ip != from.ip || who->address.port != from.port))
-		return;    /* (its id from another address: not its) */
+	if (who->direct && (who->address.ip != from.ip || who->address.port != from.port)
+		&& (who->address.port != from.port || from.ip >> 24 != 127u))
+		return;    /* Only a same-port loopback route can replace a confirmed address. */
 	who->address = from;
 	who->direct = true;
 	who->heard = device->clock;

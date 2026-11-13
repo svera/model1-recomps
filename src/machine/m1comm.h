@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Model 1 communication-board HLE for one or two local racers and a receive-only relay.
+// Model 1 communication-board HLE for linked racers and a receive-only relay.
 // Shared-memory protocol documented by MAME's m1comm.cpp (BSD-3-Clause,
 // copyright Ariane Fugmann). The transport exchanges snapshots at vblank.
 #pragma once
@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <span>
+#include <stdexcept>
 
 class m1comm
 {
@@ -96,6 +98,27 @@ public:
 		receive_block(m_shared, id);
 		if (!single_racer) receive_block(peer, other);
 		if (id == 2) std::copy_n(peer.begin() + 6, 10, m_shared.begin() + 6);
+		m_shared[5] = 0;
+		++m_ticks;
+	}
+
+	void tick_group(unsigned id, std::span<const memory> cabinets)
+	{
+		if (!m_cn) return;
+		if (m_failed) { m_shared[0] = 0xff; return; }
+		if (id < 1 || id > cabinets.size() || cabinets.size() < 2 || cabinets.size() > 4)
+			throw std::invalid_argument("Model 1 link requires two to four cabinets and a valid ID");
+		for (size_t i = 0; i < cabinets.size(); i++)
+			if (cabinets[i][1] != (i == 0 ? 1 : 2))
+				throw std::invalid_argument("Model 1 link requires one master followed by slaves");
+		if (m_shared[1] != (id == 1 ? 1 : 2))
+			throw std::invalid_argument("Model 1 link cabinet role does not match its ID");
+		m_alive = true;
+		m_shared[0] = 1;
+		m_shared[2] = uint8_t(id);
+		m_shared[3] = uint8_t(cabinets.size());
+		for (size_t i = 0; i < cabinets.size(); i++) receive_block(cabinets[i], unsigned(i + 1));
+		if (id != 1) std::copy_n(cabinets[0].begin() + 6, 10, m_shared.begin() + 6);
 		m_shared[5] = 0;
 		++m_ticks;
 	}

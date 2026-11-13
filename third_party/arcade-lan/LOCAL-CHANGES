@@ -1,3 +1,13 @@
 lan_config.max_devices: optional host-side room capacity (0 retains the upstream
 limit). Enforced when admitting members and validated by lan_open. No wire-format
-change. Model 1 currently uses two devices, each with one racer.
+change. Model 1 uses up to four devices, each with one racer.
+
+LAN_LINK: refresh non-direct game-peer addresses from subsequent room LISTs.
+START can arrive before the LIST containing a newly joined peer. Keeping the
+original empty address prevents guests from exchanging blocks with one another.
+Directly confirmed addresses and the frozen game roster remain unchanged.
+
+LAN_LINK: allow a confirmed peer to move to a loopback source address at the same
+UDP port. Multiple clients on one machine can discover a mix of LAN and loopback
+routes, then permanently reject one another's blocks under strict IP pinning.
+Only a same-port loopback source can replace a direct address, not a new remote IP.

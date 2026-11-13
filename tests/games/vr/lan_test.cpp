@@ -14,7 +14,7 @@
 static void codec()
 {
 	using namespace model1_link;
-	static_assert(PACKET_SIZE == 486 && PACKET_SIZE <= 1024);
+	static_assert(PACKET_SIZE == 490 && PACKET_SIZE <= 1024);
 	m1comm::memory out{};
 	out[1] = 2; out[4] = 1;
 	for (size_t i = 6; i < 16; i++) out[i] = uint8_t(i);
@@ -37,7 +37,7 @@ static void codec()
 	bad[4] = 1;
 	assert(!peer.take(bad));
 	bad = bytes;
-	bad[20] = 1;
+	bad[21] = 1;
 	assert(!peer.take(bad));
 	bad = bytes;
 	bad[0] = 'X';
@@ -48,11 +48,12 @@ static void codec()
 	out[1] = 2;
 	assert(peer.take(encode(out, 42, 1, 1, 12)));
 	assert(peer.pause_step() == 1 && peer.pause_epoch() == 12);
-	assert(peer.take(encode(out, 42, 3, 2, 13)));
+	assert(peer.take(encode(out, 42, 3, 2, 13, 2, 3, 123)));
+	assert(peer.frame() == 123 && peer.active_mask() == 3);
 	assert(!peer.take(encode(out, 42, 2, 1, 12)));
 	assert(peer.pause_step() == 2 && peer.pause_epoch() == 13);
 	assert(!peer.take(encode(out, 42, 4, 5, 14)));
-	puts("LAN codec: 486 bytes, record/status roundtrip, versions, identities, generations and ordering passed");
+	puts("LAN codec: 490 bytes, record/status roundtrip, versions, identities, generations and ordering passed");
 }
 
 static void network_board()
@@ -91,7 +92,7 @@ static void network_board()
 	assert(master.update(host, now, a) && slave.update(guest, now, b));
 	master.pause(true, now);
 	assert(!master.paused()); // Opening a menu during preparation must not stop cabinet boot.
-	a.link()->tick(); b.link()->tick();
+	master.exchange(a); slave.exchange(b);
 	assert(a.link()->read(0x398) == 0x52 && b.link()->read(0x1d4) == 0x31);
 	assert(a.link()->ticks() == 1 && b.link()->ticks() == 1);
 	std::vector<std::pair<int, uint64_t>> steps;
@@ -150,7 +151,7 @@ static void network_board()
 		update();
 		if (!master.update(host, now, a)) break;
 	}
-	assert(host.error().find("No cabinet data") != std::string::npos);
+	assert(host.error().find("Fewer than two racers") != std::string::npos);
 	master.stop(a); slave.stop(b);
 	assert(!a.link() && !b.link() && !master.active() && !slave.active());
 	assert(host.host());
@@ -159,25 +160,145 @@ static void network_board()
 	puts("LAN board adapter: stable IDs, compact record delivery, stale-session timeout and teardown passed");
 }
 
+static void network_group(int count)
+{
+	const lan_config config{{'T', 'V', 'R', 'G'}, 3, 29878, 0, 0, 0, LAN_LINK, 0, 4};
+	std::array<std::unique_ptr<lan_session>, 5> sessions;
+	std::array<std::unique_ptr<model1>, 4> machines;
+	std::array<model1_lan, 4> adapters;
+	uint64_t now = 0;
+	for (int i = 0; i <= count; i++) {
+		sessions[i] = std::make_unique<lan_session>(config);
+		assert(sessions[i]->open("RACER-" + std::to_string(i + 1)));
+	}
+	auto transport = [&] {
+		now += 17;
+		for (int i = 0; i <= count; i++) sessions[i]->update(now);
+	};
+	assert(sessions[0]->host());
+	for (int i = 1; i < count; i++) {
+		assert(sessions[i]->search());
+		for (int n = 0; n < 180 && sessions[i]->rooms().empty(); n++) transport();
+		assert(!sessions[i]->rooms().empty() && sessions[i]->join(sessions[i]->rooms().front()));
+		for (int n = 0; n < 180 && !sessions[i]->in_room(); n++) transport();
+		assert(sessions[i]->in_room());
+	}
+	assert(sessions[0]->members().size() == unsigned(count));
+	if (count == 4) {
+		assert(sessions[4]->search());
+		for (int n = 0; n < 180 && sessions[4]->rooms().empty(); n++) transport();
+		assert(!sessions[4]->rooms().empty() && sessions[4]->join(sessions[4]->rooms().front()));
+		for (int n = 0; n < 180 && sessions[4]->error().empty(); n++) transport();
+		assert(sessions[4]->error() == "LAN: ROOM FULL");
+	}
+	assert(sessions[0]->start({}));
+	for (int n = 0; n < 180 && sessions[count - 1]->role() != LAN_PLAYING; n++) transport();
+	for (int i = 0; i < count; i++) {
+		assert(sessions[i]->role() == LAN_PLAYING && adapters[i].begin(*sessions[i], 81));
+		assert(adapters[i].player() == i + 1 && adapters[i].role() == (i ? 2 : 1));
+		model1::regions regions;
+		regions.title = game::id{"vr"};
+		machines[i] = std::make_unique<model1>(std::move(regions));
+		adapters[i].attach(*machines[i]);
+		auto &board = *machines[i]->link();
+		board.write(1, i ? 2 : 1);
+		board.write(4, 1);
+		board.write(0x10, uint8_t(0x40 + i));
+		board.write(0x10 + 0x10e, uint8_t(i + 1));
+		board.write(6, uint8_t(0x60 + i));
+	}
+	// Slow ROM boot must not trip arcade-lan's three-second peer timeout.
+	for (int n = 0; n < 240; n++) {
+		transport();
+		for (int i = 0; i < count; i++) assert(adapters[i].update(*sessions[i], now, *machines[i]));
+	}
+	for (int i = 0; i < count; i++) {
+		const auto roster = sessions[i]->members(true);
+		assert(std::none_of(roster.begin(), roster.end(), [](const auto &member) { return member.gone; }));
+		machines[i]->link()->set_cn(1);
+		assert(!adapters[i].ready_for_frame(*machines[i]));
+	}
+	int alive = count;
+	std::array<bool, 4> connected{true, true, true, true};
+	auto poll = [&](int skip = -1) {
+		transport();
+		for (int i = 0; i < count; i++)
+			if (connected[i] && i != skip) {
+				assert(adapters[i].update(*sessions[i], now, *machines[i]));
+				if (!adapters[i].paused() && adapters[i].ready_for_frame(*machines[i]))
+					adapters[i].exchange(*machines[i]);
+			}
+	};
+	for (int n = 0; n < 60; n++) poll();
+	for (int i = 0; i < count; i++) {
+		const auto &board = *machines[i]->link();
+		assert(board.read(2) == i + 1 && board.read(3) == count && board.read(6) == 0x60);
+		for (int slot = 0; slot < count; slot++)
+			assert(board.read(0x10 + unsigned(slot + 1) * 0x1c4) == 0x40 + slot);
+	}
+	adapters[0].pause(true, now);
+	for (int n = 0; n < 60; n++) poll();
+	for (int i = 0; i < count; i++) assert(adapters[i].paused());
+	adapters[count - 1].pause(false, now);
+	assert(adapters[count - 1].paused());
+	// All guests, not just the first, must acknowledge each countdown step.
+	adapters[0].pause(false, now);
+	for (int n = 0; n < 90; n++) poll(count - 1);
+	assert(adapters[0].countdown() == 3);
+	for (int n = 0; n < 240; n++) poll();
+	for (int i = 0; i < count; i++) assert(!adapters[i].paused());
+	// Leave while paused: keep IDs and valid car data, but clear participation.
+	adapters[0].pause(true, now);
+	for (int n = 0; n < 30; n++) poll();
+	while (alive > 2) {
+		const int departed = count - alive + 1;
+		sessions[departed]->close();
+		connected[departed] = false;
+		--alive;
+		for (int n = 0; n < 90; n++) poll();
+		for (int i = 0; i < count; i++) {
+			if (!connected[i]) continue;
+			assert(adapters[i].racers() == alive && adapters[i].player() == i + 1 && adapters[i].paused());
+			assert(machines[i]->link()->read(0x10 + unsigned(departed + 1) * 0x1c4) == 0x40 + departed);
+		}
+	}
+	adapters[0].pause(false, now);
+	for (int n = 0; n < 240; n++) poll();
+	assert(!adapters[0].paused() && !adapters[count - 1].paused());
+	for (int i = 0; i < count; i++)
+		if (connected[i])
+			for (int slot = 0; slot < count; slot++)
+				assert(machines[i]->link()->read(0x10 + unsigned(slot + 1) * 0x1c4 + 0x10e) ==
+					(connected[slot] ? slot + 1 : 0));
+	sessions[0]->close();
+	for (int n = 0; n < 240 && adapters[count - 1].update(*sessions[count - 1], now, *machines[count - 1]); n++) transport();
+	assert(sessions[count - 1]->error().find("host disconnected") != std::string::npos);
+	for (int i = 0; i < count; i++) adapters[i].stop(*machines[i]);
+	printf("LAN group: %d cabinets, slots, status, all-peer pause, guest loss and host loss passed\n", count);
+}
+
 struct delivery
 {
 	int64_t at;
-	int to;
+	int to, from;
 	model1_link::packet bytes;
 };
 
-static int asynchronous(const char *dir, bool impaired, bool grand_prix)
+static int asynchronous(const char *dir, bool impaired, bool grand_prix, int count, bool dropout)
 {
-	std::array<std::unique_ptr<model1>, 2> machines;
-	std::array<rec::context, 2> runtimes;
-	std::array<model1_link::receiver, 2> peers;
-	std::array<std::unique_ptr<game::auto_play>, 2> drivers;
-	std::array<uint32_t, 2> sequences{};
+	std::array<std::unique_ptr<model1>, 4> machines;
+	std::array<rec::context, 4> runtimes;
+	std::array<std::array<model1_link::receiver, 4>, 4> peers;
+	std::array<std::unique_ptr<game::auto_play>, 4> drivers;
+	std::array<uint32_t, 4> sequences{};
+	bool departed = false;
+	const int departed_index = count == 4 ? 1 : count - 1;
+	auto connected = [&](int i) { return !departed || i != departed_index; };
 	std::deque<delivery> queue;
 	std::mt19937 random(0x4d314c41);
 	rec::hints map;
 	assert(map.read("assets/games/vr/vr_map.txt"));
-	for (int p = 0; p < 2; p++) {
+	for (int p = 0; p < count; p++) {
 		machines[p] = std::make_unique<model1>(load_regions(dir, game::id{"vr"}));
 		drivers[p] = game::make_auto_play(game::id{"vr"}, "qualifying", 0, false);
 		auto &m = *machines[p];
@@ -188,29 +309,28 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix)
 		m.reset();
 		for (int f = 0; f < 900; f++) m.run_frame();
 		assert(game::vr::set_coin_setting(m, game::vr::FREE_PLAY));
-		assert(game::vr::set_link_player(m, p + 1));
+		assert(game::vr::set_link_player(m, p == 0 ? 1 : 2));
 		game::vr::set_machine_setting(m, game::vr::machine_setting::race_type, grand_prix ? 1 : 0);
-		peers[p].reset(1, uint8_t(2 - p));
-		m.enable_link([&, p](const auto &, auto &in) {
-			assert(peers[p].available());
-			in = peers[p].memory();
-			return true;
-		}, true);
+		for (int other = 0; other < count; other++) peers[p][other].reset(1, uint8_t(other + 1));
+		m.enable_link({}, true);
 		m.reset();
 		runtimes[p].attach(m.cpu(), "vr");
 	}
-	std::array<int64_t, 2> next{0, impaired ? 170000 : 0};
-	std::array<int, 2> previous{-1, -1}, races{}, race_frames{}, results{};
-	std::array<bool, 2> saw_results{};
+	std::array<int64_t, 4> next{};
+	for (int p = 0; p < count; p++) next[p] = impaired ? p * 170000 : 0;
+	std::array<int, 4> previous{-1, -1, -1, -1}, races{}, race_frames{}, results{};
+	std::array<bool, 4> saw_results{};
 	int start_at = 2400, completed = 0;
 	bool racing = false;
 	const int limit = grand_prix ? 1200000 : 180000;
-	for (int frames = 0; frames < limit * 2; frames++) {
-		const int p = next[0] <= next[1] ? 0 : 1;
+	for (int frames = 0; frames < limit * count; frames++) {
+		int p = -1;
+		for (int i = 0; i < count; i++)
+			if (connected(i) && (p < 0 || next[i] < next[p])) p = i;
 		const int64_t now = next[p];
 		for (auto it = queue.begin(); it != queue.end();) {
 			if (it->at <= now) {
-				peers[it->to].take(it->bytes);
+				if (connected(it->from) && connected(it->to)) peers[it->to][it->from].take(it->bytes);
 				it = queue.erase(it);
 			} else ++it;
 		}
@@ -230,14 +350,28 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix)
 		}
 		for (int line = 0; line < model1::FRAME_LINES; line++) {
 			if (line == model1::FRAME_VBLANK && m.link()->ready() &&
-				m.link()->snapshot()[1] == p + 1) {
-				const auto packet = model1_link::encode(m.link()->snapshot(), 1, sequences[p]++);
+				m.link()->snapshot()[1] == (p == 0 ? 1 : 2)) {
+				const auto packet = model1_link::encode(m.link()->snapshot(), 1, sequences[p]++,
+					0, 0, uint8_t(p + 1), uint8_t((1u << count) - 1), uint32_t(m.link()->ticks()));
 				const bool gap = impaired && elapsed % 1800 >= 900 && elapsed % 1800 < 912;
-				if (!gap && (!impaired || random() % 100 >= 10)) {
-					queue.push_back({now + (impaired ? int64_t(random() % 50001) : 0), 1 - p, packet});
-					if (impaired && random() % 10 == 0) queue.push_back({now + 60000, 1 - p, packet});
+				for (int to = 0; to < count; to++)
+					if (connected(to) && to != p && !gap && (!impaired || random() % 100 >= 10)) {
+						queue.push_back({now + (impaired ? int64_t(random() % 50001) : 0), to, p, packet});
+						if (impaired && random() % 10 == 0) queue.push_back({now + 60000, to, p, packet});
+					}
+				std::array<m1comm::memory, 4> snapshots{};
+				bool ready = true;
+				for (int other = 0; other < count; other++) {
+					if (other == p) snapshots[other] = m.link()->snapshot();
+					else if (!connected(other))
+						snapshots[other] = model1_lan::retired_snapshot(peers[p][other].memory());
+					else {
+						ready = ready && peers[p][other].available();
+						snapshots[other] = peers[p][other].memory();
+					}
+					snapshots[other][1] = other == 0 ? 1 : 2;
 				}
-				if (peers[p].available()) m.link()->tick();
+				if (ready) m.link()->tick_group(unsigned(p + 1), std::span(snapshots).first(count));
 			}
 			m.run_scanline();
 		}
@@ -257,20 +391,35 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix)
 		}
 		if (phase == 0x14) {
 			race_frames[p]++;
-			if (m.read8(0x40d826) != 2) {
+			const int expected_count = count - int(departed && completed > 0);
+			if (m.read8(0x40d826) != expected_count) {
 				fprintf(stderr, "LAN proof: cabinet %d entered race with %u participants\n", p + 1, m.read8(0x40d826));
 				return 1;
 			}
+			for (int other = 0; other < count; other++)
+				if (connected(other) && machines[other]->work_ram()[0x1138] == 0x14) {
+					assert(m.read8(0x501934) == machines[other]->read8(0x501934));
+					for (int i = 0; i <= expected_count; i++)
+						assert(m.read8(0x40d826 + i) == machines[other]->read8(0x40d826 + i));
+				}
 		}
-		if (racing && game::vr::in_attract_mode(*machines[0]) && game::vr::in_attract_mode(*machines[1])) {
+		if (dropout && !departed && races[0] && race_frames[0] >= 600) {
+			departed = true;
+			fprintf(stderr, "LAN proof: dropped cabinet %d during racing\n", departed_index + 1);
+		}
+		bool attract = true;
+		for (int i = 0; i < count; i++)
+			if (connected(i)) attract = attract && game::vr::in_attract_mode(*machines[i]);
+		if (racing && attract) {
 			completed++;
 			fprintf(stderr, "LAN proof: completed cycle %d; races %d/%d, results %d/%d\n",
 				completed, races[0], races[1], results[0], results[1]);
-			if (races[0] != completed || races[1] != completed || !saw_results[0] || !saw_results[1]) return 1;
-			if (completed == 10) return 0;
+			for (int i = 0; i < count; i++)
+				if (connected(i) && (races[i] != completed || !saw_results[i])) return 1;
+			if (completed == (dropout ? 2 : 10)) return 0;
 			racing = false;
 			saw_results = {};
-			for (int i = 0; i < 2; i++)
+			for (int i = 0; i < count; i++)
 				drivers[i] = game::make_auto_play(game::id{"vr"}, "qualifying", 0, false);
 			start_at = elapsed + 180;
 		}
@@ -279,7 +428,7 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix)
 				previous[0], previous[1], races[0], races[1]);
 			return 1;
 		}
-		next[p] += impaired ? (p ? 16670 : 16663) : 16667;
+		next[p] += impaired ? 16663 + p * 4 : 16667;
 	}
 	fprintf(stderr, "LAN proof: exceeded simulation budget\n");
 	return 1;
@@ -289,16 +438,23 @@ int main(int argc, char **argv)
 {
 	codec();
 	network_board();
+	network_group(3);
+	network_group(4);
 	if (argc == 1) return 0;
-	if (argc < 3 || argc > 5 || strcmp(argv[1], "--roms")) {
-		fprintf(stderr, "usage: vr_lan_test [--roms <regions> [--impaired] [--grand-prix]]\n");
+	if (argc < 3 || strcmp(argv[1], "--roms")) {
+		fprintf(stderr, "usage: vr_lan_test [--roms <regions> [--impaired] [--grand-prix] [--players 2|3|4] [--dropout]]\n");
 		return 2;
 	}
 	bool impaired = false, grand_prix = false;
+	bool dropout = false;
+	int count = 2;
 	for (int i = 3; i < argc; i++) {
 		if (!strcmp(argv[i], "--impaired")) impaired = true;
 		else if (!strcmp(argv[i], "--grand-prix")) grand_prix = true;
+		else if (!strcmp(argv[i], "--dropout")) dropout = true;
+		else if (!strcmp(argv[i], "--players") && i + 1 < argc) count = atoi(argv[++i]);
 		else return 2;
 	}
-	return asynchronous(argv[2], impaired, grand_prix);
+	if (count < 2 || count > 4 || (dropout && count < 3)) return 2;
+	return asynchronous(argv[2], impaired, grand_prix, count, dropout);
 }
