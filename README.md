@@ -420,8 +420,8 @@ make test-wingwar-profile
 
 ## Credits and licence
 
-The project incorporates work from MAME, Musashi, ymfm, SLJIT, the Z80 core, RmlUi, GLM, stb_image, SDL 3, and
-FreeType. `tools/release/licenses.sh` gathers the third-party notices for distribution packages.
+The project incorporates work from MAME, Musashi, ymfm, SLJIT, the Z80 core, RmlUi, GLM, stb_image, SDL 3,
+FreeType, and [arcade-lan](https://github.com/cheviman/arcade-lan). `tools/release/licenses.sh` gathers the third-party notices for distribution packages.
 
 The project's own code is MIT-licensed: see [LICENSE](LICENSE). Third-party components retain their respective
 licences. This project is not affiliated with or endorsed by Sega.
