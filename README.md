@@ -76,8 +76,6 @@ Each game's section below lists what is specific to that game.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Experimental LAN rooms for two to four computers: create a room or find and join one without entering IP addresses.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
-- With arcade detail enabled, Virt McPolygon can intermittently disappear in the Live Monitor,
-  as in the original.
 - Saved high scores.
 - Car color, language, and course settings.
 
@@ -94,6 +92,9 @@ Watch the original arcade broadcast with Virt McPolygon during solo or two-playe
 above the action or in a window you can move to another display. It follows
 **Display > Picture > Picture shape** and is off by default. Enabling or disabling it restarts
 the game; switching layouts does not. Enabling it may reduce performance.
+
+**Known limitation:** with arcade detail enabled, Virt McPolygon can intermittently
+disappear in the Live Monitor, as in the original.
 
 **macOS:** open **Virtua Racing Recomp.app**. If macOS blocks it, allow it through
 **System Settings > Privacy & Security**.
