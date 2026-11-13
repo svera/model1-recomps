@@ -24,17 +24,30 @@ multiple games; this repository currently supports Virtua Racing, Star Wars Arca
 Every game includes:
 
 - Sharper graphics, with widescreen and ultrawide views (up to 32:9) that don't stretch the HUD.
-- Original arcade motion or smoother 60 / 120 FPS.
-- Full-detail models and full draw distance by default, with options to restore the arcade's own
-  LOD and draw distance.
-- Free camera: press **F4**, **View/Back + R3** on a controller, or choose **Display > Free camera**.
+- **Display:** **Picture** has screen shape, frame rate, fullscreen and free camera; **Quality**
+  has render scale, antialiasing, LOD, draw distance and background filtering; **Screen filter
+  and colours** has screen filters, CRT colours, brightness and gamma.
+- **Display > Quality > LOD:** Off (default) keeps the most detailed models at every distance; On restores
+  the arcade's simpler distant models.
+- **Display > Quality > Draw distance:** Full (default) draws beyond the arcade's original limits; Arcade
+  restores the original draw distance and pop-in.
+- **Display > Picture > Frame rate:** 30 FPS shows the arcade's original motion; 60 and 120 FPS use
+  interpolation for smoother motion. The choice applies immediately and is saved as `fps` in
+  each game's `settings.ini` (default: 120). Game logic and audio timing are unchanged; screen
+  refresh rate and system performance limit the visible frame rate.
+- Free camera: press **F4**, **View/Back + R3** on a controller, or choose
+  **Display > Picture > Free camera**.
   Use **W/A/S/D** to move,
   **Q/E** to move vertically, the **arrow keys** to look, and **R** to reset; hold **Shift**
   to move faster. Game controls are disabled while it's active.
 - Keyboard and gamepad support, with customizable controls.
-- PC play style without coins, or Arcade play style with the cabinet's coin settings.
+- **Game > Play style:** PC starts without coins; Arcade uses the cabinet's coin settings.
+- **Sound:** adjust the audio levels.
 - Saved settings and the arcade's own difficulty options.
 - Packages for macOS, Windows and Steam Deck / Linux.
+
+Open the menu with **Esc** or **View / Select**. Higher graphics settings need a faster computer;
+if play feels slow, lower the render scale or frame rate.
 
 Each game's section below lists what is specific to that game.
 
@@ -61,8 +74,8 @@ Each game's section below lists what is specific to that game.
 - All three courses, four camera views, and the original arcade racing.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
-- Full draw distance also covers distant cars and the Live Monitor. In the Live Monitor, turning
-  LOD on restores Virt McPolygon's original intermittent disappearance caused by the polygon budget.
+- With arcade detail enabled, Virt McPolygon can intermittently disappear in the Live Monitor,
+  as in the original.
 - Saved high scores.
 - Car color, language, and course settings.
 
@@ -73,10 +86,11 @@ Each game's section below lists what is specific to that game.
 3. Start the game and select **`vr.zip`** when asked. It remembers your files for next time.
 4. Press **1** on the keyboard or **Start** on your gamepad to play.
 
-**Live Monitor:** choose **Display > Live Monitor > Above players** or **Spectator window**.
+**Live Monitor:** choose **Display > Picture > Live Monitor > Above players** or
+**Spectator window**.
 Watch the original arcade broadcast with Virt McPolygon during solo or two-player games,
 above the action or in a window you can move to another display. It follows
-**Display > Picture shape** and is off by default. Enabling or disabling it restarts
+**Display > Picture > Picture shape** and is off by default. Enabling or disabling it restarts
 the game; switching layouts does not. Enabling it may reduce performance.
 
 **macOS:** open **Virtua Racing Recomp.app**. If macOS blocks it, allow it through
@@ -102,7 +116,7 @@ Non-Steam Game and set **Start In** to the extracted **VirtuaRacing** folder.
 | Open menu | Esc | View / Select |
 
 To see or change your actual controller bindings, open **Esc > Controls > Player 1 >
-Pad buttons**. Coins are only needed in Arcade play style.
+Pad buttons**.
 
 Under **Controls > Player 1 > Analog axes > Steering curve**, **Arcade** (formerly
 Linear) keeps the original response. **Standard** (the default) replaces Exponential with a nonlinear
@@ -115,20 +129,13 @@ through center. Arcade retains instant digital steering. Pedals, course selectio
 and initials entry are unchanged. Each local player has their own setting; saved Exponential settings
 automatically migrate to Standard. Saved Linear settings remain Arcade.
 
-### Useful settings
+### Game-specific settings
 
-Open the menu with **Esc** or **View / Select**:
-
-- **Display:** change render scale, antialiasing, screen shape (Fit window, 4:3, 16:10, 16:9, 21:9, or 32:9), background filtering, fullscreen, and frame rate.
-- **Display > CRT colours / Brightness / Gamma:** adjust the picture's colours and tones without changing the menus. These require SDL's GPU renderer (Metal on macOS, Vulkan or Direct3D 12 elsewhere); unsupported renderers show “not with this renderer”. Defaults leave the original picture unchanged.
-- **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
+- **Display:** adjust antialiasing and background filtering.
+- **Display > Screen filter and colours > CRT colours / Brightness / Gamma:** adjust the picture's colours and tones without changing the menus. These require SDL's GPU renderer (Metal on macOS, Vulkan or Direct3D 12 elsewhere); unsupported renderers show “not with this renderer”. Defaults leave the original picture unchanged.
 - **Game:** choose your car color, language, course, and difficulty.
   With two players, Language is directly under Game and applies to both players
   and the Live Monitor. Player submenus keep car color, difficulty and service settings.
-- **Sound:** adjust the audio levels.
-
-Higher graphics settings need a faster computer. If play feels slow, lower the render scale
-or frame rate.
 
 ### Local multiplayer
 
@@ -205,37 +212,22 @@ Non-Steam Game and set **Start In** to the extracted **StarWarsArcade** folder.
 | Insert coin (Arcade mode) | 5 | 6 | Left bumper |
 | Open menu | Esc | - | View / Select |
 
-To see or change your actual controller bindings, open **Esc > Controls**. Coins are only
-needed in Arcade play style. Hold **Tab** to fast-forward, including through attract mode;
+To see or change your actual controller bindings, open **Esc > Controls**. Hold **Tab** to
+fast-forward, including through attract mode;
 **P** pauses and resumes.
 
-### Useful settings
+### Game-specific settings
 
-Open the menu with **Esc** or **View / Select**:
-
-- **Display:** change sharpness, screen shape (up to 32:9), fullscreen, and frame rate. 30 FPS shows the
-  game as the arcade drew it; 60 and 120 smooth the motion between pictures.
-- **Display > LOD:** Off (default) keeps the most detailed models at every distance, including
-  the complete Death Star through the attract-mode approach. On uses the arcade's simpler
-  distant models.
-- **Display > Draw distance:** Full (default) shows the Death Star's surface further out and
-  draws the asteroid field's rocks and Star Destroyers before they come into view, so they no
-  longer pop in. Arcade keeps the cabinet's original pop-in.
-- **Display > Widescreen cockpit:** On (default) continues the cockpit's canopy struts and side
+- **Display > Picture > Widescreen cockpit:** On (default) continues the cockpit's canopy struts and side
   consoles to the edges of a 16:9 or wider screen, following their lines instead of stretching
   the panel. Off leaves the sides open. Other 2D art, such as the notices and the Rankings,
   keeps its 4:3 proportions; tiled backgrounds on 4:3 screens continue across the selected shape.
-- **Game > Play style:** PC mode starts without coins; Arcade mode uses the cabinet's coin settings.
 - **Game:** invert flight Y, and the arcade's difficulty (player, enemy, timer) and attract
   sound settings. Changing one of these restarts the game when the menu closes.
 - **Game > Service menu:** opens the arcade's own test menu. **9** moves and **F2** selects;
   choose EXIT to return.
 - **Cheats > Gunner assist:** in PILOT & GUNNER mode, the Gunner's laser aims at the nearest
   enemy by itself.
-- **Sound:** adjust the audio levels.
-
-Higher graphics settings need a faster computer. If play feels slow, lower the render scale
-or frame rate.
 
 #### Differences from the arcade
 
@@ -308,32 +300,18 @@ Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
 | Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
 
-To see or change your actual controller bindings, open **Esc > Controls**. Coins are only
-needed in Arcade play style. Hold **Tab** to fast-forward; **P** pauses and resumes.
+To see or change your actual controller bindings, open **Esc > Controls**. Hold **Tab** to
+fast-forward; **P** pauses and resumes.
 
-### Useful settings
+### Game-specific settings
 
-Open the menu with **Esc** or **View / Select**:
-
-- **Display:** change sharpness, screen shape (up to 32:9), fullscreen, and frame rate. 30 FPS shows the
-  game as the arcade drew it; 60 and 120 smooth the motion between pictures.
-- **Display > LOD:** Off (default) keeps the highest-detail scenery models at every distance.
-  On uses the arcade's simpler distant models.
-- **Display > Draw distance:** Full (default) draws distant scenery the arcade left out, without
-  changing game timing or collisions. Aircraft and other moving objects keep their original
-  visibility. Arcade restores the original scenery limits.
-- **Game > Play style:** PC mode (default) skips the startup tests and starts without coins;
-  Arcade mode shows the cabinet's boot screen and uses its coin settings.
 - **Game:** the arcade's Game Assignments: difficulty (1 easy - 8 hard, default 1), expert-mode
   time and aircraft life. Changing one restarts the game when the menu closes.
 - **Game > Service menu:** opens the arcade's own test menu. **9** moves and **F2** selects;
   choose EXIT to return.
 - **Cheats:** invincibility (your aircraft takes no damage and doesn't spin when hit) and infinite
   missiles. CPU opponents are unchanged. Both are off by default and reset when the game restarts.
-- **Sound:** adjust the audio levels and the arcade's attract-mode sound.
-
-Higher graphics settings need a faster computer. If play feels slow, lower the render scale
-or frame rate.
+- The **Sound** menu also has the arcade's attract-mode sound setting.
 
 Wing War recompiles your ROM's V60 program to native code at startup; use `--interp` to run on the
 Model 1 interpreter instead.
@@ -351,11 +329,6 @@ The shared runtime models the Model 1 board around its main NEC V60 CPU: the Fuj
 coprocessor (TGP), polygon rasterizer, System 24 tile layers, sound board, and I/O board. The V60 interpreter,
 TGP core, and much of the machine implementation are based on MAME. The SDL 3 host supplies the window, input,
 audio, saves, and menus.
-
-Menu > **Display > Frame rate** selects **30**, **60**, or **120 FPS**. The 30 FPS arcade option
-disables interpolation; 60 and 120 use interpolated pictures. The choice applies immediately and
-is saved as `fps` in each game's `settings.ini` (default: 120). Game logic and audio retain their
-original timing. The screen's refresh rate and available performance limit the visible frame rate.
 
 The CPU renderer reproduces the arcade's 1x picture. Optional higher render scales, antialiasing, and GPU rendering
 are host-side features. On supported systems, the GPU renderer is checked against the CPU renderer and falls back
