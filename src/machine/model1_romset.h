@@ -71,8 +71,8 @@ struct result
 	bool has_tgp = false, has_ioboard = false, has_advanced_ioboard = false;
 };
 
-// zips: the game's set, and optionally model1io.zip (the I/O board's program) or a newer set
-// with more in it. Every file in them is looked at; the ROMs are found by name or by CRC.
+// zips: the game's set and its required I/O board firmware (model1io.zip or model1io2.zip).
+// Firmware can also be included in the game's archive. ROMs are found by name or by CRC.
 result load(const definition &set, const std::vector<std::string> &zips);
 
 // Whether a zip holds this game (enough to tell its set from model1io.zip or another game's).

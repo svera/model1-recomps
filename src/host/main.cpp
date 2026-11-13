@@ -755,7 +755,9 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 	const std::string where = "It's copied into " + dest.string() + ", so you only do this once.";
 	const char *title = set.display_name;
 	const std::string zip = set.zip, mame = std::string("MAME's \"") + set.mame_name + "\" set (" + zip + ")";
-	std::string note = problem + "Choose your copy of " + std::string(title) + ": " + mame + ".\n\n" + where;
+	const char *io_name = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
+	const std::string io_note = "Keep " + std::string(io_name) + " beside " + zip + "; both are required.";
+	std::string note = problem + "Choose your copy of " + std::string(title) + ": " + mame + ".\n\n" + io_note + "\n\n" + where;
 	for (;;) {
 		if (!message_box(SDL_MESSAGEBOX_INFORMATION, title, note)) return false;
 		struct pick { std::atomic<bool> done{ false }; bool failed = false; std::vector<std::string> files; } chosen;
@@ -768,7 +770,7 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 		}, &chosen, nullptr, filters, 1, nullptr, false);
 		while (!chosen.done.load(std::memory_order_acquire)) { SDL_Event e; while (SDL_PollEvent(&e)) {} SDL_Delay(10); }
 		if (chosen.failed) {
-			const std::string msg = "There's no file picker here. Put your " + zip + " in this folder, then start the game again:\n\n"
+			const std::string msg = "There's no file picker here. Put your " + zip + " and " + io_name + " in this folder, then start the game again:\n\n"
 									+ dest.string();
 			std::error_code ec;
 			fs::create_directories(dest, ec);
@@ -788,12 +790,14 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 			note = "Couldn't copy it into " + dest.string() + ": " + why + "\n\nChoose your " + zip + ".";
 			continue;
 		}
-		const char *io_name = set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip";
 		const fs::path io = fs::path(f).parent_path() / io_name;    // its neighbour, if any
-		if (fs::exists(io, ec)) copy_whole(io, dest / io_name, why);
+		if (fs::exists(io, ec) && !copy_whole(io, dest / io_name, why)) {
+			note = "Couldn't copy " + std::string(io_name) + " into " + dest.string() + ": " + why + "\n\n" + io_note;
+			continue;
+		}
 		romset::result r = romset::load(set, zips_in(dest));
 		if (r.ok) { keep_copy(); out = std::move(r.regions); return true; }
-		note = r.error + "\n\nChoose " + mame + ".";
+		note = r.error + "\n\n" + io_note + "\n\nChoose " + mame + ".";
 	}
 }
 

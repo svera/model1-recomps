@@ -192,11 +192,15 @@ result load(const definition &set, const std::vector<std::string> &zips)
 		res.regions.tgp_program = d;
 		res.has_tgp = true;
 	}
-	if (set.use_ioboard)
-		if (auto [z, e] = find("epr-14869b.25", nullptr, IOBOARD_CRC); z && z->read(*e, d)) {
-			res.regions.ioboard = d;
-			res.has_ioboard = true;
+	if (set.use_ioboard) {
+		auto [z, e] = find("epr-14869b.25", nullptr, IOBOARD_CRC);
+		if (!z || !z->read(*e, d)) {
+			res.error = "Missing or damaged Model 1 I/O BIOS epr-14869b.25 (model1io.zip).";
+			return res;
 		}
+		res.regions.ioboard = d;
+		res.has_ioboard = true;
+	}
 	if (set.use_advanced_ioboard) {
 		auto [z, e] = find("epr-16891.6", nullptr, ADVANCED_IOBOARD_CRC);
 		if (!z || !z->read(*e, d)) {
