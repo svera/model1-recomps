@@ -91,6 +91,11 @@ int main(int argc, char **argv)
 	const std::string dir = argv[argc - 1];
 	const romset::result r = romset::load(set, zips);
 	if (!r.ok) { fprintf(stderr, "%s: %s\n", argv[1], r.error.c_str()); return 1; }
+	if (set.use_ioboard &&
+		(!r.has_ioboard || r.regions.ioboard.size() != 0x10000)) {
+		fprintf(stderr, "%s: Model 1 I/O BIOS was not loaded\n", argv[1]);
+		return 1;
+	}
 	if (set.use_advanced_ioboard &&
 		(!r.has_advanced_ioboard || r.regions.ioboard2.size() != 0x10000)) {
 		fprintf(stderr, "%s: Advanced Model 1 I/O BIOS was not loaded\n", argv[1]);

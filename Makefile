@@ -361,6 +361,7 @@ test-romset-tool:
 test-romset: test-romset-tool $(BIN)/romset_test $(foreach g,$(GAMES),$($(g)_LOCAL_REGIONS))
 	@[ -n "$(wildcard $(GAMES:%=roms/%.zip))" ] || { echo "test-romset: none of $(GAMES:%=roms/%.zip)" >&2; exit 1; }
 	@$(foreach g,$(GAMES),if [ -f roms/$(g).zip ]; then $(BIN)/romset_test $(g) roms/$(g).zip $(IOBOARD_ZIP) $(IOBOARD2_ZIP) build/$(g) || exit 1; fi;) true
+	python3 tests/romset_ioboard_test.py $(BIN)/romset_test $(GAMES)
 
 clean:
 	rm -rf build/obj build/bin
