@@ -39,7 +39,8 @@ Every game includes:
   **Display > Picture > Free camera**.
   Use **W/A/S/D** to move,
   **Q/E** to move vertically, the **arrow keys** to look, and **R** to reset; hold **Shift**
-  to move faster. Game controls are disabled while it's active.
+  to move faster. Game controls are disabled while it's active. Tile-based text, HUD and
+  foreground 3D overlays.
 - Keyboard and gamepad support, with customizable controls.
 - **Game > Play style:** PC starts without coins; Arcade uses the cabinet's coin settings.
 - **Sound:** adjust the audio levels.

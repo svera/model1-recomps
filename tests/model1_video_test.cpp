@@ -184,32 +184,66 @@ struct model1_video_test
 
 	static void free_camera_hides_tile_layers()
 	{
-		model1::regions regions;
-		regions.title = game::id{ "wingwar" };
-		model1 m(std::move(regions));
-		m.set_free_cam(true);
-		m.m_bitmap.allocate(model1::SCREEN_W, model1::SCREEN_H);
-		m.m_tile_tmp.allocate(model1::SCREEN_W, model1::SCREEN_H);
-		m.m_frame = 1;
-		constexpr uint32_t background = 0x00123456, backdrop = 0x00abcdef;
-		m.m_pens[0] = background;
-		m.m_pens[1] = backdrop;
-		for (int i = 0; i < 16; i++) m.m_tiles.char_w(16 + i, 0x1111, 0xffff);
-		m.m_tiles.tile_w(0x2001, 1, 0xffff);
-		m.m_tiles.tile_w(0x3000, 1, 0xffff);
-		m.m_tiles.tile_w(0x6800, 0x8000, 0xffff);
-		m.m_tiles.update(m.m_pens);
-		for (int layer = 0; layer < 8; layer++) {
-			const int flags = layer == 4 || layer == 6 ? segas24_tile::DRAW_OPAQUE : 0;
-			m.m_bitmap.fill(background);
-			m.draw_tiles(m.m_bitmap, m.m_bitmap.cliprect(), layer, flags);
-			bool retained = false;
-			for (int y = 0; y < model1::SCREEN_H; y++)
-				for (int x = 0; x < model1::SCREEN_W; x++)
-					retained |= m.m_bitmap.pix(y, x) == backdrop;
-			assert(retained == (layer == 4 || layer == 6));
+		for (game::id title : { game::id{ "vr" }, game::id{ "swa" }, game::id{ "wingwar" } }) {
+			model1::regions regions;
+			regions.title = title;
+			model1 m(std::move(regions));
+			m.set_free_cam(true);
+			m.m_bitmap.allocate(model1::SCREEN_W, model1::SCREEN_H);
+			m.m_tile_tmp.allocate(model1::SCREEN_W, model1::SCREEN_H);
+			m.m_frame = 1;
+			constexpr uint32_t background = 0x00123456, backdrop = 0x00abcdef;
+			m.m_pens[0] = background;
+			m.m_pens[1] = backdrop;
+			for (int i = 0; i < 16; i++) m.m_tiles.char_w(16 + i, 0x1111, 0xffff);
+			m.m_tiles.tile_w(0x2001, 1, 0xffff);
+			m.m_tiles.tile_w(0x3000, 1, 0xffff);
+			m.m_tiles.tile_w(0x6800, 0x8000, 0xffff);
+			m.m_tiles.update(m.m_pens);
+			for (int layer = 0; layer < 8; layer++) {
+				const int flags = layer == 4 || layer == 6 ? segas24_tile::DRAW_OPAQUE : 0;
+				m.m_bitmap.fill(background);
+				m.draw_tiles(m.m_bitmap, m.m_bitmap.cliprect(), layer, flags);
+				bool retained = false;
+				for (int y = 0; y < model1::SCREEN_H; y++)
+					for (int x = 0; x < model1::SCREEN_W; x++)
+						retained |= m.m_bitmap.pix(y, x) == backdrop;
+				assert(retained == (layer == 4 || layer == 6));
+			}
 		}
-		puts("Free camera: opaque backdrops retained, overlay tile layers hidden");
+		puts("Free camera: VR, SWA and Wing War retain opaque backdrops and hide overlay tile layers");
+	}
+
+	static void free_camera_parts_layers()
+	{
+		for (game::id title : { game::id{ "vr" }, game::id{ "swa" }, game::id{ "wingwar" } }) {
+			model1::regions regions;
+			regions.title = title;
+			model1 m(std::move(regions));
+			for (float aspect : { 4.0f / 3, 16.0f / 9 })
+				for (int scale : { 1, 2 }) {
+					m.set_aspect(aspect);
+					m.set_render_scale(scale);
+					if (m.m_scale == 1 && m.m_ext == 0) continue;
+					for (bool freecam : { false, true, false }) {
+						m.set_free_cam(freecam);
+						model1::gpu_parts parts;
+						m.m_parts = &parts;
+						m.screen_update(m.m_bitmap, m.m_bitmap.cliprect());
+						m.m_parts = nullptr;
+						auto submitted = [&](int texture) {
+							return std::any_of(parts.ops.begin(), parts.ops.end(),
+								[&](const auto &op) { return op.tex == texture; });
+						};
+						assert(submitted(model1::TEX_L6));
+						assert(submitted(model1::TEX_L4));
+						assert(submitted(model1::TEX_3D));
+						assert(submitted(model1::TEX_MID) == !freecam);
+						assert(submitted(model1::TEX_TOP) == !freecam);
+					}
+				}
+		}
+		puts("Free camera GPU commands: backdrops and 3D retained, overlay commands omitted, restored on exit");
 	}
 
 	static void cockpit_coverage()
@@ -1178,6 +1212,47 @@ struct model1_video_test
 					}
 			}
 		puts("Overlay priority: only HUD features mask foreground polygons, not dark HUD or bright backgrounds");
+	}
+
+	static void free_camera_above_hud()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "swa" };
+		regions.polygons.resize(12 * sizeof(uint32_t));
+		model1 m(std::move(regions));
+		const std::array<uint32_t, 9> commands{
+			0x41, 0x40000, 0, 1,
+			1, 0x40000, 6, 1,
+			0xf
+		};
+		for (size_t i = 0; i < commands.size(); i++) {
+			m.m_display_list0[2 * i] = uint16_t(commands[i]);
+			m.m_display_list0[2 * i + 1] = uint16_t(commands[i] >> 16);
+		}
+		m.m_listctl[1] = 0x1f;
+		m.m_logic[1].list.assign(m.m_display_list0, m.m_display_list0 + 2 * commands.size());
+		std::vector<uint32_t> objects;
+		m.m_gameplay.object = [&](uint32_t, uint32_t, uint32_t polygon, uint32_t, const float *) {
+			objects.push_back(polygon);
+			game::object_effects effect;
+			effect.hidden = true;
+			return effect;
+		};
+		for (bool replaying : { false, true }) {
+			m.m_replaying = replaying;
+			for (bool freecam : { false, true, false }) {
+				m.set_free_cam(freecam);
+				m.m_above_hud_seen = false;
+				objects.clear();
+				m.tgp_render(m.m_bitmap, m.m_bitmap.cliprect(), model1::RENDER_BELOW_HUD);
+				assert((objects == std::vector<uint32_t>{ 6 }));
+				assert(m.m_above_hud_seen == !freecam);
+				objects.clear();
+				m.tgp_render(m.m_bitmap, m.m_bitmap.cliprect(), model1::RENDER_ABOVE_HUD);
+				assert(objects == (freecam ? std::vector<uint32_t>{} : std::vector<uint32_t>{ 0 }));
+			}
+		}
+		puts("Free camera: above-HUD radar objects hidden, world objects retained, restored on exit in regular/replayed lists");
 	}
 
 	static void swa_name_entry(const char *dir)
@@ -2939,6 +3014,31 @@ struct model1_video_test
 		assert(m.m_quadpt > m.m_quaddb.get());
 		for (auto *p = m.m_quaddb.get(); p < m.m_quadpt; p++)
 			assert(p->foreground && p->z == -.1f);
+
+		assert(std::find(m.m_video->foreground_objects.begin(), m.m_video->foreground_objects.end(),
+			0x1031c7) != m.m_video->foreground_objects.end());
+		auto video = *m.m_video;
+		video.foreground_objects = { 0x800000 };
+		m.m_video = &video;
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = { -1, -1, 10, 1, -1, 10, 0, 0, 0, -1, 1, 1, 10, -1, 1, 10 };
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t flags = 0x00004000 | (1 << 8) | 1;
+		std::memcpy(poly + 6, &flags, 4);
+		std::copy_n(poly, std::size(object), poly + 16);
+		m.m_tgp_ram[0] = 0x400 | 1;
+		for (bool freecam : { false, true, false }) {
+			m.set_free_cam(freecam);
+			for (uint32_t polygon : { 0x800000u, 0x800010u }) {
+				m.m_quadpt = m.m_quaddb.get();
+				m.m_pointpt = m.m_pointdb.get();
+				float old_z = 0;
+				m.push_object(0x40000, polygon, 1, old_z);
+				assert((m.m_quadpt > m.m_quaddb.get()) == !(freecam && polygon == 0x800000));
+			}
+		}
+		m.m_video = &game::get_video(m.title());
+		puts("Free camera geometry: foreground overlays omitted, world models retained, overlays restored on exit");
 	}
 
 	// widescreen: a direct poly across the arcade's whole screen (SWA's hit flash) reaches the wide
@@ -4125,6 +4225,7 @@ int main(int argc, char **argv)
 	model1_video_test::tile_slide_interpolation();
 	model1_video_test::free_camera_path();
 	model1_video_test::free_camera_hides_tile_layers();
+	model1_video_test::free_camera_parts_layers();
 	model1_video_test::narrow_screen_backdrops();
 	if (argc > 2 && std::string(argv[2]) == "--swa-name-fall") {
 		for (float aspect : { 4.0f / 3, 16.0f / 9 }) model1_video_test::swa_name_fall(argv[1], aspect);
@@ -4217,6 +4318,7 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	model1_video_test::overlay_priority();
+	model1_video_test::free_camera_above_hud();
 	if (argc > 2 && std::string(argv[2]) == "--swa-priority") {
 		model1_video_test::swa_name_entry(argv[1]);
 		return 0;

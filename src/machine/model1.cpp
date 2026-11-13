@@ -1319,10 +1319,13 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		m_parts->ops.push_back(o);
 	} else if (m_screen_now) draw_screen_sides(bitmap);
 	if (m_parts) {
-		parts_composite(m_mid, m_mid_key, m_mid_gen, { 2, 0 });
-		m_parts->img[TEX_MID] = { &m_mid.pix(0), m_mid.width(), m_mid.height(), size_t(m_mid.width()), m_mid_gen };
-		gpu_op o; o.tex = TEX_MID; o.sw = float(m_mid.width()); o.sh = SCREEN_H; o.dw = float(m_mid.width() * m_scale); o.dh = float(SCREEN_H * m_scale);
-		m_parts->ops.push_back(o);
+		if (!m_free_cam) {
+			parts_composite(m_mid, m_mid_key, m_mid_gen, { 2, 0 });
+			m_parts->img[TEX_MID] = { &m_mid.pix(0), m_mid.width(), m_mid.height(), size_t(m_mid.width()), m_mid_gen };
+			gpu_op mid; mid.tex = TEX_MID; mid.sw = float(m_mid.width()); mid.sh = SCREEN_H; mid.dw = float(m_mid.width() * m_scale); mid.dh = float(SCREEN_H * m_scale);
+			m_parts->ops.push_back(mid);
+		}
+		gpu_op o;
 		o.tex = TEX_3D; o.sw = o.dw = float(bitmap.width()); o.sh = o.dh = float(bitmap.height());
 		m_parts->ops.push_back(o);                   // (drawn below, before the host puts it on)
 		if (m_screen_now) {                          // the painted sides again, over the 3D (see below)
@@ -1381,10 +1384,12 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	}
 
 	if (m_parts) {
-		parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });
-		m_parts->img[TEX_TOP] = { &m_top.pix(0), m_top.width(), m_top.height(), size_t(m_top.width()), m_top_gen };
-		gpu_op o; o.tex = TEX_TOP; o.sw = float(m_top.width()); o.sh = SCREEN_H; o.dw = float(m_top.width() * m_scale); o.dh = float(SCREEN_H * m_scale);
-		m_parts->ops.push_back(o);
+		if (!m_free_cam) {
+			parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });
+			m_parts->img[TEX_TOP] = { &m_top.pix(0), m_top.width(), m_top.height(), size_t(m_top.width()), m_top_gen };
+			gpu_op o; o.tex = TEX_TOP; o.sw = float(m_top.width()); o.sh = SCREEN_H; o.dw = float(m_top.width() * m_scale); o.dh = float(SCREEN_H * m_scale);
+			m_parts->ops.push_back(o);
+		}
 		if (m_above_hud_seen) m_parts_whole = true;   // (another Model 1 game's: not VF's)
 	} else {
 		draw_tiles(bitmap, cliprect, 7, 0);
