@@ -35,9 +35,17 @@ DASM = third_party/mame/v60/v60d.cpp
 # the recompile done on the player's machine: analysis + native code (sljit, BSD-2)
 NATIVE = src/rt/analyse.cpp src/rt/native.cpp $(DASM)
 SLJIT_OBJ = $(OBJ)/third_party/sljit/sljitLir.o
+LAN_OBJ = $(OBJ)/third_party/arcade-lan/src/lan.o $(OBJ)/third_party/arcade-lan/src/lan_udp.o
+LAN_LIBS =
+ifeq ($(TARGET_OS),windows)
+LAN_LIBS += -lws2_32
+endif
 
 OBJ ?= build/obj
 BIN ?= build/bin
+$(OBJ)/third_party/arcade-lan/src/%.o: third_party/arcade-lan/src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Ithird_party/arcade-lan/include -MMD -c $< -o $@
 # the version and date shown in the menu: the git tag (or tag-commits-hash between releases) and the
 # date of the last commit. Builds without git (a container) are handed them in the environment.
 M1_VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
@@ -141,6 +149,12 @@ test-host-input-replay: $(BIN)/host_input_replay_test
 
 test-host-gamepads: $(BIN)/host_gamepads_test
 	$(BIN)/host_gamepads_test
+$(BIN)/host_lan_test: $(OBJ)/tests/host_lan_test.o $(LAN_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LAN_LIBS)
+test-host-lan: $(BIN)/host_lan_test
+	$(BIN)/host_lan_test
+.PHONY: test-host-lan
 
 .PHONY: test-host-gamepads
 
@@ -306,16 +320,16 @@ $$(BIN)/$(1): $$(BIN)/$(1)-native
 	# Replace the inode so macOS does not reuse a cached signature from the previous executable.
 	cp $$< $$@.tmp && mv -f $$@.tmp $$@
 else
-$$(BIN)/$(1): $$(call objs,src/host/main.cpp src/host/menu.cpp src/games/$(1)/host.cpp $$(ROMSET) src/games/$(1)/romset.cpp src/host/stb_image_impl.cpp $$(CORE) $$(MACHINE) $$(SOUND) $$(RT) $$(RML_SRC)) $$(MUSASHI_OBJ) $$(Z80_OBJ) $$(CORO_OBJ) $$(if $$(filter gen,$$($(1)_HOST_REC)),$$(OBJ)/build/gen/$(1)_rec.o,$$(REC_NONE)) $$(GPU3D_OBJ)
+$$(BIN)/$(1): $$(call objs,src/host/main.cpp src/host/menu.cpp src/games/$(1)/host.cpp $$(ROMSET) src/games/$(1)/romset.cpp src/host/stb_image_impl.cpp $$(CORE) $$(MACHINE) $$(SOUND) $$(RT) $$(RML_SRC)) $$(MUSASHI_OBJ) $$(Z80_OBJ) $$(CORO_OBJ) $$(if $$(filter gen,$$($(1)_HOST_REC)),$$(OBJ)/build/gen/$(1)_rec.o,$$(REC_NONE)) $$(GPU3D_OBJ) $$(LAN_OBJ)
 	@mkdir -p $$(dir $$@)
-	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS) $$(SDL_LIBS) $$(FT_LIBS) $$(GPU3D_LIBS)
+	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS) $$(SDL_LIBS) $$(FT_LIBS) $$(GPU3D_LIBS) $$(LAN_LIBS)
 endif
 $(1): $$(BIN)/$(1) $$($(1)_LOCAL_REGIONS)
 all: $$(BIN)/$(1)
 
-$$(BIN)/$(1)-native: $$(OBJ)/src/host/main_native.o $$(call objs,src/host/menu.cpp src/games/$(1)/host.cpp $$(ROMSET) src/games/$(1)/romset.cpp src/host/stb_image_impl.cpp $$(CORE) $$(MACHINE) $$(SOUND) $$(RT) $$(NATIVE) $$(RML_SRC)) $$(REC_NONE) $$(SLJIT_OBJ) $$(MUSASHI_OBJ) $$(Z80_OBJ) $$(CORO_OBJ) $$(GPU3D_OBJ)
+$$(BIN)/$(1)-native: $$(OBJ)/src/host/main_native.o $$(call objs,src/host/menu.cpp src/games/$(1)/host.cpp $$(ROMSET) src/games/$(1)/romset.cpp src/host/stb_image_impl.cpp $$(CORE) $$(MACHINE) $$(SOUND) $$(RT) $$(NATIVE) $$(RML_SRC)) $$(REC_NONE) $$(SLJIT_OBJ) $$(MUSASHI_OBJ) $$(Z80_OBJ) $$(CORO_OBJ) $$(GPU3D_OBJ) $$(LAN_OBJ)
 	@mkdir -p $$(dir $$@)
-	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS) $$(SDL_LIBS) $$(FT_LIBS) $$(GPU3D_LIBS)
+	$$(CXX) $$(CXXFLAGS) $$^ -o $$@ $$(LDLIBS) $$(SDL_LIBS) $$(FT_LIBS) $$(GPU3D_LIBS) $$(LAN_LIBS)
 $(1)-native: $$(BIN)/$(1)-native $$($(1)_LOCAL_REGIONS)
 
 # the headless tools with the game's generated C++ (run with M1_REC=1; the lockstep always)

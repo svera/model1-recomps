@@ -60,6 +60,7 @@ Each game's section below lists what is specific to that game.
 
 - All three courses, four camera views, and the original arcade racing.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
+- Experimental LAN rooms for two computers: create a room or find and join one without entering IP addresses.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
 - Full draw distance also covers distant cars and the Live Monitor. In the Live Monitor, turning
   LOD on restores Virt McPolygon's original intermittent disappearance caused by the polygon budget.
@@ -140,6 +141,38 @@ Joining restarts both players at linked course selection.
 If a race is already underway, the join waits until the game returns to
 the demo or course-selection screen, without interrupting Player 1's race. If Player 2's controller
 disconnects, the game returns to solo play.
+
+### LAN multiplayer (experimental)
+
+Race with a friend on **two computers, one player per computer**, connected to
+the same Wi-Fi or wired network. Both players need the same game version and ROM
+set. No IP addresses or account are needed.
+
+1. On both computers, choose **PC** play style. Use one local player and turn
+   **Live Monitor** off.
+2. Wait for the demo or course-selection screen, then open the menu
+   (**Esc** on a keyboard) and choose **LAN**.
+3. One player chooses **Create room**. This player is the **host**.
+4. The other player chooses **Find rooms**, then selects the host's room.
+5. Once both players are ready, the host chooses **Start linked race**.
+   Wait for the game to load, then press your usual **Start** button to race.
+
+Choose your race settings before creating the room. Both players use the host's
+language, race type and course-selection settings for the session; your own
+display, sound, controls and car color stay unchanged.
+
+**Pausing:** opening the host's menu pauses both players. Closing it resumes the
+race after a **3–2–1 countdown**. The host can also press **P** to pause or resume.
+The other player's menu does not pause the race, and only the host can resume it.
+
+**Leaving:** choose **LAN > Leave room**. If either player leaves, closes the game
+or loses their connection, the race ends. The remaining player returns to a room
+and can invite the other player to join again. LAN cannot be combined with local
+split-screen or Live Monitor.
+
+**Room not appearing?** Check that both computers are on the same network and
+running the same game version. Allow local-network access or firewall permission
+if asked. Try a regular home network instead of guest Wi-Fi, and disconnect any VPN.
 
 ### Screenshots
 

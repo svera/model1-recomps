@@ -104,6 +104,9 @@ public:
 	virtual bool hide_frame() const { return false; }
 	// Whether a queued local multiplayer join can safely restart into linked play.
 	virtual bool can_join_local_cabinet() const { return false; }
+	virtual bool supports_lan() const { return false; }
+	virtual std::vector<uint8_t> lan_settings() const { return {}; }
+	virtual bool apply_lan_settings(std::span<const uint8_t>) { return false; }
 
 	// Optional text accompanying the battery-backed save (games without one return an empty name).
 	virtual const char *save_sidecar_name() const { return ""; }

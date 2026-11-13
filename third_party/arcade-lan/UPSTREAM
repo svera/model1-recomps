@@ -1,0 +1,6 @@
+arcade-lan (BSD-3-Clause)
+https://github.com/cheviman/arcade-lan
+Revision: ad5dfe746c13a1dc18ce3b89d9ed6803e4db0b52
+
+Vendored files: include/arcade_lan.h, src/lan.c, src/lan_udp.c, src/lan_udp.h,
+LICENSE. See LOCAL-CHANGES for any changes to these files.

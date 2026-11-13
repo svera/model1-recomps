@@ -49,6 +49,37 @@ arcade's simpler distant models and better performance. Draw distance controls s
 Virtua Racing recompiles your ROM's V60 program to native code at startup. Use --interp to run on the
 Model 1 interpreter instead.
 
+LAN PLAY (EXPERIMENTAL)
+Race with a friend on two computers, one player per computer, connected to the
+same Wi-Fi or wired network. Both players need the same game version and ROM set.
+No IP addresses or account are needed.
+
+1. On both computers, choose PC play style, use one local player and turn Live
+   Monitor off.
+2. Wait for the demo or course-selection screen. Open the menu (Esc on a keyboard)
+   and choose LAN.
+3. One player chooses Create room. This player is the host.
+4. The other player chooses Find rooms, then selects the host's room.
+5. Once both players are ready, the host chooses Start linked race. Wait for the
+   game to load, then press your usual Start button to race.
+
+Choose race settings before creating the room. Both players use the host's
+language, race type and course-selection settings for this session. Your own
+display, sound, controls and car color stay unchanged.
+
+Pausing: opening the host's menu pauses both players. Closing it resumes after
+a 3-2-1 countdown. The host can also press P to pause or resume. The other player's
+menu does not pause the race, and only the host can resume it.
+
+Leaving: choose LAN > Leave room. If either player leaves, closes the game or
+loses their connection, the race ends. The remaining player returns to a room
+and can invite the other player to join again. LAN cannot be combined with
+local split-screen or Live Monitor.
+
+Room not appearing? Check that both computers are on the same network and running
+the same game version. Allow local-network access or firewall permission if asked.
+Try a regular home network instead of guest Wi-Fi, and disconnect any VPN.
+
 CREDITS
 Built on MAME's work on the Model 1 (the V60 CPU, TGP, sound and video), Musashi, ymfm, sljit,
-SDL, RmlUi and FreeType: see LICENSES.txt.
+SDL, RmlUi, FreeType and arcade-lan: see LICENSES.txt.

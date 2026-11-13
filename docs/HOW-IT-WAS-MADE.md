@@ -1896,6 +1896,63 @@ MAME's V60 charges 8 cycles to every instruction, "just an average"; the 16 MHz 
 3.5 MIPS. The game profile now has `cpu_cycles_per_instruction`, applied to the per-line instruction
 budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and runs exactly as before.
 
+## VR's LAN rooms
+
+The desktop's on-demand VR session also supports an experimental two-computer
+linked session. `src/host/lan_session.h` wraps a pinned BSD-licensed arcade-lan
+revision (provenance and local changes in `third_party/arcade-lan`). It owns
+discovery, membership and transport, polling the library at its expected 60 Hz
+independently of rendering and simulation. The library's small `max_devices`
+extension limits admission to two rather than admitting unsupported extra racers.
+The room host and the arcade master are distinct roles: a library room migration
+never changes an active cabinet ID.
+
+The linked waiting-for-entry screen (phase `0x0e`) stays at 4:3. Its beach is a
+fixed-width photographic tilemap, not a seamless panorama. VR disables both
+widescreen layout and narrow-screen backdrop extension for this phase, reusing
+the renderer's black side bars in whole-frame and GPU-parts composition.
+
+`src/host/model1_lan.h` advances one machine locally, ticks the board at vblank and
+publishes outgoing records independently of simulation, including while paused.
+`src/machine/link_packet.h` encodes 486 bytes: a versioned header with
+generation and sequence, master status bytes 6-15 and the cabinet's 452-byte output
+record. It does not send the whole 4 KB board RAM. Received blocks are checked for
+size, version, cabinet ID, generation and ordering. The original board code
+reconstructs the receive slots and retains unpublished records as before.
+
+An acknowledged arcade-lan START supplies a ROM/build fingerprint, session generation
+and shared language/race-type/course settings. Each cabinet validates these before
+publishing any board data. The board does not tick until the first valid peer block,
+so both sides must accept the preparation before the arcade link comes alive.
+The fingerprint is a compatibility check, not authentication. This is a trusted-LAN
+feature, not an internet service.
+
+Networking continues behind menus; in-game inputs are released while navigating.
+Only the session host can pause both cabinets, through its menu or P. Resume uses
+three one-second countdown steps; each is retransmitted until the peer acknowledges
+its epoch and state before advancing. The guest echoes host control state and
+cannot initiate pause/resume. Countdown timing uses local monotonic time, not
+synchronized OS clocks; transitions reach the guest with network latency, not
+frame-exact lockstep. Opening the host menu again cancels the countdown.
+Packet and discovery protocol version 2 excludes older builds without pause control.
+The service inputs, fast-forward and local reset are gated during linked
+play. A three-second cabinet-data timeout or departed racing member ends the linked
+session, resets the survivor to standalone and leaves it hosting an empty room.
+Original EEPROM bytes are used for saves throughout the session and restored on
+leaving, so session roles/settings do not replace standalone preferences. Rankings
+continue using the normal NVRAM save path.
+
+`make test-host-lan test-vr-lan` checks discovery/join/capacity/start, block delivery,
+host departure, socket reopen and packet encoding without ROMs or pixel checks.
+`build/bin/vr_lan_test --roms build/vr` runs independently paced cabinets through ten
+race cycles. `--impaired` adds seeded loss, delay, duplicates, reordering and 200 ms
+gaps; `--grand-prix` uses the existing feedback-driven driver for Grand Prix and
+can be combined with `--impaired`.
+`make test-vr-lan-desktop` exercises two real host processes through their menu/event
+path with CPU rendering and no screenshots or image comparisons. These checks do
+not establish cross-machine discovery or visual quality; those require manual
+two-computer validation.
+
 ## VR's local multiplayer entry and disconnect handling
 
 Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.

@@ -50,6 +50,7 @@ public:
 	void pop();                           // back a page; closes at the top
 	void refresh();                       // redraw the values (changed from outside)
 	void replace(menu_page p, int sel);   // the page on top made again (rows come and go), this row selected
+	bool update_page(menu_page p);       // update only this page if visible, retaining its selected row
 	// Waits for a key or pad button: on_event sees each input event until it returns true. Esc
 	// cancels. The prompt shows under the items meanwhile.
 	void capture(std::string prompt, std::function<bool(const SDL_Event &)> on_event, std::function<void()> on_cancel = {});

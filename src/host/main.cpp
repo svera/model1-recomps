@@ -20,6 +20,7 @@
 #include "free_cam_path.h"
 #include "frame_recorder.h"
 #include "local_link.h"
+#include "model1_lan.h"
 #include "cabinet_display.h"
 #include "../machine/linked_pair.h"
 #include "../machine/parallel.h"
@@ -852,6 +853,16 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					 int arg_scale, int arg_aspect, bool interp, cabinet_layout layout, int fullscreen)
 {
 	std::array<std::unique_ptr<local_cabinet>, 3> cabinets;
+	lan_session lan({{'M', '1', 'V', 'R'}, 2, 19794, 0, 0, 0, LAN_LINK, 0, 2});
+	model1_lan network_cabinet;
+	uint32_t lan_fingerprint = 2166136261u;
+	for (const auto *rom : {&regions.maincpu, &regions.copro_tables, &regions.copro_data, &regions.polygons,
+			&regions.sndcpu, &regions.pcm1, &regions.pcm2, &regions.ioboard})
+		for (uint8_t byte : *rom) lan_fingerprint = (lan_fingerprint ^ byte) * 16777619u;
+	for (const unsigned char byte : std::string(M1_VERSION " " M1_COMMIT))
+		lan_fingerprint = (lan_fingerprint ^ byte) * 16777619u;
+	std::vector<uint8_t> lan_saved_eeprom;
+	bool lan_leave_requested = false, lan_start_requested = false, lan_open_requested = false;
 	const bool on_demand = layout != cabinet_layout::windows;
 	int cabinet_count = on_demand ? 1 : 2;
 	auto instance_count = [&] { return cabinets[2] ? 3 : cabinet_count; };
@@ -984,7 +995,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	std::array<int, 3> trace_phase{-1, -1, -1};
 	std::array<uint32_t, 3> trace_camera{};
 	auto run_frame = [&] {
-		if (pair) pair->run_frame();
+		if (network_cabinet.active()) network_cabinet.run_frame(cabinets[0]->machine);
+		else if (pair) pair->run_frame();
 		else cabinets[0]->machine.run_frame();
 		if (trace_attract)
 			for (int p = 0; p < instance_count(); p++) {
@@ -1805,6 +1817,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				return std::string(names[cabinets[0]->config.live_monitor]);
 			},
 			[&](int direction) {
+				if (lan.role() != LAN_OFF) {
+					join_overlay.toast("Leave LAN before enabling the Live Monitor.");
+					return;
+				}
 				cabinets[0]->config.live_monitor = wrap_choice(cabinets[0]->config.live_monitor + direction, 3);
 				cabinets[0]->settings_dirty = true;
 				monitor_change_requested = true;
@@ -2082,6 +2098,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	auto game_page = [&] {
 		menu_page page{"Game", cabinet_count == 1 ? "" :
 			"Language, race type and course selection are shared; player settings are kept separately.", {}};
+		if (lan.in_room()) {
+			page.note = "Leave the LAN room before changing game or service settings.";
+			page.items.push_back(back_item());
+			return page;
+		}
 		page.items.push_back({"Play style",
 			"PC skips the boot screen and uses free play. Arcade shows the boot screen and uses coins. "
 			"Changing this restarts all active players together, keeping the local session.",
@@ -2117,6 +2138,63 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back(back_item());
 		return page;
 	};
+	const std::string lan_name = "RACER-" + std::to_string(SDL_GetTicksNS() % 10000);
+	auto lan_eligible = [&] {
+		if (!pc_mode || cabinet_count != 1 || cabinets[2] || join_pending) {
+			join_overlay.toast("LAN needs PC play, one local player and Live Monitor off.");
+			return false;
+		}
+		if (!cabinets[0]->game->can_join_local_cabinet()) {
+			join_overlay.toast("Finish the current race before joining a LAN room.");
+			return false;
+		}
+		return true;
+	};
+	auto lan_page = [&] {
+		menu_page page{"LAN", "Two computers on the same local network; one racer on each.", {}};
+		if (!lan.error().empty()) page.items.push_back({lan.error(), "", {}, {}, {}, true});
+		if (network_cabinet.active()) {
+			page.items.push_back({network_cabinet.running() ? "Linked race" : "Preparing linked cabinets",
+				"Only the host can pause. Resume counts down 3, 2, 1.", {}, {}, {}, true});
+		}
+		if (lan.in_room()) {
+			for (const auto &member : lan.members()) {
+				const std::string state = member.own ? " (you)" : !member.heard ? " (waiting)" :
+					member.status == 1 ? " (ready)" : " (busy)";
+				page.items.push_back({std::string(member.name) + state, "", {}, {}, {}, true});
+			}
+			if (lan.hosting() && !network_cabinet.active())
+				page.items.push_back({"Start linked race", "Both racers must be ready. Starts the arcade linked session, then use Start to race.",
+					{}, {}, [&] { lan_start_requested = true; }});
+			else if (!network_cabinet.active())
+				page.items.push_back({"Waiting for host to start", "", {}, {}, {}, true});
+			page.items.push_back({"Leave room", "End the linked race and return to solo play.", {}, {},
+				[&] { lan_leave_requested = true; }});
+		} else if (lan.role() == LAN_JOINING) {
+			page.items.push_back({"Joining room...", "", {}, {}, {}, true});
+			page.items.push_back({"Cancel", "", {}, {}, [&] { lan_leave_requested = true; }});
+		} else {
+			page.items.push_back({"Create room", "Other computers on this network can find your room automatically.", {}, {}, [&] {
+				if (lan_eligible() && lan.open(lan_name)) { lan.clear_error(); lan.host(); }
+			}});
+			page.items.push_back({"Find rooms", "Search this local network. No IP address is needed.", {}, {}, [&] {
+				if (lan_eligible() && lan.open(lan_name)) { lan.clear_error(); lan.search(); }
+			}});
+			if (lan.role() == LAN_SEARCHING) {
+				auto rooms = lan.rooms();
+				std::sort(rooms.begin(), rooms.end(), [](const auto &a, const auto &b) { return a.room < b.room; });
+				if (rooms.empty()) page.items.push_back({"Searching for rooms...", "", {}, {}, {}, true});
+				for (const auto &room : rooms) {
+					page.items.push_back({room.name, "Join this room.",
+						[room] { return std::to_string(room.devices) + "/2"; },
+						{}, [&, room] { if (lan_eligible()) lan.join(room); }});
+				}
+				page.items.push_back({"Stop searching", "", {}, {}, [&] { lan.close(); }});
+			}
+		}
+		page.items.push_back(back_item());
+		return page;
+	};
 	auto main_page = [&] {
 		menu_page page{"", "", {}};
 		page.items.push_back({"Resume", "Return to the game.", {}, {}, [&] { join_overlay.close(); }});
@@ -2127,6 +2205,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			[&] { join_overlay.push(controls_page()); }});
 		page.items.push_back({"Game", "Race type, course, language, car color, difficulty and service settings.", {}, {},
 			[&] { join_overlay.push(game_page()); }});
+		if (cabinet_count == 1 && cabinets[0]->game->supports_lan())
+			page.items.push_back({"LAN", "Create or find a local-network room. No IP addresses required.", {}, {},
+				[&] { lan_open_requested = true; join_overlay.close(); }});
 		if (on_demand && cabinet_count == 2)
 			page.items.push_back({"Remove Player 2", "Save both players' settings and restart in single-player mode. Player 2 can join again with Start.",
 				{}, {}, [&] { remove_player2_requested = true; join_overlay.close(); }});
@@ -2134,7 +2215,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return page;
 	};
 	auto open_menu = [&] {
-		if (join_overlay.ready() && !join_overlay.is_open()) join_overlay.open(main_page());
+		if (join_overlay.ready() && !join_overlay.is_open()) {
+			join_overlay.open(main_page());
+			if (network_cabinet.active() && network_cabinet.host()) {
+				network_cabinet.pause(true, SDL_GetTicks());
+				paused = true;
+			}
+		}
 	};
 	uint64_t last = SDL_GetTicksNS(), next_save = last + 60000000000ull;
 	uint64_t free_cam_last = last;
@@ -2173,7 +2260,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			auto &c = *cabinets[p];
 			saver.put(c.dir + "/nvram.sav", c.machine.nvram().data(), c.machine.nvram().size());
 			saver.put(c.dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
-					  c.machine.eeprom(), model1::EEPROM_SIZE);
+					  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c.machine.eeprom(), model1::EEPROM_SIZE);
 		}
 	};
 	auto save = [&] {
@@ -2183,11 +2270,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!cabinets[p]) continue;
 			auto &c = cabinets[p];
 			// Pending menu choices must reach menu_closed(), which requests their restart.
-			if (!join_overlay.is_open()) c->game->keep_arcade_settings();
+			if (!join_overlay.is_open() && lan_saved_eeprom.empty()) c->game->keep_arcade_settings();
 			if (p < 2) c->config.ctl[0] = bindings[p];
 			const bool nv = save_blob(c->dir + "/nvram.sav", c->machine.nvram().data(), c->machine.nvram().size());
 			const bool ee = save_blob(c->dir + (c->machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
-									  c->machine.eeprom(), model1::EEPROM_SIZE);
+									  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c->machine.eeprom(), model1::EEPROM_SIZE);
 			const std::string settings_path = p == 0 ? data_dir + "/settings.ini" : c->dir + "/settings.ini";
 			const bool config = c->config.save(settings_path, *c->game);
 			if (!nv || !ee || !config) { fprintf(stderr, "two cabinets: could not save %s\n", c->dir.c_str()); ok = false; }
@@ -2238,6 +2325,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return true;
 	};
 	auto request_join = [&](SDL_JoystickID controller = 0) {
+		if (lan.role() != LAN_OFF) return true;
 		if (!on_demand || second_player || join_pending) return true;
 		player1_started = true;
 		join_pending = true;
@@ -2247,6 +2335,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return true;
 	};
 	auto controller_start = [&](int player) {
+		if (lan.role() != LAN_OFF) return true;
 		if (!on_demand || second_player) return true;
 		if (!player1_started) {
 			if (player == 1) std::swap(pads[0], pads[1]);
@@ -2338,6 +2427,69 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	int passes = 0;
 	bool menu_was_open = false;
 	bool fast_forward = false, screenshot_pending = false;
+	uint64_t next_lan_menu = 0;
+	std::string last_lan_notice;
+	bool lan_was_paused = false;
+	auto finish_lan = [&](bool leave) {
+		const bool was_active = network_cabinet.active();
+		if (was_active) {
+			network_cabinet.stop(cabinets[0]->machine);
+			std::copy(lan_saved_eeprom.begin(), lan_saved_eeprom.end(), cabinets[0]->machine.eeprom());
+			lan_saved_eeprom.clear();
+			cabinets[0]->host->link_player = 0;
+			cabinets[0]->host->standalone_cabinet = true;
+		}
+		if (leave) lan.close();
+		else if (!lan.host()) return false;
+		if (was_active && !reset_both()) return false;
+		if (was_active) {
+			auto &c = *cabinets[0];
+			c.machine.set_drawing(false);
+			// Boot completes just before the attract dispatcher. Reach a joinable phase
+			// before opening the paused room menu, or the survivor stays "busy".
+			for (int frame = 0; frame < 120 && !c.game->can_join_local_cabinet(); frame++) run_frame();
+			c.machine.set_drawing(true);
+			c.machine.m_audio_out.clear();
+			if (!c.game->can_join_local_cabinet()) {
+				fprintf(stderr, "LAN: standalone reset did not reach a joinable phase\n");
+				return false;
+			}
+		}
+		paused = false;
+		fast_forward = false;
+		menu_was_open = false;
+		join_overlay.open(main_page());
+		join_overlay.push(lan_page());
+		return true;
+	};
+	auto prepare_lan = [&](std::span<const uint8_t> bytes) {
+		auto &c = *cabinets[0];
+		if (bytes.size() < 13 || !std::equal(bytes.begin(), bytes.begin() + 4, "M1LS") ||
+			model1_link::get32(bytes.data() + 4) != lan_fingerprint || bytes[12] != bytes.size() - 13)
+			return lan.fail("Incompatible LAN game data or protocol. Use matching ROMs and builds.");
+		if (!lan_eligible()) return lan.fail("Cannot start LAN while a local race is in progress.");
+		if (!network_cabinet.begin(lan, model1_link::get32(bytes.data() + 8))) return false;
+		lan_saved_eeprom.assign(c.machine.eeprom(), c.machine.eeprom() + model1::EEPROM_SIZE);
+		if (!c.game->apply_lan_settings(bytes.subspan(13))) return lan.fail("Incompatible LAN race settings.");
+		c.host->standalone_cabinet = false;
+		c.host->link_player = network_cabinet.player();
+		c.game->booted();
+		network_cabinet.attach(c.machine);
+		c.machine.reset();
+		if (!interp) c.runtime.attach(c.machine.cpu(), "vr");
+		c.machine.forget_camera();
+		c.pad = {};
+		c.service = {};
+		join_pending = false;
+		paused = fast_forward = false;
+		join_overlay.close();
+		frame_clock.reset();
+		last = SDL_GetTicksNS();
+		if (audio) { SDL_ClearAudioStream(audio.get()); SDL_ResumeAudioStreamDevice(audio.get()); }
+		fprintf(stderr, "LAN: preparing cabinet %d, generation %u\n", network_cabinet.player(),
+			model1_link::get32(bytes.data() + 8));
+		return true;
+	};
 	int screenshot_number = 0;
 	auto save_picture = [&](SDL_Renderer *renderer, const std::string &path) {
 		auto *shot = SDL_RenderReadPixels(renderer, nullptr);
@@ -2356,6 +2508,57 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	audio_wake_clock wake_clock;
 	while (running && (quit_after < 0 || frames < quit_after)) {
 		if (perf_enabled) ++perf_loops;
+		const uint64_t lan_now = SDL_GetTicks();
+		lan.status(!network_cabinet.active() && cabinets[0]->game->can_join_local_cabinet() ? 1 : 0);
+		lan.update(lan_now);
+		if (lan_leave_requested) {
+			lan_leave_requested = false;
+			if (!finish_lan(true)) return 1;
+		}
+		if (lan_start_requested) {
+			lan_start_requested = false;
+			const auto members = lan.members();
+			const auto shared = cabinets[0]->game->lan_settings();
+			if (members.size() != 2 || !std::all_of(members.begin(), members.end(),
+					[](const auto &m) { return m.heard && m.status == 1; }) || shared.empty()) {
+				lan.fail("Two ready racers are needed. Finish any local race first.");
+			} else {
+				std::vector<uint8_t> start(13 + shared.size());
+				std::copy_n("M1LS", 4, start.begin());
+				model1_link::put32(start.data() + 4, lan_fingerprint);
+				model1_link::put32(start.data() + 8, uint32_t(SDL_GetTicksNS()));
+				start[12] = uint8_t(shared.size());
+				std::copy(shared.begin(), shared.end(), start.begin() + 13);
+				lan.clear_error();
+				lan.start(start);
+			}
+		}
+		std::array<uint8_t, LAN_SETTINGS_MOST> start{};
+		size_t start_size = 0;
+		if (lan.started(start, start_size) && !prepare_lan(std::span(start).first(start_size))) {
+			if (!finish_lan(false)) return 1;
+		}
+		if (network_cabinet.active() && !network_cabinet.update(lan, lan_now, cabinets[0]->machine)) {
+			if (!finish_lan(false)) return 1;
+		}
+		std::string lan_notice;
+		if (network_cabinet.active()) {
+			if (network_cabinet.countdown())
+				lan_notice = "LAN: resuming in " + std::to_string(network_cabinet.countdown()) + "...";
+			else if (network_cabinet.paused()) lan_notice = "LAN: paused by host";
+			else lan_notice = cabinets[0]->machine.past_boot() ? "LAN linked race - host controls pause" : "LAN: preparing cabinets...";
+		}
+		else if (lan.in_room()) lan_notice = "LAN room - open LAN in the menu to start or leave";
+		if (!lan.error().empty()) lan_notice += (lan_notice.empty() ? "" : "\n") + lan.error();
+		if (lan_notice != last_lan_notice) {
+			last_lan_notice = lan_notice;
+			if (network_cabinet.active()) fprintf(stderr, "%s\n", lan_notice.c_str());
+			if (!lan_notice.empty()) join_overlay.toast(lan_notice, lan.error().empty() ? 4 : 8);
+		}
+		if (lan_now >= next_lan_menu) {
+			join_overlay.update_page(lan_page());
+			next_lan_menu = lan_now + 250;
+		}
 		// The desktop smoke tests use the same event timeline as the single-cabinet host.
 		if (const char *events = getenv("M1_EVENTS_AT"))
 			for (const char *at = events; *at;) {
@@ -2369,6 +2572,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (pass == passes) {
 					SDL_Event event{};
 					if (!strcmp(name, "status")) {
+						if (lan.role() != LAN_OFF)
+							fprintf(stderr, "LAN: status cabinet=%d running=%d ticks=%llu phase=%02x participants=%u menu=%d frame=%d ready=%d paused=%d countdown=%d\n",
+								network_cabinet.player(), network_cabinet.running(),
+								(unsigned long long)(cabinets[0]->machine.link() ? cabinets[0]->machine.link()->ticks() : 0),
+								cabinets[0]->machine.work_ram()[0x1138], cabinets[0]->machine.read8(0x40d826),
+								join_overlay.is_open(), frames, cabinets[0]->game->can_join_local_cabinet(),
+								network_cabinet.paused(), network_cabinet.countdown());
 						fprintf(stderr, "two cabinets: status frame=%d cabinets=%d mode=%u phase=%02x join=%d role=%u fullscreen=%d arcade=%d icon=%d free_camera=%d\n",
 							frames, cabinet_count, cabinets[0]->machine.game_mode(),
 							cabinets[0]->machine.work_ram()[0x1138], join_pending, cabinets[0]->machine.read8(0x40dc8c),
@@ -2572,7 +2782,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						break;
 					}
 				for (int p = 0; p < 2; p++)
-					if (paused && pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
+					if (paused && !network_cabinet.active() && pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
 						bindings[p].pad[C_MENU] == event.gbutton.button) {
 						paused = false;
 						if (cabinets[p])
@@ -2599,10 +2809,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						cabinets[p]->pad.start_delay = 0;
 					}
 				if (event.key.scancode == SDL_SCANCODE_P) {
+					if (network_cabinet.active()) {
+						if (network_cabinet.host()) network_cabinet.pause(!network_cabinet.paused() ||
+							network_cabinet.countdown() != 0, SDL_GetTicks());
+						else join_overlay.toast("Only the host can pause or resume the LAN race.");
+						continue;
+					}
 					paused = !paused;
 					fprintf(stderr, "two cabinets: %s both at frame %d\n", paused ? "paused" : "resumed", frames);
 					if (audio) SDL_ClearAudioStream(audio.get());
 				} else if (event.key.scancode == SDL_SCANCODE_F3) {
+					if (network_cabinet.active()) { join_overlay.toast("Leave the LAN room before resetting."); continue; }
 					if (!reset_both()) return 1;
 				} else if (event.key.scancode == SDL_SCANCODE_F5) {
 					const int scale = cabinets[0]->config.scale % 6 + 1;
@@ -2625,6 +2842,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					screenshot_pending = true;
 					next_picture = {};
 				} else if (event.key.scancode == SDL_SCANCODE_TAB) {
+					if (network_cabinet.active()) continue;
 					fast_forward = true;
 					if (audio) SDL_ClearAudioStream(audio.get());
 				} else if (layout != cabinet_layout::windows && event.key.scancode == SDL_SCANCODE_F7) {
@@ -2661,9 +2879,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (join_overlay.is_open() != menu_was_open) {
 			menu_was_open = join_overlay.is_open();
-			paused = menu_was_open;
+			if (network_cabinet.active() && network_cabinet.host())
+				network_cabinet.pause(menu_was_open, SDL_GetTicks());
+			paused = menu_was_open && !network_cabinet.active();
 			if (audio) {
-				if (menu_was_open) SDL_PauseAudioStreamDevice(audio.get());
+				if ((menu_was_open && !network_cabinet.active()) || network_cabinet.paused()) SDL_PauseAudioStreamDevice(audio.get());
 				else SDL_ResumeAudioStreamDevice(audio.get());
 			}
 			if (!menu_was_open) {
@@ -2710,7 +2930,25 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				last = SDL_GetTicksNS();
 			}
 		}
-		if (join_overlay.is_open()) paused = true;
+		if (lan_open_requested) {
+			lan_open_requested = false;
+			join_overlay.open(main_page());
+			join_overlay.push(lan_page());
+		}
+		if (join_overlay.is_open() && !network_cabinet.active()) paused = true;
+		if (network_cabinet.active()) paused = network_cabinet.paused();
+		const bool lan_paused = network_cabinet.active() && paused;
+		if (lan_paused != lan_was_paused) {
+			lan_was_paused = lan_paused;
+			frame_clock.reset();
+			last = SDL_GetTicksNS();
+			next_picture = {};
+			if (audio) {
+				SDL_ClearAudioStream(audio.get());
+				if (paused) SDL_PauseAudioStreamDevice(audio.get());
+				else SDL_ResumeAudioStreamDevice(audio.get());
+			}
+		}
 		if (!running) break;
 		const uint64_t camera_now = SDL_GetTicksNS();
 		const float camera_dt = float(std::clamp(double(camera_now - free_cam_last) / 1e9, 0.0, 0.1));
@@ -2740,7 +2978,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			next_pad_scan = SDL_GetTicks() + 1000;
 		}
-		if (on_demand && !second_player) {
+		if (on_demand && !second_player && lan.role() == LAN_OFF) {
 			const bool *keys = SDL_GetKeyboardState(nullptr);
 			const bool key_start = bindings[1].key[C_START] != SDL_SCANCODE_UNKNOWN && keys[bindings[1].key[C_START]];
 			const int player = !player1_started && pads[0] &&
@@ -2773,7 +3011,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			frame_clock.update(elapsed, audio ? SDL_GetAudioStreamQueued(audio.get()) / frame_bytes : -1);
 		}
 		while (frame_clock.due() && (quit_after < 0 || frames < quit_after)) {
-			if (join_pending && cabinets[0]->game->can_join_local_cabinet() &&
+			if (network_cabinet.paused()) {
+				paused = true;
+				frame_clock.reset();
+				break;
+			}
+			if (join_pending && lan.role() == LAN_OFF && cabinets[0]->game->can_join_local_cabinet() &&
 				cabinets[0]->pad.start_frames == 0 && cabinets[0]->pad.start_delay < 0) {
 				if (!start_linked_session()) return 1;
 				break;
@@ -2783,11 +3026,25 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				c.machine.set_parts_mode(c.compose_enabled);
 				SDL_Gamepad *selected[2]{pads[p], nullptr};
 				pad_state states[2]{c.pad, {}};
-				const hotkey action = read_inputs(c.machine, selected, states, c.config.ctl, c.game->controls(), *c.game, c.service);
+				const bool suppress = network_cabinet.active() && (join_overlay.is_open() || !c.machine.past_boot());
+				const hotkey action = suppress ? hotkey::none :
+					read_inputs(c.machine, selected, states, c.config.ctl, c.game->controls(), *c.game, c.service);
+				if (network_cabinet.active()) {
+					c.machine.m_inputs[0] |= IN0_TEST | IN0_SERVICE;
+					c.service = {};
+					if (suppress) {
+						std::fill_n(c.machine.m_inputs, 3, uint8_t(0xff));
+						const auto &profile = game::get_io_profile(c.machine.title());
+						for (int channel = 0; channel < 8; channel++)
+							if (!profile.analog_controls[channel].empty())
+								c.machine.set_analog_input(channel, profile.analog_neutral[channel]);
+						states[0] = {};
+					}
+				}
 				c.pad = states[0];
 				if (action == hotkey::menu) {
 					open_menu();
-					paused = true;
+					paused = !network_cabinet.active() || network_cabinet.paused();
 					fprintf(stderr, "two cabinets: opened settings from cabinet %d\n", p + 1);
 				}
 				if (action == hotkey::scale) {

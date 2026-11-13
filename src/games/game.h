@@ -173,6 +173,8 @@ struct gameplay_callbacks
 	std::function<std::vector<uint32_t>(std::string_view)> screen_hashes;
 	std::function<std::optional<std::string_view>(uint32_t)> screen_name;
 	std::function<bool(uint32_t, bool)> wide_scene;
+	// False keeps a narrow screen pillarboxed instead of extending its tile-map backdrop.
+	std::function<bool()> extend_backdrops;
 	// Tile artwork known to repeat horizontally: continue its map across a wide scene at 1:1.
 	std::function<bool(int layer)> repeat_tile_layer;
 	// Widescreen: a tile layer as drawn this game frame, `ext` columns each side of the

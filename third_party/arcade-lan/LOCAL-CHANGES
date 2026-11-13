@@ -1,0 +1,3 @@
+lan_config.max_devices: optional host-side room capacity (0 retains the upstream
+limit). Enforced when admitting members and validated by lan_open. No wire-format
+change. Model 1 currently uses two devices, each with one racer.
