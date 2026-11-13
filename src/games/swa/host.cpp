@@ -69,7 +69,7 @@ public:
 		set_wide_cockpit(context.machine, wide_cockpit);
 	}
 
-	std::vector<menu_item> display_menu_items() override
+	std::vector<menu_item> display_quality_menu_items() override
 	{
 		std::vector<menu_item> items{ { "Draw distance", "Full draws the Death Star's surface about twice as far as the arcade and lights its "
 														 "distant buildings, in the renderer only, without changing the game or its timing. "
@@ -92,7 +92,12 @@ public:
 					set_lod(ctx->machine, lod);
 					ctx->settings_changed();
 				} });
-		items.push_back({ "Widescreen cockpit", "On: at aspect ratios wider than 4:3, the X-wing's cockpit continues out to the "
+		return items;
+	}
+
+	std::vector<menu_item> display_picture_menu_items() override
+	{
+		return { { "Widescreen cockpit", "On: at aspect ratios wider than 4:3, the X-wing's cockpit continues out to the "
 												"screen's sides, its canopy struts and consoles extended along their own lines rather "
 												"than stretched. Off: the arcade's 4:3 cockpit in the middle.",
 			[this] { return wide_cockpit ? "On" : "Off"; },
@@ -100,8 +105,7 @@ public:
 				wide_cockpit = !wide_cockpit;
 				set_wide_cockpit(ctx->machine, wide_cockpit);
 				ctx->settings_changed();
-			} });
-		return items;
+			} } };
 	}
 
 	std::vector<menu_item> game_menu_items() override

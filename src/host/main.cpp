@@ -78,6 +78,126 @@ static constexpr const char *ASPECT_NAMES[] = { "auto", "4:3", "16:10", "16:9", 
 static constexpr int N_ASPECTS = sizeof(ASPECTS) / sizeof(ASPECTS[0]);
 static_assert(sizeof(ASPECT_NAMES) / sizeof(ASPECT_NAMES[0]) == N_ASPECTS);
 
+struct display_menu_actions
+{
+	std::function<void(menu_page)> push_page;
+	std::function<menu_item()> back_item;
+	std::string picture_shape_help;
+	std::function<std::string()> render_scale, antialiasing, renderer, graphics_driver;
+	std::function<std::string()> picture_shape, frame_rate, fullscreen, background_filter, screen_filter;
+	std::function<std::string()> crt_colours, brightness, gamma, show_fps, free_camera;
+	std::function<void(int)> change_render_scale, change_antialiasing, change_renderer, change_graphics_driver;
+	std::function<void(int)> change_picture_shape, change_frame_rate, change_fullscreen;
+	std::function<void(int)> change_background_filter, change_screen_filter, change_crt_colours, change_brightness, change_gamma;
+	std::function<void(int)> change_show_fps, change_free_camera;
+	bool has_graphics_driver = false, has_background_filter = false;
+	bool has_show_fps = true, has_free_camera = true;
+	std::vector<menu_item> picture_items, quality_items;
+	std::optional<menu_item> live_monitor;
+};
+
+static menu_page make_display_root(menu_page picture, menu_page quality, menu_page screen,
+	std::function<void(menu_page)> push_page, std::function<menu_item()> back_item,
+	std::function<std::string()> picture_summary, std::function<std::string()> quality_summary,
+	std::function<std::string()> screen_summary, std::string picture_description)
+{
+	menu_page root{"Display", "", {}};
+	root.items.push_back({"Picture", std::move(picture_description),
+		std::move(picture_summary), {}, [push_page, picture] { push_page(picture); }});
+	root.items.push_back({"Quality", "Render scale, antialiasing, renderer, LOD, draw distance and background filtering.",
+		std::move(quality_summary), {}, [push_page, quality] { push_page(quality); }});
+	root.items.push_back({"Screen filter and colours", "Screen filter, CRT colours, brightness and gamma.",
+		std::move(screen_summary), {}, [push_page, screen] { push_page(screen); }});
+	root.items.push_back(back_item());
+	return root;
+}
+
+static menu_page make_display_menu(display_menu_actions actions)
+{
+	auto shared = std::make_shared<display_menu_actions>(std::move(actions));
+	menu_page picture{"Picture", "", {}};
+	picture.items.push_back({"Picture shape",
+		std::string("Fit the window fills any screen shape. The other shapes add black bars to keep their shape; 4:3 is the original arcade screen. ") +
+			shared->picture_shape_help + "(F6)",
+		[shared] { return shared->picture_shape(); },
+		[shared](int d) { shared->change_picture_shape(d); }});
+	for (auto &item : shared->picture_items) picture.items.push_back(std::move(item));
+	picture.items.push_back({"Frame rate",
+		"30 FPS is original arcade motion, with no interpolation. 60 and 120 FPS add interpolated pictures without changing game speed or sound. Higher rates need more power and a fast enough display.",
+		[shared] { return shared->frame_rate(); },
+		[shared](int d) { shared->change_frame_rate(d); }});
+	if (shared->has_show_fps)
+		picture.items.push_back({"Show FPS", "Shows the frame rate in the top right corner.",
+			[shared] { return shared->show_fps(); },
+			[shared](int d) { shared->change_show_fps(d); }});
+	picture.items.push_back({"Fullscreen", "Play fullscreen or in a window. (F11, F or Alt+Enter)",
+		[shared] { return shared->fullscreen(); },
+		[shared](int d) { shared->change_fullscreen(d); }});
+	if (shared->live_monitor) picture.items.push_back(std::move(*shared->live_monitor));
+	if (shared->has_free_camera)
+		picture.items.push_back({"Free camera", "Fly around the picture without changing the game's state or controls. (F4)",
+			[shared] { return shared->free_camera(); },
+			[shared](int d) { shared->change_free_camera(d); }});
+	picture.items.push_back(shared->back_item());
+
+	menu_page quality{"Quality", "", {}};
+	quality.items.push_back({"Render scale",
+		"How sharp the 3D is. 1x is the original arcade resolution; higher is sharper but needs a faster computer. (F5)",
+		[shared] { return shared->render_scale(); },
+		[shared](int d) { shared->change_render_scale(d); }});
+	quality.items.push_back({"Antialiasing",
+		"Smooths jagged edges on the 3D. Low smooths the edges for little cost; 2x and 3x draw the 3D larger and look cleanest, but take a lot more power (lower the render scale if the game slows down).",
+		[shared] { return shared->antialiasing(); },
+		[shared](int d) { shared->change_antialiasing(d); }});
+	quality.items.push_back({"3D renderer",
+		"Which draws the 3D: the CPU, or the graphics card (GPU). Auto uses the GPU whenever it works here (the CPU if it can't).",
+		[shared] { return shared->renderer(); },
+		[shared](int d) { shared->change_renderer(d); }});
+	if (shared->has_graphics_driver)
+		quality.items.push_back({"Graphics driver",
+			"Choose which graphics driver the GPU uses. Takes effect the next time the game starts.",
+			[shared] { return shared->graphics_driver(); },
+			[shared](int d) { shared->change_graphics_driver(d); }});
+	for (auto &item : shared->quality_items) quality.items.push_back(std::move(item));
+	if (shared->has_background_filter)
+		quality.items.push_back({"Background filter",
+			"Smooth softens the stage backgrounds so they don't look blocky when enlarged. Off keeps their original pixels. Only matters above 1x.",
+			[shared] { return shared->background_filter(); },
+			[shared](int d) { shared->change_background_filter(d); }});
+	quality.items.push_back(shared->back_item());
+
+	menu_page screen{"Screen filter and colours", "", {}};
+	screen.items.push_back({"Screen filter",
+		"Scanlines adds the dark lines between the arcade monitor's rows. CRT adds those, the monitor's red, green and blue stripes, and slightly darker corners. The lines need a large window or fullscreen to show.",
+		[shared] { return shared->screen_filter(); },
+		[shared](int d) { shared->change_screen_filter(d); }});
+	screen.items.push_back({"CRT colours",
+		"The colours as an arcade monitor showed them. Off keeps the game's original colours.",
+		[shared] { return shared->crt_colours(); },
+		[shared](int d) { shared->change_crt_colours(d); }});
+	screen.items.push_back({"Brightness",
+		"The picture's brightness; 100% is the game's own.",
+		[shared] { return shared->brightness(); },
+		[shared](int d) { shared->change_brightness(d); }});
+	screen.items.push_back({"Gamma",
+		"The middle tones; 100% is the game's own.",
+		[shared] { return shared->gamma(); },
+		[shared](int d) { shared->change_gamma(d); }});
+	screen.items.push_back(shared->back_item());
+
+	return make_display_root(std::move(picture), std::move(quality), std::move(screen),
+		shared->push_page, shared->back_item,
+		[shared] { return shared->picture_shape() + ", " + shared->frame_rate() + ", " + shared->fullscreen(); },
+		[shared] { return shared->render_scale() + ", AA " + shared->antialiasing() + ", " + shared->renderer(); },
+		[shared] {
+			std::string summary = shared->screen_filter();
+			const std::string colours = shared->crt_colours();
+			if (colours != "Off") summary += ", " + colours;
+			if (shared->brightness() != "100%" || shared->gamma() != "100%") summary += ", tuned";
+			return summary;
+		}, "Picture shape, frame rate, fullscreen and free camera.");
+}
+
 // Every message box goes through here: a test run (M1_HIDDEN) never shows one (nor a file picker),
 // the message goes to stderr (log.txt without a console) instead.
 static bool message_box(SDL_MessageBoxFlags flags, const char *title, const std::string &msg)
@@ -1617,199 +1737,108 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	};
 	bool monitor_change_requested = false;
 	auto display_page = [&] {
-		menu_page page{"Display", "", {}};
-		page.items.push_back({"Render scale", "Higher scales sharpen the picture but need more graphics power.",
-			[&] { return std::to_string(cabinets[0]->config.scale) + "x"; },
-			[&](int direction) {
-				for (int p = 0; p < cabinet_count; p++)
-					cabinets[p]->config.scale = std::clamp(cabinets[p]->config.scale + direction, 1, 6);
-				apply_shared_settings();
-			}});
-		page.items.push_back({"Antialiasing", "Smooths polygon edges. Higher settings render at a larger internal scale.",
-			[&] {
-				const int aa = cabinets[0]->config.aa;
-				return aa == 0 ? std::string("Low") : aa == 1 ? std::string("Off") : std::to_string(aa) + "x";
-			},
-			[&](int direction) {
-				constexpr int values[] = {1, 0, 2, 3};
-				int index = 0;
-				while (index < 3 && values[index] != cabinets[0]->config.aa) ++index;
-				const int aa = values[wrap_choice(index + direction, 4)];
-				for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.aa = aa;
-				apply_shared_settings();
-			}});
-		page.items.push_back({"3D renderer", "Choose the CPU renderer, the verified GPU renderer, or Auto. If the GPU is unavailable or its picture check fails, the CPU is used.",
-			[&] {
-				if (cabinets[0]->gpu_crashed) return std::string("CPU (GPU crashed: choose to retry)");
-				if (cabinets[0]->gpu_retry_pending)
-					return std::string(cabinets[0]->config.renderer3d == 2 ? "Auto (next launch)" :
-						cabinets[0]->config.renderer3d == 1 ? "GPU (next launch)" : "CPU");
-				if (cabinets[0]->config.renderer3d == 0) return std::string("CPU");
-				if (cabinets[0]->config.renderer3d == 1)
-					return cabinets[0]->gpu_enabled ? std::string("GPU (") + cabinets[0]->gpu->name() + ")" :
-						std::string("GPU (CPU fallback)");
-				return cabinets[0]->gpu_enabled ? std::string("Auto (GPU)") : std::string("Auto (CPU)");
-			},
-			[&](int direction) {
-				bool retry = false;
-				for (int p = 0; p < instance_count(); p++) if (cabinets[p]) retry = retry || cabinets[p]->gpu_crashed;
-				if (retry) {
-					for (int p = 0; p < instance_count(); p++) {
-						if (!cabinets[p]) continue;
-						auto &c = *cabinets[p];
-						std::error_code ec;
-						std::filesystem::remove(c.dir + "/gpu-start.crashed", ec);
-						if (ec) { fprintf(stderr, "two cabinets: clear GPU marker: %s\n", ec.message().c_str()); menu_failed = true; return; }
-						c.gpu_crashed = false;
-						c.gpu_retry_pending = true;
-						c.gpu_notice.clear();
-					}
-					join_overlay.toast("GPU retry scheduled for the next launch.");
-					return;
-				}
-				const int renderer = wrap_choice(cabinets[0]->config.renderer3d + direction, 3);
-				for (int p = 0; p < instance_count(); p++) {
-					if (!cabinets[p]) continue;
-					cabinets[p]->config.renderer3d = renderer;
-					if (!configure_3d(*cabinets[p], renderer)) { menu_failed = true; return; }
-					cabinets[p]->settings_dirty = true;
-				}
-				next_picture = {};
-			}});
-#ifdef _WIN32
-		page.items.push_back({"Graphics driver",
-			"Auto tries Vulkan first, then Direct3D 12. Direct3D 12 skips Vulkan. Takes effect on the next launch.",
-			[&] { return cabinets[0]->config.graphics ? "Direct3D 12" : "Auto (Vulkan first)"; },
-			[&](int) {
-				const int graphics = !cabinets[0]->config.graphics;
+		display_menu_actions actions;
+		actions.push_page = [&](menu_page page) { join_overlay.push(std::move(page)); };
+		actions.back_item = back_item;
+		actions.picture_shape_help = cabinets[0]->game->picture_shape_help();
+		actions.render_scale = [&] { return std::to_string(cabinets[0]->config.scale) + "x"; };
+		actions.change_render_scale = [&](int direction) {
+			for (int p = 0; p < cabinet_count; p++)
+				cabinets[p]->config.scale = std::clamp(cabinets[p]->config.scale + direction, 1, 6);
+			apply_shared_settings();
+		};
+		actions.antialiasing = [&] {
+			const int aa = cabinets[0]->config.aa;
+			return aa == 0 ? std::string("Low") : aa == 1 ? std::string("Off") : std::to_string(aa) + "x";
+		};
+		actions.change_antialiasing = [&](int direction) {
+			constexpr int values[] = {1, 0, 2, 3};
+			int index = 0;
+			while (index < 3 && values[index] != cabinets[0]->config.aa) ++index;
+			const int aa = values[wrap_choice(index + direction, 4)];
+			for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.aa = aa;
+			apply_shared_settings();
+		};
+		actions.renderer = [&] {
+			const auto &c = *cabinets[0];
+			if (c.gpu_crashed) return std::string("CPU (GPU crashed: choose to retry)");
+			if (c.gpu_retry_pending)
+				return c.config.renderer3d == 2 ? std::string("Auto (next launch)") :
+					c.config.renderer3d == 1 ? std::string("GPU (next launch)") : std::string("CPU");
+			if (c.config.renderer3d == 0) return std::string("CPU");
+			if (c.config.renderer3d == 1)
+				return c.gpu_enabled ? std::string("GPU (") + c.gpu->name() + ")" : std::string("GPU (CPU fallback)");
+			return c.gpu_enabled ? std::string("Auto (GPU)") : std::string("Auto (CPU)");
+		};
+		actions.change_renderer = [&](int direction) {
+			bool retry = false;
+			for (int p = 0; p < instance_count(); p++) if (cabinets[p]) retry = retry || cabinets[p]->gpu_crashed;
+			if (retry) {
 				for (int p = 0; p < instance_count(); p++) {
 					if (!cabinets[p]) continue;
 					auto &c = *cabinets[p];
-					c.config.graphics = graphics;
-					c.settings_dirty = true;
 					std::error_code ec;
 					std::filesystem::remove(c.dir + "/gpu-start.crashed", ec);
 					if (ec) { fprintf(stderr, "two cabinets: clear GPU marker: %s\n", ec.message().c_str()); menu_failed = true; return; }
-					c.gpu_retry_pending = c.gpu_retry_pending || c.gpu_crashed;
 					c.gpu_crashed = false;
+					c.gpu_retry_pending = true;
 					c.gpu_notice.clear();
 				}
-				join_overlay.toast("Graphics driver change takes effect on the next launch.");
-			}});
-#endif
-		page.items.push_back({"Picture shape", "Shape of the whole split-screen image. Each view follows its allocated area; narrow views keep 4:3 with black bars.",
-			[&] {
-				const int aspect = cabinets[0]->config.aspect;
-				return std::string(aspect ? ASPECT_NAMES[std::clamp(aspect, 0, N_ASPECTS - 1)] : "Fit window");
-			},
-			[&](int direction) {
-				const int aspect = wrap_choice(cabinets[0]->config.aspect + direction, N_ASPECTS);
-				set_shape(aspect);
-			}});
-		page.items.push_back({"Frame rate", "30 FPS is original arcade motion; 60 and 120 FPS add interpolated pictures.",
-			[&] { return std::to_string(cabinets[0]->config.fps) + " FPS"; },
-			[&](int direction) {
-				constexpr int rates[] = {30, 60, 120};
-				int index = cabinets[0]->config.fps == 30 ? 0 : cabinets[0]->config.fps == 60 ? 1 : 2;
-				const int fps = rates[wrap_choice(index + direction, 3)];
-				for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.fps = fps;
-				apply_shared_settings();
-			}});
-		for (auto item : cabinets[0]->game->display_menu_items()) {
-			if (item.change) {
-				auto change = item.change;
-				item.change = [&, change](int direction) {
-					change(direction);
-					sync_display_settings();
-					next_picture = {};
-				};
+				join_overlay.toast("GPU retry scheduled for the next launch.");
+				return;
 			}
-			page.items.push_back(std::move(item));
-		}
-		page.items.push_back({"Background filter", "Smooth stage backgrounds when enlarged.",
-			[&] { return std::string(cabinets[0]->config.smooth_bg ? "Smooth" : "Off"); },
-			[&](int) {
-				const bool enabled = !cabinets[0]->config.smooth_bg;
-				for (int p = 0; p < cabinet_count; p++)
-					cabinets[p]->config.smooth_bg = enabled;
-				apply_shared_settings();
-			}});
-		page.items.push_back({"Screen filter", "Scanlines adds dark lines between arcade monitor rows. CRT adds the lines, RGB stripes and darker corners.",
-			[&] {
-				static const char *names[] = {"Off", "Scanlines", "CRT"};
-				return std::string(names[std::clamp(cabinets[0]->config.filter, 0, 2)]);
-			},
-			[&](int direction) {
-				const int filter = wrap_choice(cabinets[0]->config.filter + direction, 3);
-				for (int p = 0; p < instance_count(); p++) {
-					if (!cabinets[p]) continue;
-					cabinets[p]->config.filter = filter;
-					cabinets[p]->settings_dirty = true;
-				}
-			}});
-		page.items.push_back({"CRT colours",
-			"The colours as an arcade monitor showed them. Off keeps the game's original colours.",
-			[&] {
-				const auto &c = *cabinets[0];
-				return std::string(crt::PRESETS[c.config.crt_colours].name) +
-					(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
-						? " (not with this renderer)" : "");
-			},
-			[&](int direction) {
-				const int choice = wrap_choice(cabinets[0]->config.crt_colours + direction, crt::N_PRESETS);
-				for (int p = 0; p < instance_count(); p++) {
-					if (!cabinets[p]) continue;
-					cabinets[p]->config.crt_colours = choice;
-					cabinets[p]->settings_dirty = true;
-				}
-			}});
-		page.items.push_back({"Brightness", "The picture's brightness; 100% is the game's own.",
-			[&] {
-				const auto &c = *cabinets[0];
-				return std::to_string(c.config.brightness) + "%" +
-					(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
-						? " (not with this renderer)" : "");
-			},
-			[&](int direction) {
-				const int value = std::clamp(cabinets[0]->config.brightness + 5 * direction,
-					crt::BRIGHT_MIN, crt::BRIGHT_MAX);
-				for (int p = 0; p < instance_count(); p++) {
-					if (!cabinets[p]) continue;
-					cabinets[p]->config.brightness = value;
-					cabinets[p]->settings_dirty = true;
-				}
-			}});
-		page.items.push_back({"Gamma", "The middle tones; 100% is the game's own.",
-			[&] {
-				const auto &c = *cabinets[0];
-				return std::to_string(c.config.gamma) + "%" +
-					(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
-						? " (not with this renderer)" : "");
-			},
-			[&](int direction) {
-				const int value = std::clamp(cabinets[0]->config.gamma + 5 * direction,
-					crt::GAMMA_MIN, crt::GAMMA_MAX);
-				for (int p = 0; p < instance_count(); p++) {
-					if (!cabinets[p]) continue;
-					cabinets[p]->config.gamma = value;
-					cabinets[p]->settings_dirty = true;
-				}
-			}});
-		page.items.push_back({"Show FPS", "Show the displayed frame rate in the corner.",
-			[&] { return std::string(cabinets[0]->config.show_fps ? "On" : "Off"); },
-			[&](int) {
-				const bool enabled = !cabinets[0]->config.show_fps;
-				for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.show_fps = enabled;
-				if (!enabled) join_overlay.set_fps("");
-				apply_shared_settings();
-			}});
-		page.items.push_back({"Fullscreen", "Toggle fullscreen. (F11)",
-			[&] { return std::string(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN ? "On" : "Off"); },
-			[&](int) {
-				const bool enabled = !(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN);
-				set_fullscreen(enabled);
-			}});
-		page.items.push_back({"Live Monitor",
+			const int renderer = wrap_choice(cabinets[0]->config.renderer3d + direction, 3);
+			for (int p = 0; p < instance_count(); p++) {
+				if (!cabinets[p]) continue;
+				cabinets[p]->config.renderer3d = renderer;
+				if (!configure_3d(*cabinets[p], renderer)) { menu_failed = true; return; }
+				cabinets[p]->settings_dirty = true;
+			}
+			next_picture = {};
+		};
+#ifdef _WIN32
+		actions.has_graphics_driver = true;
+		actions.graphics_driver = [&] { return cabinets[0]->config.graphics ? "Direct3D 12" : "Auto (Vulkan first)"; };
+		actions.change_graphics_driver = [&](int) {
+			const int graphics = !cabinets[0]->config.graphics;
+			for (int p = 0; p < instance_count(); p++) {
+				if (!cabinets[p]) continue;
+				auto &c = *cabinets[p];
+				c.config.graphics = graphics;
+				c.settings_dirty = true;
+				std::error_code ec;
+				std::filesystem::remove(c.dir + "/gpu-start.crashed", ec);
+				if (ec) { fprintf(stderr, "two cabinets: clear GPU marker: %s\n", ec.message().c_str()); menu_failed = true; return; }
+				c.gpu_retry_pending = c.gpu_retry_pending || c.gpu_crashed;
+				c.gpu_crashed = false;
+				c.gpu_notice.clear();
+			}
+			join_overlay.toast("Graphics driver change takes effect on the next launch.");
+		};
+#endif
+		actions.picture_shape = [&] {
+			const int aspect = cabinets[0]->config.aspect;
+			return std::string(aspect ? ASPECT_NAMES[std::clamp(aspect, 0, N_ASPECTS - 1)] : "Fit window");
+		};
+		actions.change_picture_shape = [&](int direction) {
+			set_shape(wrap_choice(cabinets[0]->config.aspect + direction, N_ASPECTS));
+		};
+		actions.frame_rate = [&] { return std::to_string(cabinets[0]->config.fps) + " FPS"; };
+		actions.change_frame_rate = [&](int direction) {
+			constexpr int rates[] = {30, 60, 120};
+			const int index = cabinets[0]->config.fps == 30 ? 0 : cabinets[0]->config.fps == 60 ? 1 : 2;
+			const int fps = rates[wrap_choice(index + direction, 3)];
+			for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.fps = fps;
+			apply_shared_settings();
+		};
+		actions.fullscreen = [&] {
+			return std::string(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN ? "On" : "Off");
+		};
+		actions.change_fullscreen = [&](int) {
+			const bool enabled = !(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN);
+			set_fullscreen(enabled);
+		};
+		actions.live_monitor = menu_item{"Live Monitor",
 			"Off, above the players, or a spectator window. Works with one or two players. "
 			"Enabling/disabling restarts the linked session. Player audio only; the monitor is muted and has no controls.",
 			[&] {
@@ -1824,15 +1853,104 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				cabinets[0]->config.live_monitor = wrap_choice(cabinets[0]->config.live_monitor + direction, 3);
 				cabinets[0]->settings_dirty = true;
 				monitor_change_requested = true;
-			}});
-		page.items.push_back({"Free camera", "Fly around the picture without changing the game's state or controls. (F4)",
-			[&] { return cabinets[0]->machine.free_cam() ? "On" : "Off"; },
-			[&](int) {
-				set_free_camera(!cabinets[0]->machine.free_cam());
-				join_overlay.refresh();
-			}});
-		page.items.push_back(back_item());
-		return page;
+			}};
+		actions.background_filter = [&] { return std::string(cabinets[0]->config.smooth_bg ? "Smooth" : "Off"); };
+		actions.change_background_filter = [&](int) {
+			const bool enabled = !cabinets[0]->config.smooth_bg;
+			for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.smooth_bg = enabled;
+			apply_shared_settings();
+		};
+		actions.screen_filter = [&] {
+			static const char *names[] = {"Off", "Scanlines", "CRT"};
+			return std::string(names[std::clamp(cabinets[0]->config.filter, 0, 2)]);
+		};
+		actions.change_screen_filter = [&](int direction) {
+			const int filter = wrap_choice(cabinets[0]->config.filter + direction, 3);
+			for (int p = 0; p < instance_count(); p++) {
+				if (!cabinets[p]) continue;
+				cabinets[p]->config.filter = filter;
+				cabinets[p]->settings_dirty = true;
+			}
+		};
+		actions.crt_colours = [&] {
+			const auto &c = *cabinets[0];
+			return std::string(crt::PRESETS[c.config.crt_colours].name) +
+				(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
+					? " (not with this renderer)" : "");
+		};
+		actions.change_crt_colours = [&](int direction) {
+			const int choice = wrap_choice(cabinets[0]->config.crt_colours + direction, crt::N_PRESETS);
+			for (int p = 0; p < instance_count(); p++) {
+				if (!cabinets[p]) continue;
+				cabinets[p]->config.crt_colours = choice;
+				cabinets[p]->settings_dirty = true;
+			}
+		};
+		actions.brightness = [&] {
+			const auto &c = *cabinets[0];
+			return std::to_string(c.config.brightness) + "%" +
+				(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
+					? " (not with this renderer)" : "");
+		};
+		actions.change_brightness = [&](int direction) {
+			const int value = std::clamp(cabinets[0]->config.brightness + 5 * direction, crt::BRIGHT_MIN, crt::BRIGHT_MAX);
+			for (int p = 0; p < instance_count(); p++) {
+				if (!cabinets[p]) continue;
+				cabinets[p]->config.brightness = value;
+				cabinets[p]->settings_dirty = true;
+			}
+		};
+		actions.gamma = [&] {
+			const auto &c = *cabinets[0];
+			return std::to_string(c.config.gamma) + "%" +
+				(c.display->crt_paint.failed() && (c.config.crt_colours || c.config.brightness != 100 || c.config.gamma != 100)
+					? " (not with this renderer)" : "");
+		};
+		actions.change_gamma = [&](int direction) {
+			const int value = std::clamp(cabinets[0]->config.gamma + 5 * direction, crt::GAMMA_MIN, crt::GAMMA_MAX);
+			for (int p = 0; p < instance_count(); p++) {
+				if (!cabinets[p]) continue;
+				cabinets[p]->config.gamma = value;
+				cabinets[p]->settings_dirty = true;
+			}
+		};
+		actions.show_fps = [&] { return std::string(cabinets[0]->config.show_fps ? "On" : "Off"); };
+		actions.change_show_fps = [&](int) {
+			const bool enabled = !cabinets[0]->config.show_fps;
+			for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.show_fps = enabled;
+			if (!enabled) join_overlay.set_fps("");
+			apply_shared_settings();
+		};
+		actions.free_camera = [&] { return std::string(cabinets[0]->machine.free_cam() ? "On" : "Off"); };
+		actions.change_free_camera = [&](int) {
+			set_free_camera(!cabinets[0]->machine.free_cam());
+			join_overlay.refresh();
+		};
+		actions.has_graphics_driver =
+#ifdef _WIN32
+			true;
+#else
+			false;
+#endif
+		actions.has_background_filter = true;
+		actions.has_show_fps = true;
+		actions.has_free_camera = true;
+		auto add_game_items = [&](std::vector<menu_item> items) {
+			for (auto &item : items) {
+				if (item.change) {
+					auto change = item.change;
+					item.change = [&, change](int direction) {
+						change(direction);
+						sync_display_settings();
+						next_picture = {};
+					};
+				}
+			}
+			return items;
+		};
+		actions.picture_items = add_game_items(cabinets[0]->game->display_picture_menu_items());
+		actions.quality_items = add_game_items(cabinets[0]->game->display_quality_menu_items());
+		return make_display_menu(std::move(actions));
 	};
 	auto sound_page = [&] {
 		menu_page page{"Sound", "Live Monitor is always muted. Only player audio is mixed.", {}};
@@ -2198,7 +2316,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	auto main_page = [&] {
 		menu_page page{"", "", {}};
 		page.items.push_back({"Resume", "Return to the game.", {}, {}, [&] { join_overlay.close(); }});
-		page.items.push_back({"Display", "Render scale, antialiasing, aspect ratio, CRT colours, frame rate and fullscreen.",
+		page.items.push_back({"Display", "Picture, quality, screen filter and colours.",
 			{}, {}, [&] { join_overlay.push(display_page()); }});
 		page.items.push_back({"Sound", "Overall volume, music and effects.", {}, {}, [&] { join_overlay.push(sound_page()); }});
 		page.items.push_back({"Controls", "Configure each player's controller and keyboard.", {}, {},
@@ -4551,110 +4669,111 @@ int main(int argc, char **argv)
 	};
 	game_ctx.refresh_menu = [&] { menu.refresh(); };
 	auto display_page = [&] {
-		menu_page p{ "Display", "", {} };
-		p.items.push_back({ "Render scale",
-			"How sharp the 3D is. 1x is the original arcade resolution; higher is sharper but needs a faster computer. (F5)",
-			[&] { return std::to_string(cfg.scale) + "x"; },
-			[&](int d) { player_scale_to(std::clamp(cfg.scale + d, 1, 6)); } });
-		p.items.push_back({ "Antialiasing",
-			"Smooths jagged edges on the 3D. Low smooths the edges for little cost; 2x and 3x draw the 3D larger and look cleanest, but take a lot more power (lower the render scale if the game slows down).",
-			[&] { return cfg.aa == 0 ? std::string("Low") : aa_now() == 1 ? std::string(cfg.aa > 1 ? "Off (too large here)" : "Off") : std::to_string(aa_now()) + "x"; },
-			[&](int d) {
-				static const int order[] = { 1, 0, 2, 3 };   // Off, Low, 2x, 3x
-				int i = 0;
-				while (i < 3 && order[i] != cfg.aa) i++;
-				cfg.aa = order[std::clamp(i + d, 0, 3)];
-				set_scale(cfg.scale);
-			} });
-		p.items.push_back({ "3D renderer",
-			"Which draws the 3D: the CPU, or the graphics card (GPU), with exactly the same picture. Auto uses the GPU whenever it works here (the CPU if it can't). If the GPU closed the game as it started, the CPU draws it until you choose again here.",
-			[&] { return renderer_name(); },
-			[&](int d) {
-				SDL_RemovePath((dir + "/gpu-start.crashed").c_str());   // (the player's choice: a crashed start tried again from the next)
-				const bool was_crashed = g3_crashed;
-				g3_crashed = false;
-				menu.toast("");   // (its advice followed: the notice taken down)
-				// (SDL_GPU: from the next start. After a crashed start the first press only tries the GPU again, the
-				// setting kept: one press on to CPU would have left it there)
-				if (!g3 && g3_next_start) { if (!was_crashed) { cfg.renderer3d = wrap(cfg.renderer3d + d, 3); cfg_dirty = true; } return; }
-				if (!g3) { cfg.renderer3d = wrap(cfg.renderer3d + d, 3); cfg_dirty = true; g3_next_start = true; return; }   // (none made: from the next start)
-				cfg.renderer3d = wrap(cfg.renderer3d + d, 3); cfg_dirty = true;
-				auto_measure("chosen");
-				redraw_if_stopped();
-				log_state("the player's 3D renderer");
-			} });
+		display_menu_actions actions;
+		actions.push_page = [&](menu_page p) { menu.push(std::move(p)); };
+		actions.back_item = back_item;
+		actions.picture_shape_help = game_part.picture_shape_help();
+		actions.render_scale = [&] { return std::to_string(cfg.scale) + "x"; };
+		actions.change_render_scale = [&](int d) { player_scale_to(std::clamp(cfg.scale + d, 1, 6)); };
+		actions.antialiasing = [&] {
+			return cfg.aa == 0 ? std::string("Low") :
+				aa_now() <= 1 ? std::string("Off") : std::to_string(aa_now()) + "x";
+		};
+		actions.change_antialiasing = [&](int d) {
+			static const int order[] = {1, 0, 2, 3};
+			int i = 0;
+			while (i < 3 && order[i] != cfg.aa) i++;
+			cfg.aa = order[std::clamp(i + d, 0, 3)];
+			set_scale(cfg.scale);
+		};
+		actions.renderer = [&] { return renderer_name(); };
+		actions.change_renderer = [&](int d) {
+			SDL_RemovePath((dir + "/gpu-start.crashed").c_str());
+			const bool was_crashed = g3_crashed;
+			g3_crashed = false;
+			menu.toast("");
+			if (!g3 && g3_next_start) {
+				if (!was_crashed) { cfg.renderer3d = wrap(cfg.renderer3d + d, 3); cfg_dirty = true; }
+				return;
+			}
+			if (!g3) { cfg.renderer3d = wrap(cfg.renderer3d + d, 3); cfg_dirty = true; g3_next_start = true; return; }
+			cfg.renderer3d = wrap(cfg.renderer3d + d, 3); cfg_dirty = true;
+			auto_measure("chosen");
+			redraw_if_stopped();
+			log_state("the player's 3D renderer");
+		};
 #ifdef _WIN32
-		p.items.push_back({ "Graphics driver",
-			"Which of Windows' graphics drivers the GPU uses. Auto starts on Vulkan, and on Direct3D 12 if Vulkan won't start or can't draw the game exactly. Pick Direct3D 12 if the game runs better on it here. Takes effect the next time the game starts.",
-			[&] { return std::string(cfg.graphics ? "Direct3D 12" : "Auto (Vulkan first)"); },
-			[&](int) {
-				cfg.graphics = !cfg.graphics; cfg_dirty = true;
-				SDL_RemovePath((dir + "/gpu-start.crashed").c_str());
-				g3_crashed = false;
-				menu.toast("");
-			} });
+		actions.has_graphics_driver = true;
+		actions.graphics_driver = [&] { return std::string(cfg.graphics ? "Direct3D 12" : "Auto (Vulkan first)"); };
+		actions.change_graphics_driver = [&](int) {
+			cfg.graphics = !cfg.graphics;
+			cfg_dirty = true;
+			SDL_RemovePath((dir + "/gpu-start.crashed").c_str());
+			g3_crashed = false;
+			menu.toast("");
+		};
 #endif
-		p.items.push_back({ "Picture shape",
-			std::string("Fit the window fills any screen shape. The other shapes add black bars to keep their shape; 4:3 is the original arcade screen. ") +
-				game_part.picture_shape_help() + "(F6)",
-			[&] { return std::string(aspect_i ? ASPECT_NAMES[aspect_i] : "Fit the window"); },
-			[&](int d) { set_shape(wrap(aspect_i + d, N_ASPECTS)); } });
-		p.items.push_back({ "Frame rate",
-			"30 FPS is original arcade motion, with no interpolation. 60 and 120 FPS add interpolated pictures without changing game speed or sound. Higher rates need more power and a fast enough display.",
-			[&] { return std::to_string(cfg.fps) + (cfg.fps == 30 ? " FPS (Arcade)" : " FPS"); },
-			[&](int d) {
-				constexpr int rates[] = { 30, 60, 120 };
-				const int index = cfg.fps == 30 ? 0 : cfg.fps == 60 ? 1 : 2;
-				cfg.fps = rates[wrap(index + d, 3)];
-				cfg_dirty = true;
-				picture_budget = 1;
-				arcade_picture_pending = false;
-				arcade_next_picture = 0;
-				m.set_smooth(cfg.fps != 30);
-				sync.reset();
-				redraw_if_stopped();
-				log_state("the player's frame rate");
-			} });
-		for (menu_item &i : game_part.display_menu_items()) p.items.push_back(std::move(i));
-		if (has_skies) p.items.push_back({ "Background filter",
-			"Smooth softens the stage backgrounds so they don't look blocky when enlarged. Off keeps their original pixels. Only matters above 1x.",
-			[&] { return std::string(cfg.smooth_bg ? "Smooth" : "Off"); },
-			[&](int) { cfg.smooth_bg = !cfg.smooth_bg; cfg_dirty = true; m.set_sky_filter(cfg.smooth_bg); redraw_if_stopped(); } });
-		p.items.push_back({ "Screen filter",
-			"Scanlines adds the dark lines between the arcade monitor's rows. CRT adds those, the monitor's red, green and blue stripes, and slightly darker corners. The lines need a large window or fullscreen to show.",
-			[&] { return std::string(FILTER_NAMES[cfg.filter]); },
-			[&](int d) { cfg.filter = wrap(cfg.filter + d, 3); cfg_dirty = true; } });
-		p.items.push_back({ "CRT colours",
-			"The colours as an arcade monitor showed them, as Supermodel's CRT colours. Sega arcade is a Japanese cabinet's: bluer whites and richer colours. The others are a Sony studio monitor and the TV standards of Japan, the US and Europe. Off: the game's colours as they are.",
-			[&] { return std::string(crt::PRESETS[cfg.crt_colours].name) + (crt_on && crt_paint.failed() ? " (not with this renderer)" : ""); },
-			[&](int d) { cfg.crt_colours = wrap(cfg.crt_colours + d, crt::N_PRESETS); cfg_dirty = true; } });
-		p.items.push_back({ "Brightness",
-			"The picture's brightness, for your screen: 100% is the game's own. Brighter lifts the whole picture (the brightest parts stay white).",
-			[&] { return std::to_string(cfg.brightness) + "%" + (crt_on && crt_paint.failed() ? " (not with this renderer)" : ""); },
-			[&](int d) { cfg.brightness = std::clamp(cfg.brightness + 5 * d, crt::BRIGHT_MIN, crt::BRIGHT_MAX); cfg_dirty = true; } });
-		p.items.push_back({ "Gamma",
-			"The middle tones, for your screen: 100% is the game's own. Higher brings the dark parts up without washing out the blacks or the whites; lower makes them deeper.",
-			[&] { return std::to_string(cfg.gamma) + "%" + (crt_on && crt_paint.failed() ? " (not with this renderer)" : ""); },
-			[&](int d) { cfg.gamma = std::clamp(cfg.gamma + 5 * d, crt::GAMMA_MIN, crt::GAMMA_MAX); cfg_dirty = true; } });
-		p.items.push_back({ "Show FPS", "Shows the frame rate in the top right corner.",
-			[&] { return on_off(cfg.show_fps); },
-			[&](int) { cfg.show_fps = !cfg.show_fps; cfg_dirty = true; if (!cfg.show_fps) menu.set_fps(""); } });
-		if (free_cam_supported)
-			p.items.push_back({ "Free camera", "Fly around the picture without changing the game's state or controls. (F4)",
-				[&] { return on_off(m.free_cam()); },
-				[&](int) {
-					m.set_free_cam(!m.free_cam());
-					m.set_stopped(true);
-					m.redraw();
-					m.set_stopped(false);
-					still_dirty = true;
-					menu.refresh();
-				} });
-		p.items.push_back({ "Fullscreen", "Play fullscreen or in a window. (F11, F or Alt+Enter)",
-			[&] { return on_off(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN); },
-			[&](int) { set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)); } });
-		p.items.push_back(back_item());
-		return p;
+		actions.picture_shape = [&] { return std::string(aspect_i ? ASPECT_NAMES[aspect_i] : "Fit the window"); };
+		actions.change_picture_shape = [&](int d) { set_shape(wrap(aspect_i + d, N_ASPECTS)); };
+		actions.frame_rate = [&] { return std::to_string(cfg.fps) + (cfg.fps == 30 ? " FPS (Arcade)" : " FPS"); };
+		actions.change_frame_rate = [&](int d) {
+			constexpr int rates[] = {30, 60, 120};
+			const int index = cfg.fps == 30 ? 0 : cfg.fps == 60 ? 1 : 2;
+			cfg.fps = rates[wrap(index + d, 3)];
+			cfg_dirty = true;
+			picture_budget = 1;
+			arcade_picture_pending = false;
+			arcade_next_picture = 0;
+			m.set_smooth(cfg.fps != 30);
+			sync.reset();
+			redraw_if_stopped();
+			log_state("the player's frame rate");
+		};
+		actions.fullscreen = [&] { return on_off(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN); };
+		actions.change_fullscreen = [&](int) { set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)); };
+		actions.background_filter = [&] { return std::string(cfg.smooth_bg ? "Smooth" : "Off"); };
+		actions.change_background_filter = [&](int) {
+			cfg.smooth_bg = !cfg.smooth_bg;
+			cfg_dirty = true;
+			m.set_sky_filter(cfg.smooth_bg);
+			redraw_if_stopped();
+		};
+		actions.screen_filter = [&] { return std::string(FILTER_NAMES[cfg.filter]); };
+		actions.change_screen_filter = [&](int d) { cfg.filter = wrap(cfg.filter + d, 3); cfg_dirty = true; };
+		actions.crt_colours = [&] {
+			return std::string(crt::PRESETS[cfg.crt_colours].name) +
+				(crt_on && crt_paint.failed() ? " (not with this renderer)" : "");
+		};
+		actions.change_crt_colours = [&](int d) { cfg.crt_colours = wrap(cfg.crt_colours + d, crt::N_PRESETS); cfg_dirty = true; };
+		actions.brightness = [&] {
+			return std::to_string(cfg.brightness) + "%" + (crt_on && crt_paint.failed() ? " (not with this renderer)" : "");
+		};
+		actions.change_brightness = [&](int d) { cfg.brightness = std::clamp(cfg.brightness + 5 * d, crt::BRIGHT_MIN, crt::BRIGHT_MAX); cfg_dirty = true; };
+		actions.gamma = [&] {
+			return std::to_string(cfg.gamma) + "%" + (crt_on && crt_paint.failed() ? " (not with this renderer)" : "");
+		};
+		actions.change_gamma = [&](int d) { cfg.gamma = std::clamp(cfg.gamma + 5 * d, crt::GAMMA_MIN, crt::GAMMA_MAX); cfg_dirty = true; };
+		actions.show_fps = [&] { return on_off(cfg.show_fps); };
+		actions.change_show_fps = [&](int) {
+			cfg.show_fps = !cfg.show_fps;
+			cfg_dirty = true;
+			if (!cfg.show_fps) menu.set_fps("");
+		};
+		actions.free_camera = [&] { return on_off(m.free_cam()); };
+		actions.change_free_camera = [&](int) {
+			m.set_free_cam(!m.free_cam());
+			m.set_stopped(true);
+			m.redraw();
+			m.set_stopped(false);
+			still_dirty = true;
+			menu.refresh();
+		};
+		actions.has_background_filter = has_skies;
+		actions.has_show_fps = true;
+		actions.has_free_camera = free_cam_supported;
+		actions.picture_items = game_part.display_picture_menu_items();
+		actions.quality_items = game_part.display_quality_menu_items();
+		return make_display_menu(std::move(actions));
 	};
 	auto sound_page = [&] {
 		menu_page p{ "Sound", "", {} };
@@ -4894,7 +5013,7 @@ int main(int argc, char **argv)
 	auto main_page = [&] {
 		menu_page p{ "", "", {} };
 		p.items.push_back({ "Resume", "Back to the game.", {}, {}, [&] { menu.close(); } });
-		p.items.push_back({ "Display", "Sharpness, antialiasing, screen shape, CRT colours, background and screen filters, frame rate and fullscreen.",
+		p.items.push_back({ "Display", "Picture, quality, screen filter and colours.",
 							{}, {}, [&] { menu.push(display_page()); } });
 		p.items.push_back({ "Sound", "The overall, music and effects volumes.", {}, {}, [&] { menu.push(sound_page()); } });
 		p.items.push_back({ "Game", game_part.has_play_style() ? "Play style and reset." : "Reset the game.",

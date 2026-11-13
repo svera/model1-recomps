@@ -93,7 +93,7 @@ public:
 		return apply_coin_setting();
 	}
 
-	std::vector<menu_item> display_menu_items() override
+	std::vector<menu_item> display_quality_menu_items() override
 	{
 		return { { "Draw distance", "Full draws missing static scenery directly in the renderer, without changing game timing or collisions. Aircraft and other moving objects keep their original visibility. Full can lower performance. Applies to the next scenery list.",
 			[this] { return extended ? "Full" : "Arcade"; },
