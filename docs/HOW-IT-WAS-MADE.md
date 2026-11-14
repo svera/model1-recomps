@@ -1990,6 +1990,23 @@ processes, including guest departures down to two and last-racer teardown.
 
 ## VR's local multiplayer entry and disconnect handling
 
+The local-cabinet host is shared infrastructure, but games must explicitly opt in through
+`game_host::local_multiplayer()` after implementing their linked roles, boot readiness and safe
+join handling. The host obtains the title, recompiler map, backgrounds, default frame rate,
+diagnostics and multiplayer menu descriptions from the registered game and its host.
+Live Monitor and LAN are separate game capabilities; VR supplies its LAN configuration and
+diagnostic fields. Wing War has not opted in: its communication settings and linked play still
+need implementation and ROM-backed validation. `make test-vr-local-host` and
+`make test-vr-local-host-desktop` cover the capability contract and the nonvisual VR solo,
+join and reset path, including rejection of Wing War's split-screen option. A test host layered
+over VR also checks game-specific menu callbacks, per-player options and sound settings, and
+per-cabinet sidecar persistence. The local host obtains its link session from the game's host;
+VR supplies an M1COMM session, while another game can provide a different transport. The Model 1
+LAN adapter accepts a game-specific peer-retirement policy: VR preserves the departing car's pose
+and clears its participation data. Without a retirement policy, a peer loss ends the session rather
+than inventing game state. LAN still uses the Model 1 packet and board protocol and requires separate
+validation before another game can opt in.
+
 Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.
 The first controller to press Start claims Player 1 and starts solo play, regardless of
 connection order. Instance-ID claims keep that assignment stable across periodic scans,

@@ -1,0 +1,70 @@
+{
+  "buildFiles": [
+    "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/CMakeLists.txt",
+    "/Users/svera/Documents/repos/model1-recomps/build/deps/freetype-2.14.3/CMakeLists.txt",
+    "/Users/svera/Documents/repos/model1-recomps/tools/android/app/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "SDL3-shared::@7d0d1525ee0fd774d106": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "SDL3-shared",
+      "output": "/Users/svera/Documents/repos/model1-recomps/tools/android/app/build/intermediates/cxx/Debug/2s1x2w4c/obj/arm64-v8a/libSDL3.so",
+      "runtimeFiles": []
+    },
+    "SDL3_test::@7d0d1525ee0fd774d106": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "SDL3_test",
+      "output": "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/sdl/libSDL3_test.a"
+    },
+    "SDL_uclibc::@7d0d1525ee0fd774d106": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "SDL_uclibc",
+      "output": "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/sdl/libSDL_uclibc.a"
+    },
+    "freetype::@96957e95d729942f8bb0": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "freetype",
+      "output": "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/freetype/libfreetyped.a"
+    },
+    "main::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "main",
+      "output": "/Users/svera/Documents/repos/model1-recomps/tools/android/app/build/intermediates/cxx/Debug/2s1x2w4c/obj/arm64-v8a/libmain.so",
+      "runtimeFiles": [
+        "/Users/svera/Documents/repos/model1-recomps/tools/android/app/build/intermediates/cxx/Debug/2s1x2w4c/obj/arm64-v8a/libSDL3.so"
+      ]
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang.lld",
+      "cppCompilerExecutable": "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++.lld"
+    }
+  },
+  "cFileExtensions": [
+    "c"
+  ],
+  "cppFileExtensions": [
+    "cxx",
+    "cpp"
+  ]
+}

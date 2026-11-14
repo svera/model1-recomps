@@ -3,9 +3,11 @@
 // (src/games/<game>/host.cpp), and a host binary links one game's.
 #pragma once
 #include "controls.h"
+#include "local_cabinet_link.h"
 #include "menu.h"
 #include "../machine/model1.h"
 #include "../machine/model1_romset.h"
+#include "../../third_party/arcade-lan/include/arcade_lan.h"
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -14,6 +16,21 @@
 #include <vector>
 
 using settings_map = std::map<std::string, std::string>;
+
+struct local_multiplayer_info
+{
+	bool live_monitor = false;
+	const char *game_help = "Game and service settings.";
+	const char *shared_game_help = "Player settings are kept separately.";
+	const char *cabinet_game_help = "Player and service settings.";
+	const char *join_wait = "waiting for a safe point";
+	const char *analog_help = "Change this player's analog axes.";
+};
+
+struct local_multiplayer_status
+{
+	unsigned phase = 0, role = 0, participants = 0;
+};
 
 // The host's side, for the game's
 struct host_context
@@ -30,7 +47,7 @@ struct host_context
 	std::function<void(const std::string &, std::function<bool(const SDL_Event &)>, std::function<void()>)> capture;
 	std::function<void()> refresh_menu;
 	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings, until a reset ends them
-	int link_player = 0;                     // local VR role: 1 master, 2 slave, 3 Live Monitor
+	int link_player = 0;                     // 0 standalone, 1 first cabinet, 2 other linked cabinet, 3 receive-only monitor
 	bool standalone_cabinet = false;         // force standalone instead of restoring a saved link role
 };
 
@@ -106,7 +123,16 @@ public:
 	virtual bool hide_frame() const { return false; }
 	// Whether a queued local multiplayer join can safely restart into linked play.
 	virtual bool can_join_local_cabinet() const { return false; }
+	// Opt in only after implementing linked roles, boot and join handling for this game.
+	virtual const local_multiplayer_info *local_multiplayer() const { return nullptr; }
+	// Machines outlive the session; second and monitor are independently optional, but not both absent.
+	virtual std::unique_ptr<local_cabinet_link> make_local_link(model1 &, model1 *, model1 *) { return {}; }
+	virtual local_multiplayer_status local_status(model1 &) const { return {}; }
+	virtual bool local_boot_complete(const model1 &machine) const { return machine.past_boot(); }
 	virtual bool supports_lan() const { return false; }
+	virtual lan_config local_lan_config() const { return {}; }
+	// No policy means a LAN peer loss ends the session rather than fabricating game data.
+	virtual std::function<m1comm::memory(m1comm::memory)> lan_retirement_policy() const { return {}; }
 	virtual std::vector<uint8_t> lan_settings() const { return {}; }
 	virtual bool apply_lan_settings(std::span<const uint8_t>) { return false; }
 
@@ -119,6 +145,7 @@ public:
 	// M1_TRACE's six columns of the game's own state (VF: the fighters' health, rounds, the fight's
 	// state); zeros when the game has none
 	virtual void trace_fields(unsigned (&fields)[6]) const {}
+
 };
 
 // The game this host binary runs (each game's host.cpp has it)

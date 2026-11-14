@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "sdl",
+		"source" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18"
+	}
+}

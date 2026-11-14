@@ -14,6 +14,7 @@ int main(int argc, char **argv)
 	regions.title = game::wingwar::ID;
 	model1 machine(std::move(regions));
 	auto host = make_game_host();
+	assert(!host->local_multiplayer() && !host->supports_lan());
 	bool pc_mode = false;
 	int service_calls = 0, settings_calls = 0;
 	host_context context{machine, "", "", pc_mode, [&] { settings_calls++; }, {}, {},

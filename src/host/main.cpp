@@ -22,7 +22,6 @@
 #include "local_link.h"
 #include "model1_lan.h"
 #include "cabinet_display.h"
-#include "../machine/linked_pair.h"
 #include "../machine/parallel.h"
 #include "../rt/rec_rt.h"
 #ifdef M1_NATIVE
@@ -958,6 +957,7 @@ struct local_cabinet
 	settings config;
 	std::unique_ptr<host_context> host;
 	std::string dir;
+	std::string sidecar_path;
 	std::shared_ptr<local_display> display;
 	SDL_Texture *texture = nullptr;
 	std::array<SDL_Texture *, model1::G3_TARGETS> gpu_textures{};
@@ -977,7 +977,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					 int arg_scale, int arg_aspect, bool interp, cabinet_layout layout, int fullscreen)
 {
 	std::array<std::unique_ptr<local_cabinet>, 3> cabinets;
-	lan_session lan({{'M', '1', 'V', 'R'}, 3, 19794, 0, 0, 0, LAN_LINK, 0, 4});
+	const auto *local_info = the_game().local_multiplayer();
+	if (!local_info) {
+		fprintf(stderr, "two cabinets: local multiplayer is not supported by %s\n", host_title());
+		return 2;
+	}
+	lan_session lan(the_game().local_lan_config());
 	model1_lan network_cabinet;
 	uint32_t lan_fingerprint = 2166136261u;
 	for (const auto *rom : {&regions.maincpu, &regions.copro_tables, &regions.copro_data, &regions.polygons,
@@ -995,15 +1000,16 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	const int quit_after = getenv("M1_QUIT_AFTER") ? atoi(getenv("M1_QUIT_AFTER")) : -1;
 	fprintf(stderr, "two cabinets: build %s\n", settings::BUILD);
 	rec::hints map;
-	if (!interp && !map.read(assets + "/games/vr/vr_map.txt")) {
-		fprintf(stderr, "two cabinets: could not read VR's recompiler map\n");
+	const std::string map_path = assets + "/" + std::string(game::get(host_game()).recompiler_map);
+	if (!interp && !map.read(map_path)) {
+		fprintf(stderr, "two cabinets: could not read recompiler map %s\n", map_path.c_str());
 		return 1;
 	}
 	auto create_cabinet = [&](int p) {
 		cabinets[p] = std::make_unique<local_cabinet>(regions);
 		auto &c = *cabinets[p];
 		if (!c.machine.real_ioboard()) {
-			fprintf(stderr, "two cabinets: the Model 1 I/O-board ROM is required for independent steering and pedals\n");
+			fprintf(stderr, "two cabinets: the Model 1 I/O-board ROM is required for independent controls\n");
 			return false;
 		}
 		c.dir = p == 0 ? data_dir : p == 1 ? data_dir + "/two-cabinets/2" : data_dir + "/live-monitor";
@@ -1011,6 +1017,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		std::filesystem::create_directories(c.dir, ec);
 		if (ec) { fprintf(stderr, "two cabinets: cannot create %s: %s\n", c.dir.c_str(), ec.message().c_str()); return false; }
 		for (int slot = 0; slot < 2; slot++) c.config.ctl[slot] = player_controls::defaults(slot, c.game->controls());
+		c.config.fps = game::get_video(host_game()).default_fps;
 		if (getenv("SteamDeck")) { c.config.fullscreen = true; c.config.aspect = 2; }
 		// Each virtual cabinet has one driver; use different keyboard defaults in the two windows.
 		c.config.ctl[0] = player_controls::defaults(p == 1 ? 1 : 0, c.game->controls());
@@ -1047,7 +1054,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.machine.set_aspect(c.config.aspect ? ASPECTS[c.config.aspect] : 4.0f / 3);
 		c.machine.enable_sound();
 		c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, p == 2 ? 0.0f : c.config.effects / 100.0f);
-		auto load_save = [&](const char *name, uint8_t *destination, size_t size) {
+		auto load_save = [&](const char *name, uint8_t *destination, size_t size, bool eeprom = false) {
 			std::string path = c.dir + "/" + name;
 			bool exists = std::filesystem::exists(path, ec);
 			if (!ec && !exists && p == 0) {
@@ -1058,7 +1065,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				fprintf(stderr, "two cabinets: cannot inspect save %s: %s\n", path.c_str(), ec.message().c_str());
 				return false;
 			}
-			if (!exists) return true;
+			if (!exists) {
+				if (eeprom) {
+					const auto fresh = c.game->new_eeprom(c.machine);
+					if (!fresh.empty() && fresh.size() != size) {
+						fprintf(stderr, "two cabinets: invalid default EEPROM size for cabinet %d\n", p + 1);
+						return false;
+					}
+					if (!fresh.empty()) memcpy(destination, fresh.data(), size);
+				}
+				return true;
+			}
 			if (!load_blob(path, destination, size)) {
 				fprintf(stderr, "two cabinets: could not read save %s (expected %zu bytes)\n", path.c_str(), size);
 				return false;
@@ -1067,19 +1084,40 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		};
 		if (!load_save("nvram.sav", c.machine.nvram().data(), c.machine.nvram().size()) ||
 			!load_save(c.machine.real_ioboard() ? "eeprom_93c46.sav" : "eeprom.sav",
-				c.machine.eeprom(), model1::EEPROM_SIZE)) return false;
+				c.machine.eeprom(), model1::EEPROM_SIZE, true)) return false;
 		c.host = std::make_unique<host_context>(host_context{
 			c.machine, c.dir, assets, pc_mode, [&c] { c.settings_dirty = true; }, {}, {}, {}});
 		c.host->link_player = p == 2 ? 3 : cabinet_count == 2 ? p + 1 : 0;
 		c.host->standalone_cabinet = cabinet_count == 1 && p != 2;
 		c.game->start(*c.host);
+		if (*c.game->save_sidecar_name()) {
+			c.sidecar_path = c.dir + "/" + c.game->save_sidecar_name();
+			const bool exists = std::filesystem::exists(c.sidecar_path, ec);
+			if (ec) {
+				fprintf(stderr, "two cabinets: cannot inspect save %s: %s\n", c.sidecar_path.c_str(), ec.message().c_str());
+				return false;
+			}
+			if (exists) {
+				std::ifstream input(c.sidecar_path, std::ios::binary);
+				if (!input) {
+					fprintf(stderr, "two cabinets: cannot read save %s\n", c.sidecar_path.c_str());
+					return false;
+				}
+				std::string contents((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+				if (input.bad()) {
+					fprintf(stderr, "two cabinets: error reading save %s\n", c.sidecar_path.c_str());
+					return false;
+				}
+				c.game->load_sidecar(contents);
+			}
+		}
 		c.game->set_picture_shape(ASPECTS[c.config.aspect]);
 		c.game->before_boot();
 		c.game->play_style_changed();
-		load_backgrounds(c.machine, assets + "/games/vr/backgrounds");
+		load_backgrounds(c.machine, assets + "/games/" + std::string(host_game().name) + "/backgrounds");
 		load_backgrounds(c.machine, c.dir + "/backgrounds");
 		if (!interp) {
-			c.runtime.attach(c.machine.cpu(), "vr");
+			c.runtime.attach(c.machine.cpu(), host_game().name);
 			rec::native_stats stats;
 			if (!rec::build_native(c.machine.maincpu_rom(), map, &stats)) {
 				fprintf(stderr, "two cabinets: could not compile cabinet %d\n", p + 1);
@@ -1095,11 +1133,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		bool initialized = false;
 		for (int attempt = 0; attempt < 3; attempt++) {
 			c.machine.reset();
-			if (!interp) c.runtime.attach(c.machine.cpu(), "vr");
+			if (!interp) c.runtime.attach(c.machine.cpu(), host_game().name);
 			c.machine.forget_camera();
 			c.machine.set_drawing(false);
-			for (int frame = 0; frame < 900 && !c.machine.past_boot(); frame++) c.machine.run_frame();
-			if (!c.machine.past_boot()) break;
+			for (int frame = 0; frame < 900 && !c.game->local_boot_complete(c.machine); frame++) c.machine.run_frame();
+			if (!c.game->local_boot_complete(c.machine)) break;
 			if (!c.game->booted()) { initialized = true; break; }
 		}
 		c.machine.set_drawing(true);
@@ -1110,8 +1148,18 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return true;
 	};
 	for (int p = 0; p < cabinet_count; p++) if (!create_cabinet(p)) return 1;
-	std::unique_ptr<linked_pair> pair;
-	if (cabinet_count == 2) pair = std::make_unique<linked_pair>(cabinets[0]->machine, cabinets[1]->machine);
+	auto make_pair = [&]() {
+		auto session = cabinets[0]->game->make_local_link(cabinets[0]->machine,
+			cabinet_count == 2 ? &cabinets[1]->machine : nullptr,
+			cabinets[2] ? &cabinets[2]->machine : nullptr);
+		if (!session) fprintf(stderr, "two cabinets: %s did not provide a local link implementation\n", host_title());
+		return session;
+	};
+	std::unique_ptr<local_cabinet_link> pair;
+	if (cabinet_count == 2) {
+		pair = make_pair();
+		if (!pair) return 1;
+	}
 	int paired_racers = pair ? cabinet_count : 0;
 	for (int p = 1; p < cabinet_count; p++)
 		cabinets[p]->game->sync_shared_settings(cabinets[0]->machine);
@@ -1126,7 +1174,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			for (int p = 0; p < instance_count(); p++) {
 				if (!cabinets[p]) continue;
 				auto &m = cabinets[p]->machine;
-				const int phase = m.work_ram()[0x1138];
+				const int phase = cabinets[p]->game->local_status(m).phase;
 				if (phase != trace_phase[p] || m.camera() != trace_camera[p]) {
 					fprintf(stderr, "attract trace: frame=%llu cabinet=%d phase=%02x mode=%u camera=%08x\n",
 						(unsigned long long)m.frame_number(), p + 1, phase, m.game_mode(), m.camera());
@@ -1142,14 +1190,15 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			c->game->booted();   // Apply a saved cabinet role before boot can wait for its old link.
 			std::fill_n(c->machine.m_inputs, 3, uint8_t(0xff));
 			c->machine.reset();
-			if (!interp) c->runtime.attach(c->machine.cpu(), "vr");
+			if (!interp) c->runtime.attach(c->machine.cpu(), host_game().name);
 			c->machine.forget_camera();
 			c->machine.set_drawing(false);
 		}
 		for (int f = 0; f < 900; f++) {
 			run_frame();
-			if (cabinets[0]->machine.past_boot() && (cabinet_count == 1 || cabinets[1]->machine.past_boot()) &&
-				(!cabinets[2] || cabinets[2]->machine.past_boot())) break;
+			if (cabinets[0]->game->local_boot_complete(cabinets[0]->machine) &&
+				(cabinet_count == 1 || cabinets[1]->game->local_boot_complete(cabinets[1]->machine)) &&
+				(!cabinets[2] || cabinets[2]->game->local_boot_complete(cabinets[2]->machine))) break;
 		}
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
@@ -1157,8 +1206,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			c->machine.set_drawing(true);
 			c->machine.m_audio_out.clear();
 		}
-		return cabinets[0]->machine.past_boot() && (cabinet_count == 1 || cabinets[1]->machine.past_boot()) &&
-			(!cabinets[2] || cabinets[2]->machine.past_boot());
+		return cabinets[0]->game->local_boot_complete(cabinets[0]->machine) &&
+			(cabinet_count == 1 || cabinets[1]->game->local_boot_complete(cabinets[1]->machine)) &&
+			(!cabinets[2] || cabinets[2]->game->local_boot_complete(cabinets[2]->machine));
 	};
 	if (!boot()) { fprintf(stderr, "two cabinets: initial boot did not complete\n"); return 1; }
 	bool reboot = false;
@@ -1173,7 +1223,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!cabinets[p]) continue;
 			auto &c = *cabinets[p];
 			c.machine.reset();
-			if (!interp) c.runtime.attach(c.machine.cpu(), "vr");
+			if (!interp) c.runtime.attach(c.machine.cpu(), host_game().name);
 			c.machine.forget_camera();
 			c.machine.m_audio_out.clear();
 		}
@@ -1187,7 +1237,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	// The cabinets and their SDL resources must be destroyed before SDL_Quit.
 	struct sdl_cleanup {
 		std::array<std::unique_ptr<local_cabinet>, 3> &cabinets;
-		std::unique_ptr<linked_pair> &pair;
+		std::unique_ptr<local_cabinet_link> &pair;
 		~sdl_cleanup() { pair.reset(); for (auto &c : cabinets) c.reset(); SDL_Quit(); }
 	} cleanup{cabinets, pair};
 	std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audio(nullptr, SDL_DestroyAudioStream);
@@ -1247,8 +1297,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (p && layout != cabinet_layout::windows) { c.display = cabinets[0]->display; continue; }
 		c.display = std::make_shared<local_display>();
 		const bool split = layout != cabinet_layout::windows;
-		const std::string title = split ? "Virtua Racing" :
-			"Virtua Racing - Cabinet " + std::to_string(p + 1) + " (P/Esc pause both, F3 reset both)";
+		const std::string title = split ? host_title() :
+			std::string(host_title()) + " - Cabinet " + std::to_string(p + 1) + " (P/Esc pause both, F3 reset both)";
 		const int width = layout == cabinet_layout::side_by_side ? 1280 : split ? 800 : 640;
 		const int height = split ? (layout == cabinet_layout::side_by_side ? 480 : 600) : 480;
 		const bool start_fullscreen = fullscreen > 0 || (fullscreen < 0 && c.config.fullscreen);
@@ -1489,7 +1539,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (shared) c.display = cabinets[0]->display;
 		else {
 			c.display = std::make_shared<local_display>();
-			c.display->window = SDL_CreateWindow("Virtua Racing - Live Monitor", 640, 480,
+			const std::string title = std::string(host_title()) + " - Live Monitor";
+			c.display->window = SDL_CreateWindow(title.c_str(), 640, 480,
 				SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (hidden ? SDL_WINDOW_HIDDEN : 0));
 			if (!c.display->window) { fprintf(stderr, "Live Monitor: window: %s\n", SDL_GetError()); return false; }
 			c.display->icon_set = set_window_icon(c.display->window);
@@ -1517,7 +1568,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return true;
 	};
 	auto sync_monitor = [&] {
-		const bool wanted = cabinets[0]->config.live_monitor != 0;
+		const bool wanted = local_info->live_monitor && cabinets[0]->config.live_monitor != 0;
 		const bool rebuild = wanted != bool(cabinets[2]) ||
 			(pair ? paired_racers != cabinet_count : cabinet_count == 2 || wanted);
 		// Rebuild the transport when racers join or leave, even if the monitor stays enabled.
@@ -1530,10 +1581,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		cabinets[0]->host->link_player = cabinet_count == 2 || wanted ? 1 : 0;
 		cabinets[0]->host->standalone_cabinet = cabinet_count == 1 && !wanted;
-		if (rebuild && (cabinet_count == 2 || wanted))
-			pair = std::make_unique<linked_pair>(cabinets[0]->machine,
-				cabinet_count == 2 ? &cabinets[1]->machine : nullptr,
-				cabinets[2] ? &cabinets[2]->machine : nullptr);
+		if (rebuild && (cabinet_count == 2 || wanted)) {
+			pair = make_pair();
+			if (!pair) return false;
+		}
 		paired_racers = pair ? cabinet_count : 0;
 		return monitor_display();
 	};
@@ -1698,6 +1749,21 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (audio) SDL_ClearAudioStream(audio.get());
 	};
 	auto back_item = [&] { return menu_item{ "Back", "Return to the previous menu.", {}, {}, [&] { join_overlay.pop(); } }; };
+	int service_menu_player = -1;
+	auto connect_game_menu = [&](int player) {
+		auto &context = *cabinets[player]->host;
+		context.push_page = [&](menu_page page) { join_overlay.push(std::move(page)); };
+		context.back_item = back_item;
+		context.replace_page = [&](menu_page page, int selected) { join_overlay.replace(std::move(page), selected); };
+		context.capture = [&](const std::string &hint, std::function<bool(const SDL_Event &)> input,
+			std::function<void()> cancel) { join_overlay.capture(hint, std::move(input), std::move(cancel)); };
+		context.refresh_menu = [&] { join_overlay.refresh(); };
+		context.service_menu = [&, player] {
+			service_menu_player = player;
+			join_overlay.close();
+		};
+	};
+	for (int p = 0; p < cabinet_count; p++) connect_game_menu(p);
 	auto sync_display_settings = [&] {
 		const auto shared = cabinets[0]->game->shared_display_settings();
 		for (int p = 1; p < instance_count(); p++) {
@@ -1842,7 +1908,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			const bool enabled = !(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN);
 			set_fullscreen(enabled);
 		};
-		actions.live_monitor = menu_item{"Live Monitor",
+		if (local_info->live_monitor) actions.live_monitor = menu_item{"Live Monitor",
 			"Off, above the players, or a spectator window. Works with one or two players. "
 			"Enabling/disabling restarts the linked session. Player audio only; the monitor is muted and has no controls.",
 			[&] {
@@ -1957,7 +2023,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return make_display_menu(std::move(actions));
 	};
 	auto sound_page = [&] {
-		menu_page page{"Sound", "Live Monitor is always muted. Only player audio is mixed.", {}};
+		menu_page page{"Sound", local_info->live_monitor ? "Live Monitor is always muted. Only player audio is mixed." : "", {}};
 		page.items.push_back({"Volume", "Overall game volume.",
 			[&] { return std::to_string(cabinets[0]->config.volume) + "%"; },
 			[&](int direction) {
@@ -1979,6 +2045,19 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.effects = volume;
 				apply_shared_settings();
 			}});
+		if (cabinet_count == 1) {
+			for (auto &item : cabinets[0]->game->sound_menu_items()) page.items.push_back(std::move(item));
+		} else {
+			for (int p = 0; p < cabinet_count; p++)
+				if (!cabinets[p]->game->sound_menu_items().empty())
+					page.items.push_back({p ? "Player 2" : "Player 1", "This player's sound settings.", {}, {},
+						[&, p] {
+							menu_page player_page{p ? "Player 2 sound" : "Player 1 sound", "",
+								cabinets[p]->game->sound_menu_items()};
+							player_page.items.push_back(back_item());
+							join_overlay.push(std::move(player_page));
+						}});
+		}
 		page.items.push_back(back_item());
 		return page;
 	};
@@ -2168,7 +2247,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		const bool has_analog = std::any_of(io.analog_controls.begin(), io.analog_controls.end(),
 			[](std::string_view name) { return !name.empty(); });
 		if (has_analog)
-			page.items.push_back({"Analog axes", "Change this player's steering and pedal axes.", {}, {},
+			page.items.push_back({"Analog axes", local_info->analog_help, {}, {},
 				[&, player] { join_overlay.push(analog_axes_page(player)); }});
 		page.items.push_back({"Reset to defaults", "Restore this player's original controller and keyboard bindings.", {}, {},
 			[&, player] {
@@ -2203,29 +2282,24 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back(back_item());
 		return page;
 	};
-	int service_menu_player = -1;
 	bool game_reset_requested = false;
 	bool remove_player2_requested = false;
 	bool play_style_restart = false;
+	std::array<bool, 3> code_restart{};
 	auto cabinet_game_page = [&](int player) {
 		auto &c = *cabinets[player];
-		c.host->service_menu = [&, player] {
-			service_menu_player = player;
-			join_overlay.close();
-		};
 		menu_page page{player ? "Player 2 game" : "Player 1 game", "", c.game->cabinet_game_menu_items()};
 		page.items.push_back(back_item());
 		return page;
 	};
 	auto game_page = [&] {
-		menu_page page{"Game", cabinet_count == 1 ? "" :
-			"Language, race type and course selection are shared; player settings are kept separately.", {}};
+		menu_page page{"Game", cabinet_count == 1 ? "" : local_info->shared_game_help, {}};
 		if (lan.in_room()) {
 			page.note = "Leave the LAN room before changing game or service settings.";
 			page.items.push_back(back_item());
 			return page;
 		}
-		page.items.push_back({"Play style",
+		if (cabinets[0]->game->has_play_style()) page.items.push_back({"Play style",
 			"PC skips the boot screen and uses free play. Arcade shows the boot screen and uses coins. "
 			"Changing this restarts all active players together, keeping the local session.",
 			[&] { return pc_mode ? "PC" : "Arcade"; },
@@ -2241,16 +2315,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				join_overlay.close();
 			}});
 		if (cabinet_count == 1) {
-			cabinets[0]->host->service_menu = [&] {
-				service_menu_player = 0;
-				join_overlay.close();
-			};
 			for (auto &item : cabinets[0]->game->game_menu_items())
 				page.items.push_back(std::move(item));
 		} else {
 			for (int player = 0; player < cabinet_count; player++)
 				page.items.push_back({player ? "Player 2" : "Player 1",
-					"Car color, difficulty and the arcade service menu.", {}, {},
+					local_info->cabinet_game_help, {}, {},
 					[&, player] { join_overlay.push(cabinet_game_page(player)); }});
 			for (auto &item : cabinets[0]->game->shared_game_menu_items())
 				page.items.push_back(std::move(item));
@@ -2325,8 +2395,30 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back({"Sound", "Overall volume, music and effects.", {}, {}, [&] { join_overlay.push(sound_page()); }});
 		page.items.push_back({"Controls", "Configure each player's controller and keyboard.", {}, {},
 			[&] { join_overlay.push(controls_page()); }});
-		page.items.push_back({"Game", "Race type, course, language, car color, difficulty and service settings.", {}, {},
+		page.items.push_back({"Game", local_info->game_help, {}, {},
 			[&] { join_overlay.push(game_page()); }});
+		if (cabinet_count == 1) {
+			for (auto &item : cabinets[0]->game->menu_items_after_controls())
+				page.items.push_back(std::move(item));
+			for (auto &item : cabinets[0]->game->menu_items())
+				page.items.push_back(std::move(item));
+		} else {
+			for (int p = 0; p < cabinet_count; p++) {
+				auto after_controls = cabinets[p]->game->menu_items_after_controls();
+				auto extras = cabinets[p]->game->menu_items();
+				if (!after_controls.empty() || !extras.empty())
+					page.items.push_back({p ? "Player 2 options" : "Player 1 options",
+						"This player's game-specific options.", {}, {}, [&, p] {
+							menu_page options{p ? "Player 2 options" : "Player 1 options", "", {}};
+							for (auto &item : cabinets[p]->game->menu_items_after_controls())
+								options.items.push_back(std::move(item));
+							for (auto &item : cabinets[p]->game->menu_items())
+								options.items.push_back(std::move(item));
+							options.items.push_back(back_item());
+							join_overlay.push(std::move(options));
+						}});
+			}
+		}
 		if (cabinet_count == 1 && cabinets[0]->game->supports_lan())
 			page.items.push_back({"LAN", "Create or find a local-network room. No IP addresses required.", {}, {},
 				[&] { lan_open_requested = true; join_overlay.close(); }});
@@ -2383,6 +2475,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			saver.put(c.dir + "/nvram.sav", c.machine.nvram().data(), c.machine.nvram().size());
 			saver.put(c.dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
 					  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c.machine.eeprom(), model1::EEPROM_SIZE);
+			if (!c.sidecar_path.empty()) {
+				const auto text = c.game->save_sidecar();
+				saver.put(c.sidecar_path, text.data(), text.size());
+			}
 		}
 	};
 	auto save = [&] {
@@ -2399,7 +2495,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 									  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c->machine.eeprom(), model1::EEPROM_SIZE);
 			const std::string settings_path = p == 0 ? data_dir + "/settings.ini" : c->dir + "/settings.ini";
 			const bool config = c->config.save(settings_path, *c->game);
-			if (!nv || !ee || !config) { fprintf(stderr, "two cabinets: could not save %s\n", c->dir.c_str()); ok = false; }
+			bool sidecar = true;
+			if (!c->sidecar_path.empty()) {
+				const auto text = c->game->save_sidecar();
+				sidecar = save_blob(c->sidecar_path, reinterpret_cast<const uint8_t *>(text.data()), text.size());
+			}
+			if (!nv || !ee || !config || !sidecar) { fprintf(stderr, "two cabinets: could not save %s\n", c->dir.c_str()); ok = false; }
 		}
 		if (on_demand && cabinet_count == 1) {
 			waiting_config.ctl[0] = bindings[1];
@@ -2419,10 +2520,24 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			pair.reset();
 			cabinets[1].reset();
 			cabinet_count = 1;
+			code_restart[1] = false;
 			cabinets[0]->host->link_player = 0;
 			cabinets[0]->host->standalone_cabinet = true;
 		}
 		if (!sync_monitor()) return false;
+		for (int p = 0; p < instance_count(); p++) {
+			if (!cabinets[p]) continue;
+			auto &c = *cabinets[p];
+			const bool code_changed = c.game->before_restart() || code_restart[p];
+			code_restart[p] = false;
+			if (code_changed && !interp) {
+				c.runtime.attach(c.machine.cpu(), host_game().name);
+				if (!rec::build_native(c.machine.maincpu_rom(), map)) {
+					fprintf(stderr, "two cabinets: could not recompile cabinet %d after code changes\n", p + 1);
+					return false;
+				}
+			}
+		}
 		if (!boot()) { fprintf(stderr, "two cabinets: linked reset did not complete\n"); return false; }
 		bool again = false;
 		for (int p = 0; p < instance_count(); p++) if (cabinets[p]) again = cabinets[p]->game->booted() || again;
@@ -2434,7 +2549,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		queued_controller = 0;
 		if (return_to_solo) joined_controller = 0;
 		if (return_to_solo) player1_started = false;
-		if (on_demand && !SDL_SetWindowTitle(cabinets[0]->display->window, "Virtua Racing")) {
+		if (on_demand && !SDL_SetWindowTitle(cabinets[0]->display->window, host_title())) {
 			fprintf(stderr, "two cabinets: window title: %s\n", SDL_GetError());
 			return false;
 		}
@@ -2453,7 +2568,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		join_pending = true;
 		queued_controller = controller;
 		next_picture = {};
-		fprintf(stderr, "two cabinets: player 2 join requested; waiting for attract mode or course selection\n");
+		fprintf(stderr, "two cabinets: player 2 join requested; %s\n", local_info->join_wait);
 		return true;
 	};
 	auto controller_start = [&](int player) {
@@ -2515,6 +2630,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
 		cabinet_count = 2;
 		if (!create_cabinet(1)) return false;
+		connect_game_menu(1);
 		cabinets[1]->game->sync_shared_settings(cabinets[0]->machine);
 		cabinets[1]->config.ctl[0] = bindings[1];
 		cabinets[1]->display = cabinets[0]->display;
@@ -2522,8 +2638,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		cabinets[0]->host->standalone_cabinet = false;
 		cabinets[0]->host->link_player = 1;
 		if (!sync_monitor()) return false;
-		if (!pair) pair = std::make_unique<linked_pair>(cabinets[0]->machine, cabinets[1]->machine,
-			cabinets[2] ? &cabinets[2]->machine : nullptr);
+		if (!pair) { fprintf(stderr, "two cabinets: linked session was not created\n"); return false; }
 		if (!boot()) { fprintf(stderr, "two cabinets: join boot did not complete\n"); return false; }
 		bool again = false;
 		for (auto &c : cabinets) if (c) again = c->game->booted() || again;
@@ -2538,7 +2653,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (audio) SDL_ClearAudioStream(audio.get());
 		frame_clock.reset();
 		last = SDL_GetTicksNS();
-		if (!SDL_SetWindowTitle(cabinets[0]->display->window, "Virtua Racing")) {
+		if (!SDL_SetWindowTitle(cabinets[0]->display->window, host_title())) {
 			fprintf(stderr, "two cabinets: session title: %s\n", SDL_GetError());
 			return false;
 		}
@@ -2594,7 +2709,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			model1_link::get32(bytes.data() + 4) != lan_fingerprint || bytes[12] != bytes.size() - 13)
 			return lan.fail("Incompatible LAN game data or protocol. Use matching ROMs and builds.");
 		if (!lan_eligible()) return lan.fail("Cannot start LAN while a local race is in progress.");
-		if (!network_cabinet.begin(lan, model1_link::get32(bytes.data() + 8))) return false;
+		if (!network_cabinet.begin(lan, model1_link::get32(bytes.data() + 8),
+			c.game->lan_retirement_policy())) return false;
 		lan_saved_eeprom.assign(c.machine.eeprom(), c.machine.eeprom() + model1::EEPROM_SIZE);
 		if (!c.game->apply_lan_settings(bytes.subspan(13))) return lan.fail("Incompatible LAN race settings.");
 		c.host->standalone_cabinet = false;
@@ -2602,7 +2718,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.game->booted();
 		network_cabinet.attach(c.machine);
 		c.machine.reset();
-		if (!interp) c.runtime.attach(c.machine.cpu(), "vr");
+		if (!interp) c.runtime.attach(c.machine.cpu(), host_game().name);
 		c.machine.forget_camera();
 		lan_booting = true;
 		c.machine.set_drawing(false);
@@ -2684,7 +2800,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (network_cabinet.countdown())
 				lan_notice = "LAN: resuming in " + std::to_string(network_cabinet.countdown()) + "...";
 			else if (network_cabinet.paused()) lan_notice = "LAN: paused by host";
-			else lan_notice = cabinets[0]->machine.past_boot() ? "LAN linked race - host controls pause" : "LAN: preparing cabinets...";
+			else lan_notice = cabinets[0]->game->local_boot_complete(cabinets[0]->machine) ?
+				"LAN linked race - host controls pause" : "LAN: preparing cabinets...";
 		}
 		else if (lan.in_room()) lan_notice = "LAN room - open LAN in the menu to start or leave";
 		if (!lan.error().empty()) lan_notice += (lan_notice.empty() ? "" : "\n") + lan.error();
@@ -2712,16 +2829,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (events_ms ? (uint64_t(pass) > last_event_ms && uint64_t(pass) <= event_ms) : pass == passes) {
 					SDL_Event event{};
 					if (!strcmp(name, "status")) {
+						const auto status = cabinets[0]->game->local_status(cabinets[0]->machine);
 						if (lan.role() != LAN_OFF)
 							fprintf(stderr, "LAN: status cabinet=%d running=%d ticks=%llu phase=%02x participants=%u menu=%d frame=%d ready=%d paused=%d countdown=%d racers=%d\n",
 								network_cabinet.player(), network_cabinet.running(),
 								(unsigned long long)(cabinets[0]->machine.link() ? cabinets[0]->machine.link()->ticks() : 0),
-								cabinets[0]->machine.work_ram()[0x1138], cabinets[0]->machine.read8(0x40d826),
+								status.phase, status.participants,
 								join_overlay.is_open(), frames, cabinets[0]->game->can_join_local_cabinet(),
 								network_cabinet.paused(), network_cabinet.countdown(), network_cabinet.racers());
 						fprintf(stderr, "two cabinets: status frame=%d cabinets=%d mode=%u phase=%02x join=%d role=%u fullscreen=%d arcade=%d icon=%d free_camera=%d\n",
 							frames, cabinet_count, cabinets[0]->machine.game_mode(),
-							cabinets[0]->machine.work_ram()[0x1138], join_pending, cabinets[0]->machine.read8(0x40dc8c),
+							status.phase, join_pending, status.role,
 							bool(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN),
 							!pc_mode, cabinets[0]->display->icon_set, cabinets[0]->machine.free_cam());
 						for (int p = 0; p < cabinet_count; p++)
@@ -2729,11 +2847,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 								p + 1, cabinets[p]->machine.aspect(), cabinets[p]->config.aspect);
 						if (cabinets[2]) {
 							auto &m = cabinets[2]->machine;
+							const auto monitor_status = cabinets[2]->game->local_status(m);
+							const auto link_status = pair->status(2);
 							fprintf(stderr, "Live Monitor: status role=%u id=%u racers=%u inputs=%02x/%02x/%02x "
 								"ticks=%llu layout=%s audio=muted frame=%llu aspect=%.6f picture_shape=%d\n",
-								m.read8(0x40dc8c), m.link()->read(2), m.link()->read(3),
+								monitor_status.role, link_status.id, link_status.participants,
 								m.m_inputs[0], m.m_inputs[1], m.m_inputs[2],
-								(unsigned long long)m.link()->ticks(), monitor_above() ? "above" : "window",
+								(unsigned long long)link_status.exchanges, monitor_above() ? "above" : "window",
 								(unsigned long long)m.frame_number(), m.aspect(), cabinets[2]->config.aspect);
 						}
 					} else if (!strcmp(name, "sleep")) {
@@ -3040,8 +3160,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					for (int p = 0; p < instance_count(); p++) if (cabinets[p]) cabinets[p]->game->booted();
 					play_style_restart = false;
 				}
-				for (int p = 0; p < cabinet_count; p++)
-					game_restart = cabinets[p]->game->menu_closed() != game_host::restart::none || game_restart;
+				for (int p = 0; p < cabinet_count; p++) {
+					const auto restart = cabinets[p]->game->menu_closed();
+					code_restart[p] = restart == game_host::restart::game_and_code;
+					game_restart = restart != game_host::restart::none || game_restart;
+				}
 				for (int p = 1; p < instance_count(); p++)
 					if (cabinets[p]) game_restart = cabinets[p]->game->sync_shared_settings(cabinets[0]->machine) || game_restart;
 				bool dirty = false;
@@ -3167,7 +3290,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				c.machine.set_parts_mode(c.compose_enabled);
 				SDL_Gamepad *selected[2]{pads[p], nullptr};
 				pad_state states[2]{c.pad, {}};
-				const bool suppress = network_cabinet.active() && (join_overlay.is_open() || !c.machine.past_boot());
+				const bool suppress = network_cabinet.active() &&
+					(join_overlay.is_open() || !c.game->local_boot_complete(c.machine));
 				const hotkey action = suppress ? hotkey::none :
 					read_inputs(c.machine, selected, states, c.config.ctl, c.game->controls(), *c.game, c.service);
 				if (network_cabinet.active()) {
@@ -3223,7 +3347,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			const bool lan_boot_frame = lan_booting;
 			run_frame();
-			if (lan_booting && cabinets[0]->machine.past_boot()) {
+			if (lan_booting && cabinets[0]->game->local_boot_complete(cabinets[0]->machine)) {
 				lan_booting = false;
 				cabinets[0]->machine.set_drawing(true);
 				next_picture = {};
@@ -3397,7 +3521,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				bool exists = false;
 				do {
 					char name[64];
-					snprintf(name, sizeof name, "/vr_%04d.png", ++screenshot_number);
+					snprintf(name, sizeof name, "/%s_%04d.png", host_game().name.data(), ++screenshot_number);
 					path = folder + name;
 					exists = std::filesystem::exists(path, ec);
 					if (ec) { fprintf(stderr, "two cabinets: screenshot path: %s\n", ec.message().c_str()); return 1; }
@@ -3496,8 +3620,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (perf_enabled) perf_idle_total += SDL_GetTicksNS() - wait_started;
 	}
 	fprintf(stderr, "two cabinets: %d frames, %d cabinet(s) running, %llu/%llu link exchanges\n", frames, cabinet_count,
-		(unsigned long long)(pair ? cabinets[0]->machine.link()->ticks() : 0),
-		(unsigned long long)(pair && cabinets[1] ? cabinets[1]->machine.link()->ticks() : 0));
+		(unsigned long long)(pair ? pair->status(0).exchanges : 0),
+		(unsigned long long)(pair ? pair->status(1).exchanges : 0));
 	return quit_after >= 0 && !getenv("M1_SAVE") ? 0 : save() ? 0 : 1;
 }
 #endif
@@ -3620,14 +3744,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "--split-layout needs --split-screen\n");
 		return 2;
 	}
-	const bool automatic_local_multiplayer = host_game().name == "vr" && !split_screen &&
+	const bool automatic_local_multiplayer = game_part.local_multiplayer() && !split_screen &&
 		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() &&
 		recompiler_map.empty() && !getenv("M1_SCRIPT");
 	const bool local_pair_mode = split_screen || automatic_local_multiplayer;
-	if (local_pair_mode && (host_game().name != "vr" || link_player || link_port_set || arg_arcade ||
+	if (local_pair_mode && (!game_part.local_multiplayer() || link_player || link_port_set || arg_arcade ||
 		replay_mode || !record_path.empty() || getenv("M1_SCRIPT") ||
 		(arg_full == 1 && !split_screen && !automatic_local_multiplayer))) {
-		fprintf(stderr, "two-cabinet modes require VR PC play without --link-player/--link-port, input replay, or M1_SCRIPT; --fullscreen requires --local-multiplayer/--split-screen\n");
+		fprintf(stderr, "two-cabinet modes require a game supporting local multiplayer and PC play without --link-player/--link-port, input replay, or M1_SCRIPT; --fullscreen requires --local-multiplayer/--split-screen\n");
 		return 2;
 	}
 	if (link_port_set && !link_player) { fprintf(stderr, "--link-port needs --link-player\n"); return 2; }

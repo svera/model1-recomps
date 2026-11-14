@@ -4,7 +4,7 @@
 #include "../machine/model1.h"
 #include <bit>
 
-// Cabinet IDs are frozen for the session, independently of room membership.
+// Model 1 M1COMM LAN adapter. Cabinet IDs are frozen independently of room membership.
 class model1_lan
 {
 public:
@@ -25,7 +25,8 @@ public:
 		} else if (m_pause_step) m_resume_requested = true;
 	}
 
-	bool begin(lan_session &session, uint32_t generation)
+	bool begin(lan_session &session, uint32_t generation,
+		std::function<m1comm::memory(m1comm::memory)> retire_peer = {})
 	{
 		const auto members = session.members(true);
 		if (members.size() < 2 || members.size() > 4 ||
@@ -40,6 +41,7 @@ public:
 		}
 		if (!m_player) return session.fail("This device is not in the racing roster.");
 		m_active_mask = uint8_t((1u << m_count) - 1);
+		m_retire_peer = std::move(retire_peer);
 		m_generation = generation;
 		m_sequence = 0;
 		m_running = m_received = false;
@@ -51,15 +53,6 @@ public:
 		return true;
 	}
 	void attach(model1 &machine) { machine.enable_link({}, true); }
-	static m1comm::memory retired_snapshot(m1comm::memory snapshot)
-	{
-		// FE19A1 still copies the car's pose and model pointers until the race ends.
-		// Preserve that valid car record, but clear its votes/control for later races.
-		std::fill(snapshot.begin() + 0x10 + 0xb7, snapshot.end(), 0);
-		snapshot[1] = 2;
-		snapshot[4] = 1;
-		return snapshot;
-	}
 	bool update(lan_session &session, uint64_t now, model1 &machine)
 	{
 		if (!active()) return true;
@@ -107,6 +100,8 @@ public:
 		}
 		if (racers() < 2)
 			return session.fail("Fewer than two racers remain. The linked race has ended.");
+		if (m_active_mask != uint8_t((1u << m_count) - 1) && !m_retire_peer)
+			return session.fail("A cabinet disconnected. This game cannot continue without it.");
 		bool acknowledged = true;
 		for (int i = 1; i < m_count; i++)
 			if (m_active_mask & (1u << i))
@@ -151,7 +146,9 @@ public:
 		for (int i = 0; i < m_count; i++) {
 			if (i == m_player - 1) snapshots[i] = board->snapshot();
 			else if (!(m_active_mask & (1u << i))) {
-				snapshots[i] = retired_snapshot(m_peers[i].memory());
+				if (!m_retire_peer)
+					throw std::logic_error("LAN session cannot retire a cabinet without a game policy");
+				snapshots[i] = m_retire_peer(m_peers[i].memory());
 			} else {
 				if (!m_peers[i].available()) return;
 				snapshots[i] = m_peers[i].memory();
@@ -190,4 +187,5 @@ private:
 	uint32_t m_pause_epoch = 0;
 	uint64_t m_step_started = 0, m_next_publish = 0;
 	uint64_t m_published_frame = UINT64_MAX;
+	std::function<m1comm::memory(m1comm::memory)> m_retire_peer;
 };

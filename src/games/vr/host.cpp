@@ -3,7 +3,9 @@
 #include "../../host/game_host.h"
 #include "controls.h"
 #include "gameplay.h"
+#include "link.h"
 #include "romset.h"
+#include "../../machine/linked_pair.h"
 #include <optional>
 #include <charconv>
 #include <cstdlib>
@@ -11,12 +13,49 @@
 namespace game::vr {
 namespace {
 
+class local_link final : public local_cabinet_link
+{
+public:
+	local_link(model1 &first, model1 *second, model1 *monitor)
+		: pair(first, second, monitor), machines{&first, second, monitor} {}
+	void run_frame() override { pair.run_frame(); }
+	local_link_status status(unsigned cabinet) const override
+	{
+		if (cabinet >= machines.size() || !machines[cabinet] || !machines[cabinet]->link()) return {};
+		const auto &board = *machines[cabinet]->link();
+		return {board.read(2), board.read(3), board.ticks()};
+	}
+private:
+	linked_pair pair;
+	std::array<model1 *, 3> machines;
+};
+
 class host final : public game_host
 {
 public:
 	const romset::definition &romset() const override { return ROMSET; }
 	const control_profile &controls() const override { return CONTROLS; }
+	const local_multiplayer_info *local_multiplayer() const override
+	{
+		static const local_multiplayer_info info{
+			true, "Race type, course, language, car color, difficulty and service settings.",
+			"Language, race type and course selection are shared; player settings are kept separately.",
+			"Car color, difficulty and the arcade service menu.", "waiting for attract mode or course selection",
+			"Change this player's steering and pedal axes."
+		};
+		return &info;
+	}
+	std::unique_ptr<local_cabinet_link> make_local_link(model1 &first, model1 *second, model1 *monitor) override
+	{
+		return std::make_unique<local_link>(first, second, monitor);
+	}
+	local_multiplayer_status local_status(model1 &machine) const override
+	{
+		return {machine.work_ram()[0x1138], machine.read8(0x40dc8c), machine.read8(0x40d826)};
+	}
 	bool supports_lan() const override { return true; }
+	lan_config local_lan_config() const override { return {{'M', '1', 'V', 'R'}, 3, 19794, 0, 0, 0, LAN_LINK, 0, 4}; }
+	std::function<m1comm::memory(m1comm::memory)> lan_retirement_policy() const override { return retire_lan_snapshot; }
 	std::vector<uint8_t> lan_settings() const override
 	{
 		const int language = language_value(ctx->machine);

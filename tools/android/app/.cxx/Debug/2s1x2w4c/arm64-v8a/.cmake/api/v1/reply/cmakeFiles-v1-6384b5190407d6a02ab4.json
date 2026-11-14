@@ -1,0 +1,580 @@
+{
+	"inputs" : 
+	[
+		{
+			"path" : "CMakeLists.txt"
+		},
+		{
+			"isGenerated" : true,
+			"path" : ".cxx/Debug/2s1x2w4c/arm64-v8a/CMakeFiles/3.22.1-g37088a8/CMakeSystem.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/android.toolchain.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/android-legacy.toolchain.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/abis.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/platforms.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeSystemSpecificInitialize.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Initialize.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/hooks/pre/Android-Initialize.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : ".cxx/Debug/2s1x2w4c/arm64-v8a/CMakeFiles/3.22.1-g37088a8/CMakeCCompiler.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : ".cxx/Debug/2s1x2w4c/arm64-v8a/CMakeFiles/3.22.1-g37088a8/CMakeCXXCompiler.cmake"
+		},
+		{
+			"isGenerated" : true,
+			"path" : ".cxx/Debug/2s1x2w4c/arm64-v8a/CMakeFiles/3.22.1-g37088a8/CMakeASMCompiler.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeSystemSpecificInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeGenericSystem.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeInitializeConfigs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/hooks/pre/Android.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Linux.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/UnixPaths.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeCInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeLanguageInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/Clang-C.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/Clang.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/GNU.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Clang-C.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Clang.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/hooks/pre/Android-Clang.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/build/cmake/flags.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeCommonLanguageInclude.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeCXXInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeLanguageInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/Clang-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/Clang.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Clang-CXX.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Clang.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeCommonLanguageInclude.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeASMInformation.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/Clang-ASM.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Compiler/Clang.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Clang-ASM.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Platform/Android-Clang.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/Makefile"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/CMakeLists.txt"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckLibraryExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckIncludeFile.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckIncludeFiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckLanguage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckSymbolExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCSourceRuns.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckSourceRuns.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCCompilerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckCompilerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCXXCompilerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckCompilerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckStructHasMember.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckCXXSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeDependentOption.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeParseArguments.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakePushCheckState.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/GNUInstallDirs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPkgConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/macros.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckLinkerFlag.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeCheckCompilerFlagCommonPatterns.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/sdlchecks.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/sdlcommands.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/sdlcompilers.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/sdlcpu.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/sdlmanpages.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeParseArguments.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/GNUInstallDirs.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/sdlplatform.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/GetGitRevisionDescription.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/3rdparty.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/PreseedMSVCCache.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/PreseedEmscriptenCache.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/PreseedNokiaNGageCache.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckSourceCompiles.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/Internal/CheckSourceCompiles.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/FindLibUSB.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPkgConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/include/build_config/SDL_build_config.h.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/include/build_config/SDL_revision.h.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakePackageConfigHelpers.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/WriteBasicConfigVersionFile.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/cmake/SDL3Config.cmake.in"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/BasicConfigVersion-AnyNewerVersion.cmake.in"
+		},
+		{
+			"isGenerated" : true,
+			"path" : ".cxx/Debug/2s1x2w4c/arm64-v8a/sdl/CMakeFiles/SDL_build_config.h.intermediate"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/freetype-2.14.3/CMakeLists.txt"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckIncludeFile.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeDependentOption.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPkgConfig.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageHandleStandardArgs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/FindPackageMessage.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakePushCheckState.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CheckSymbolExists.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/GNUInstallDirs.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakePackageConfigHelpers.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/WriteBasicConfigVersionFile.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/BasicConfigVersion-SameMajorVersion.cmake.in"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CPack.cmake"
+		},
+		{
+			"isCMake" : true,
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Modules/CPackComponent.cmake"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Templates/CPackConfig.cmake.in"
+		},
+		{
+			"isExternal" : true,
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/cmake/3.22.1/share/cmake-3.22/Templates/CPackConfig.cmake.in"
+		}
+	],
+	"kind" : "cmakeFiles",
+	"paths" : 
+	{
+		"build" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a",
+		"source" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app"
+	},
+	"version" : 
+	{
+		"major" : 1,
+		"minor" : 0
+	}
+}

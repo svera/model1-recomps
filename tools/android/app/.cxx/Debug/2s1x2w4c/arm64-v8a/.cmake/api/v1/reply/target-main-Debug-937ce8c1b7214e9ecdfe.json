@@ -1,0 +1,2563 @@
+{
+	"artifacts" : 
+	[
+		{
+			"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/build/intermediates/cxx/Debug/2s1x2w4c/obj/arm64-v8a/libmain.so"
+		}
+	],
+	"backtrace" : 1,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_library",
+			"target_link_options",
+			"target_link_libraries",
+			"target_compile_options",
+			"target_compile_definitions",
+			"target_include_directories",
+			"target_compile_features"
+		],
+		"files" : 
+		[
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 45,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 58,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 55,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 59,
+				"parent" : 0
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 47,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 48,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 57,
+				"parent" : 0
+			},
+			{
+				"command" : 5,
+				"file" : 0,
+				"line" : 50,
+				"parent" : 0
+			},
+			{
+				"command" : 6,
+				"file" : 0,
+				"line" : 46,
+				"parent" : 0
+			}
+		]
+	},
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-O2"
+				},
+				{
+					"fragment" : "-std=gnu++20"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 6,
+					"define" : "M1_GPU3D_SDL=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "M1_NATIVE=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_FONT_ENGINE_FREETYPE"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_SDL_VERSION_MAJOR=3"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_STATIC_LIB"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "SLJIT_CONFIG_AUTO=1"
+				},
+				{
+					"backtrace" : 7,
+					"define" : "SLJIT_WX_EXECUTABLE_ALLOCATOR=1"
+				},
+				{
+					"define" : "main_EXPORTS"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/glm"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/src/core/shim_include"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/musashi"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/musashi"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Include"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Backends"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/arcade-lan/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/sdl/include-revision"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/freetype/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/freetype-2.14.3/include"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					9
+				],
+				"standard" : "20"
+			},
+			"sourceIndexes" : 
+			[
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16,
+				17,
+				18,
+				19,
+				20,
+				21,
+				22,
+				23,
+				24,
+				25,
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32,
+				33,
+				34,
+				35,
+				36,
+				37,
+				38,
+				39,
+				40,
+				41,
+				42,
+				43,
+				44,
+				45,
+				46,
+				47,
+				48,
+				49,
+				50,
+				51,
+				52,
+				53,
+				54,
+				55,
+				56,
+				57,
+				58,
+				59,
+				60,
+				61,
+				62,
+				63,
+				64,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				72,
+				73,
+				74,
+				75,
+				76,
+				77,
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91,
+				92,
+				93,
+				94,
+				95,
+				96,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				122,
+				123,
+				124,
+				125,
+				126,
+				127,
+				128,
+				129,
+				130,
+				131,
+				132,
+				133,
+				134,
+				135,
+				136,
+				137,
+				138,
+				139,
+				140,
+				141,
+				142,
+				143,
+				144,
+				145,
+				146,
+				147,
+				148,
+				149,
+				150,
+				151,
+				152,
+				153,
+				154,
+				155,
+				156,
+				157,
+				158,
+				159,
+				160,
+				161,
+				162,
+				163,
+				164,
+				165,
+				166,
+				167,
+				168,
+				169,
+				170,
+				171,
+				172,
+				173,
+				174,
+				175,
+				176,
+				177,
+				178,
+				179,
+				180,
+				181,
+				182,
+				183,
+				184,
+				185,
+				186,
+				187,
+				188,
+				189,
+				190,
+				191,
+				192,
+				193,
+				194,
+				195,
+				196,
+				197,
+				198,
+				199,
+				200,
+				201,
+				202,
+				203,
+				204,
+				205,
+				206,
+				207,
+				208,
+				209,
+				210,
+				211,
+				212,
+				213,
+				214,
+				215,
+				216,
+				217,
+				218,
+				219,
+				220,
+				221,
+				222,
+				223,
+				224,
+				225,
+				226,
+				227,
+				228,
+				229,
+				230,
+				231,
+				232,
+				233,
+				234,
+				235,
+				236,
+				237,
+				238,
+				239,
+				240,
+				241,
+				242,
+				243,
+				244,
+				245,
+				246,
+				248
+			],
+			"sysroot" : 
+			{
+				"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+			}
+		},
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-O2"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 6,
+					"define" : "M1_GPU3D_SDL=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "M1_NATIVE=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_FONT_ENGINE_FREETYPE"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_SDL_VERSION_MAJOR=3"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_STATIC_LIB"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "SLJIT_CONFIG_AUTO=1"
+				},
+				{
+					"backtrace" : 7,
+					"define" : "SLJIT_WX_EXECUTABLE_ALLOCATOR=1"
+				},
+				{
+					"define" : "main_EXPORTS"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/glm"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/src/core/shim_include"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/musashi"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/musashi"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Include"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Backends"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/arcade-lan/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/sdl/include-revision"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/freetype/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/freetype-2.14.3/include"
+				}
+			],
+			"language" : "ASM",
+			"sourceIndexes" : 
+			[
+				247
+			],
+			"sysroot" : 
+			{
+				"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+			}
+		},
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "-g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -fno-limit-debug-info  -fPIC"
+				},
+				{
+					"backtrace" : 5,
+					"fragment" : "-O2"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 6,
+					"define" : "M1_GPU3D_SDL=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "M1_NATIVE=1"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_FONT_ENGINE_FREETYPE"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_SDL_VERSION_MAJOR=3"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "RMLUI_STATIC_LIB"
+				},
+				{
+					"backtrace" : 6,
+					"define" : "SLJIT_CONFIG_AUTO=1"
+				},
+				{
+					"backtrace" : 7,
+					"define" : "SLJIT_WX_EXECUTABLE_ALLOCATOR=1"
+				},
+				{
+					"define" : "main_EXPORTS"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/glm"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/src/core/shim_include"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/musashi"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/musashi"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Include"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Backends"
+				},
+				{
+					"backtrace" : 8,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/arcade-lan/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/sdl/include-revision"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/SDL3-3.4.18/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/tools/android/app/.cxx/Debug/2s1x2w4c/arm64-v8a/freetype/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "/Users/svera/Documents/repos/model1-recomps/build/deps/freetype-2.14.3/include"
+				}
+			],
+			"language" : "C",
+			"sourceIndexes" : 
+			[
+				249,
+				250,
+				251,
+				252,
+				253,
+				254,
+				255,
+				256
+			],
+			"sysroot" : 
+			{
+				"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+			}
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "SDL3-shared::@7d0d1525ee0fd774d106"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "freetype::@96957e95d729942f8bb0"
+		}
+	],
+	"id" : "main::@6890427a1f51a3e7e1df",
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "-Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 2,
+				"fragment" : "-Wl,--no-undefined",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 2,
+				"fragment" : "-Wl,-z,max-page-size=16384",
+				"role" : "flags"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "../../../../build/intermediates/cxx/Debug/2s1x2w4c/obj/arm64-v8a/libSDL3.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "freetype/libfreetyped.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 3,
+				"fragment" : "-lz",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 4,
+				"fragment" : "-llog",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 4,
+				"fragment" : "-landroid",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-latomic -lm",
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX",
+		"sysroot" : 
+		{
+			"path" : "/Users/svera/.copilot/session-state/d4e03d68-2511-47ec-883e-1b61a6621fa6/files/android-tools/android-sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/sysroot"
+		}
+	},
+	"name" : "main",
+	"nameOnDisk" : "libmain.so",
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16,
+				17,
+				18,
+				19,
+				20,
+				21,
+				22,
+				23,
+				24,
+				25,
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32,
+				33,
+				34,
+				35,
+				36,
+				37,
+				38,
+				39,
+				40,
+				41,
+				42,
+				43,
+				44,
+				45,
+				46,
+				47,
+				48,
+				49,
+				50,
+				51,
+				52,
+				53,
+				54,
+				55,
+				56,
+				57,
+				58,
+				59,
+				60,
+				61,
+				62,
+				63,
+				64,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				72,
+				73,
+				74,
+				75,
+				76,
+				77,
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91,
+				92,
+				93,
+				94,
+				95,
+				96,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				122,
+				123,
+				124,
+				125,
+				126,
+				127,
+				128,
+				129,
+				130,
+				131,
+				132,
+				133,
+				134,
+				135,
+				136,
+				137,
+				138,
+				139,
+				140,
+				141,
+				142,
+				143,
+				144,
+				145,
+				146,
+				147,
+				148,
+				149,
+				150,
+				151,
+				152,
+				153,
+				154,
+				155,
+				156,
+				157,
+				158,
+				159,
+				160,
+				161,
+				162,
+				163,
+				164,
+				165,
+				166,
+				167,
+				168,
+				169,
+				170,
+				171,
+				172,
+				173,
+				174,
+				175,
+				176,
+				177,
+				178,
+				179,
+				180,
+				181,
+				182,
+				183,
+				184,
+				185,
+				186,
+				187,
+				188,
+				189,
+				190,
+				191,
+				192,
+				193,
+				194,
+				195,
+				196,
+				197,
+				198,
+				199,
+				200,
+				201,
+				202,
+				203,
+				204,
+				205,
+				206,
+				207,
+				208,
+				209,
+				210,
+				211,
+				212,
+				213,
+				214,
+				215,
+				216,
+				217,
+				218,
+				219,
+				220,
+				221,
+				222,
+				223,
+				224,
+				225,
+				226,
+				227,
+				228,
+				229,
+				230,
+				231,
+				232,
+				233,
+				234,
+				235,
+				236,
+				237,
+				238,
+				239,
+				240,
+				241,
+				242,
+				243,
+				244,
+				245,
+				246,
+				248,
+				249,
+				250,
+				251,
+				252,
+				253,
+				254,
+				255,
+				256
+			]
+		},
+		{
+			"name" : "",
+			"sourceIndexes" : 
+			[
+				247
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/host/main.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/host/menu.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/host.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_romset.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/romset.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/host/stb_image_impl.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/core/v60_device.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/core/mb86233.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_tgp.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_tgp_lle.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_video.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_sky.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_interp.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_gpu.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1_edge_aa.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1io.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/model1io2.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/game.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/swa/game.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/swa/gameplay.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/swa/profile.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/swa/script.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/game.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/gameplay.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/profile.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/script.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/tgp_hle.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/video.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vf/video_effects.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/game.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/gameplay.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/profile.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/script.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/tgp.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/vr/video.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/wingwar/assignments.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/wingwar/game.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/wingwar/gameplay.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/wingwar/profile.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/games/wingwar/script.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/m1audio.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/multipcm.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/dsbz80.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/machine/mpeg_audio.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/ymfm/ymfm_opn.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/ymfm/ymfm_adpcm.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/ymfm/ymfm_ssg.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/rt/rec_rt.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/rt/coro.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/rt/analyse.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/rt/native.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/mame/v60/v60d.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/BaseXMLParser.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Box.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/BoxShadowCache.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/CallbackTexture.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Clock.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/CompiledFilterShader.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ComputeProperty.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ComputedValues.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Context.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ContextInstancer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ContextInstancerDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ConvolutionFilter.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Core.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataController.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataControllerDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataExpression.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataModel.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataModelHandle.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataTypeRegister.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataVariable.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataView.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DataViewDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Decorator.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorGradient.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorNinePatch.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorShader.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorText.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorTiled.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorTiledBox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorTiledHorizontal.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorTiledImage.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorTiledVertical.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DecoratorUtilities.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/DocumentHeader.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/EffectSpecification.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Element.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementAnimation.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementBackgroundBorder.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementDefinition.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementDocument.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementEffects.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementHandle.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementInstancer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementMeta.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementScroll.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementStyle.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementText.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ElementUtilities.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Event.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/EventDispatcher.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/EventInstancer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/EventInstancerDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/EventListenerInstancer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/EventSpecification.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Factory.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FileInterface.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FileInterfaceDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Filter.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FilterBasic.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FilterBlur.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FilterDropShadow.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEffect.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEffectBlur.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEffectGlow.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEffectInstancer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEffectOutline.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEffectShadow.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineInterface.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Geometry.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/GeometryBackgroundBorder.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/GeometryBoxShadow.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Log.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/LogDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Math.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Memory.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/MeshUtilities.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ObserverPtr.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Plugin.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PluginRegistry.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Profiling.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertiesIteratorView.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Property.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyDefinition.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyDictionary.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserAnimation.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserBoxShadow.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserColorStopList.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserColour.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserDecorator.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserFilter.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserFontEffect.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserKeyword.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserNumber.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserRatio.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserString.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertyParserTransform.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/PropertySpecification.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/RenderInterface.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/RenderInterfaceCompatibility.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/RenderManager.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/RenderManagerAccess.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ScriptInterface.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/ScrollController.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Spritesheet.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Stream.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StreamFile.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StreamMemory.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StringUtilities.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheet.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheetContainer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheetFactory.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheetNode.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheetParser.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheetSelector.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/StyleSheetSpecification.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/SystemInterface.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Template.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TemplateCache.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Texture.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TextureDatabase.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TextureLayout.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TextureLayoutRectangle.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TextureLayoutRow.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TextureLayoutTexture.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Traits.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Transform.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TransformPrimitive.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TransformState.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TransformUtilities.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Tween.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/TypeConverter.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/URL.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Variant.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/WidgetScroll.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLNodeHandler.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLNodeHandlerBody.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLNodeHandlerDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLNodeHandlerHead.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLNodeHandlerTemplate.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLParseTools.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/XMLParser.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementForm.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementFormControl.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementFormControlInput.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementFormControlSelect.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementFormControlTextArea.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementImage.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementLabel.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementProgress.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementTabSet.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/ElementTextSelection.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputType.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputTypeButton.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputTypeCheckbox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputTypeRadio.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputTypeRange.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputTypeSubmit.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/InputTypeText.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/WidgetDropDown.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/WidgetSlider.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/WidgetTextInput.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/WidgetTextInputMultiLine.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/WidgetTextInputSingleLine.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/WidgetTextInputSingleLinePassword.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/XMLNodeHandlerSelect.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/XMLNodeHandlerTabSet.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Elements/XMLNodeHandlerTextArea.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FontEngineInterfaceDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FontFace.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FontFaceHandleDefault.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FontFaceLayer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FontFamily.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FontProvider.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/FontEngineDefault/FreeTypeInterface.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/BlockContainer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/BlockFormattingContext.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/ContainerBox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/FlexFormattingContext.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/FloatedBoxSpace.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/FormattingContext.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/InlineBox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/InlineContainer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/InlineLevelBox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/LayoutBox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/LayoutDetails.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/LayoutEngine.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/LayoutPools.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/LineBox.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/ReplacedFormattingContext.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/TableFormattingContext.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Source/Core/Layout/TableFormattingDetails.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Backends/RmlUi_Platform_SDL.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/rmlui/Backends/RmlUi_Renderer_SDL.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/rt/rec_table_none.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/rt/coro_arm64.S",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/src/gpu/gpu3d_sdlgpu.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/sljit/sljitLir.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/z80/z80.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/musashi/m68kcpu.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/build/musashi/m68kops.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/musashi/m68kdasm.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/musashi/softfloat/softfloat.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/arcade-lan/src/lan.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 2,
+			"path" : "/Users/svera/Documents/repos/model1-recomps/third_party/arcade-lan/src/lan_udp.c",
+			"sourceGroupIndex" : 0
+		}
+	],
+	"type" : "SHARED_LIBRARY"
+}
