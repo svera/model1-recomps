@@ -36,8 +36,10 @@
 #else
 #include <unistd.h>
 #endif
+#if defined(_WIN32) || defined(__ANDROID__)
+#include <SDL3/SDL_main.h>   // platform entry point (and UTF-8 argv on Windows)
+#endif
 #ifdef _WIN32
-#include <SDL3/SDL_main.h>   // WinMain, and argv as UTF-8
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -752,6 +754,13 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 	}
 	if (getenv("M1_HIDDEN")) { fprintf(stderr, "%sno game found in %s (hidden: no picker)\n", problem.c_str(), roms.string().c_str()); return false; }   // testing
 	SDL_Init(SDL_INIT_VIDEO);
+#ifdef __ANDROID__
+	const std::string android_note = problem + "Import both " + set.zip + " and " +
+		(set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip") +
+		" from the Virtua Racing launcher, then try again.";
+	message_box(SDL_MESSAGEBOX_ERROR, set.display_name, android_note);
+	return false;
+#else
 	const std::string where = "It's copied into " + dest.string() + ", so you only do this once.";
 	const char *title = set.display_name;
 	const std::string zip = set.zip, mame = std::string("MAME's \"") + set.mame_name + "\" set (" + zip + ")";
@@ -799,6 +808,7 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 		if (r.ok) { keep_copy(); out = std::move(r.regions); return true; }
 		note = r.error + "\n\n" + io_note + "\n\nChoose " + mame + ".";
 	}
+#endif
 }
 
 // A folder as the player writes it: "~" (or "~/...") is their home folder; quotes around it are
@@ -865,6 +875,9 @@ const char *portable_marker(const std::string &folder)
 // The menu's files: next to the program in a package, else the source tree's assets/.
 std::string find_assets()
 {
+#ifdef __ANDROID__
+	if (const char *base = SDL_GetAndroidInternalStoragePath()) return std::string(base) + "/assets";
+#endif
 	const char *base = SDL_GetBasePath();
 	std::string b = base ? base : "";
 	for (std::string d : { b + "assets", b + "../../assets", std::string("assets") })
@@ -883,6 +896,10 @@ std::string credits_recording_path()
 
 bool set_window_icon(SDL_Window *win)
 {
+#ifdef __ANDROID__
+	(void)win;
+	return true;   // Android uses the application's icon, not an SDL window icon.
+#else
 	int w = 0, h = 0, comp = 0;
 	const std::string packaged_icon = program_folder() + "icon.png";
 	unsigned char *pixels = stbi_load(packaged_icon.c_str(), &w, &h, &comp, 4);
@@ -912,6 +929,7 @@ bool set_window_icon(SDL_Window *win)
 	SDL_DestroySurface(surface);
 	stbi_image_free(pixels);
 	return ok;
+#endif
 }
 
 #ifdef M1_NATIVE
@@ -3506,6 +3524,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 
 int main(int argc, char **argv)
 {
+#ifdef __ANDROID__
+	if (!SDL_GetAndroidInternalStoragePath()) {
+		SDL_Init(SDL_INIT_VIDEO);
+		message_box(SDL_MESSAGEBOX_ERROR, "Virtua Racing", "Cannot access the app's private storage.");
+		return 1;
+	}
+#endif
 #ifdef __APPLE__
 	// the game, its drawing and its sound on the performance cores: without it an M-series Mac can put
 	// them on the efficiency cores (VF3's d5b1992)
@@ -3620,9 +3645,13 @@ int main(int argc, char **argv)
 		fprintf(stderr, "--split-layout needs --split-screen\n");
 		return 2;
 	}
+#ifdef __ANDROID__
+	const bool automatic_local_multiplayer = false;
+#else
 	const bool automatic_local_multiplayer = host_game().name == "vr" && !split_screen &&
 		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() &&
 		recompiler_map.empty() && !getenv("M1_SCRIPT");
+#endif
 	const bool local_pair_mode = split_screen || automatic_local_multiplayer;
 	if (local_pair_mode && (host_game().name != "vr" || link_player || link_port_set || arg_arcade ||
 		replay_mode || !record_path.empty() || getenv("M1_SCRIPT") ||

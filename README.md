@@ -398,6 +398,35 @@ make test-wingwar-profile
 
 `test-host-graphics` needs a working SDL graphics driver (it uses a hidden window).
 
+### Android prototype
+
+An experimental Android build is being developed for **Virtua Racing**, ARM64
+(`arm64-v8a`) and an external controller. It is not yet a supported release:
+device compatibility, JIT, graphics, audio and lifecycle behavior still need
+validation. It has no on-screen game controls and currently starts a single cabinet.
+The launcher and game request landscape orientation, allowing either landscape rotation.
+
+To build a debug APK, install JDK 17 or 21, the Android SDK platform 35, NDK
+28.2.13676358 and CMake 3.22.1. Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) to
+the SDK directory, then run:
+
+```sh
+tools/android/build.sh
+```
+
+The script fetches the same verified SDL and FreeType sources as the desktop
+packaging scripts and uses SDL's Gradle wrapper. The APK is written to
+`tools/android/app/build/outputs/apk/debug/app-debug.apk`. Install it on an ARM64
+Android device, connect a controller, and use the launcher to import your own
+`vr.zip` and `model1io.zip` separately. The archives and saves remain in the
+app's private storage; uninstalling the app removes them. Press Start to play
+and View/Select to open the menu.
+
+For GPU performance diagnostics, select **Export diagnostic log** in the launcher
+after playing. It exports the most recent session's `log.txt`, including device,
+renderer, timing and file-path information, but not ROMs or saves. A new game
+session replaces the previous log.
+
 ## Repository layout
 
 | Path | Contents |

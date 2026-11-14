@@ -1,0 +1,82 @@
+plugins {
+    id 'com.android.application'
+}
+
+def repo = file('../../..')
+def sdl = new File(repo, 'build/deps/SDL3-3.4.18')
+def generatedAssets = new File(repo, 'build/android/assets')
+def generatedResources = new File(repo, 'build/android/res')
+
+tasks.register('prepareLicenses', Exec) {
+    workingDir repo
+    commandLine 'sh', 'tools/release/licenses.sh'
+}
+
+tasks.register('prepareGameAssets', Sync) {
+    dependsOn tasks.named('prepareLicenses')
+    into generatedAssets
+    from new File(repo, 'LICENSE')
+    from new File(repo, 'build/LICENSES.txt')
+    into('assets/ui') { from new File(repo, 'assets/ui') }
+    into('assets/fonts') { from new File(repo, 'assets/fonts') }
+    into('assets/games/vr') { from new File(repo, 'assets/games/vr/vr_map.txt') }
+    into('assets/games/vr/icon') { from new File(repo, 'assets/games/vr/icon/icon.png') }
+}
+
+tasks.register('prepareLauncherIcon', Sync) {
+    into new File(generatedResources, 'mipmap-nodpi')
+    from(new File(repo, 'assets/games/vr/icon/icon.png')) {
+        rename { 'launcher_icon.png' }
+    }
+}
+
+android {
+    namespace 'recomp.vr1.android'
+    compileSdk 35
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        applicationId 'recomp.vr1.android'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1-dev'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+                targets 'main'
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path 'CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+    sourceSets {
+        main.java.srcDir new File(sdl, 'android-project/app/src/main/java')
+        main.assets.srcDir generatedAssets
+        main.res.srcDir generatedResources
+    }
+}
+
+tasks.named('prepareGameAssets') {
+    from(android.ndkDirectory) {
+        include 'NOTICE', 'NOTICE.toolchain'
+        rename { "NDK-${it}.txt" }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith('merge') && name.endsWith('Assets')) {
+        dependsOn tasks.named('prepareGameAssets')
+    }
+    if ((name.startsWith('merge') || name.startsWith('generate')) && name.endsWith('Resources')
+            || name.startsWith('map') && name.endsWith('SourceSetPaths')) {
+        dependsOn tasks.named('prepareLauncherIcon')
+    }
+}

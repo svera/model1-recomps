@@ -166,6 +166,16 @@ $(BIN)/model1run: $(MODEL1RUN_OBJS) $(REC_NONE) $(MUSASHI_OBJ) $(Z80_OBJ) $(CORO
 # RmlUi (MIT): the in-game menu. Its core and the SDL backend, built with FreeType.
 RML_SRC = $(wildcard third_party/rmlui/Source/Core/*.cpp third_party/rmlui/Source/Core/*/*.cpp) \
 	third_party/rmlui/Backends/RmlUi_Platform_SDL.cpp third_party/rmlui/Backends/RmlUi_Renderer_SDL.cpp
+# Android's CMake build uses the same sources as the VR native host.
+.PHONY: android-sources
+android-sources:
+	@printf '%s\n' src/host/main.cpp src/host/menu.cpp src/games/vr/host.cpp $(ROMSET) \
+		src/games/vr/romset.cpp src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) \
+		$(RT) $(NATIVE) $(RML_SRC) src/rt/rec_table_none.cpp src/rt/coro_arm64.S \
+		src/gpu/gpu3d_sdlgpu.cpp third_party/sljit/sljitLir.c third_party/z80/z80.c \
+		third_party/musashi/m68kcpu.c build/musashi/m68kops.c third_party/musashi/m68kdasm.c \
+		third_party/musashi/softfloat/softfloat.c third_party/arcade-lan/src/lan.c \
+		third_party/arcade-lan/src/lan_udp.c
 RML_CFLAGS = -DRMLUI_STATIC_LIB -DRMLUI_FONT_ENGINE_FREETYPE -DRMLUI_SDL_VERSION_MAJOR=3 -Ithird_party/rmlui/Include -Ithird_party/rmlui/Backends
 $(OBJ)/third_party/rmlui/%.o: CXXFLAGS += $(RML_CFLAGS) $(FT_CFLAGS) $(SDL_CFLAGS) -w
 $(OBJ)/src/host/stb_image_impl.o: CXXFLAGS += -w
@@ -221,6 +231,13 @@ $(BIN)/model1io_adc_test: tests/model1io_adc_test.cpp $(OBJ)/src/machine/model1i
 
 test-model1io-adc: $(BIN)/model1io_adc_test
 	$(BIN)/model1io_adc_test
+
+$(BIN)/page_allocator_test: tests/page_allocator_test.cpp src/machine/mame_lite.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $< -o $@
+test-page-allocator: $(BIN)/page_allocator_test
+	$(BIN)/page_allocator_test
+.PHONY: test-page-allocator
 
 # The TGP core's float rounding, as its mode register selects
 $(BIN)/mb86233_test: tests/mb86233_test.cpp $(OBJ)/src/core/mb86233.o
