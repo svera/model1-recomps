@@ -3,8 +3,7 @@
 <p align="center"><b>SEGA classic arcade games on your computer, with sharper graphics,
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
-This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
-multiple games; this repository currently supports Virtua Racing, Star Wars Arcade, and Wing War.
+This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes: Virtua Racing, Star Wars Arcade, and Wing War.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
