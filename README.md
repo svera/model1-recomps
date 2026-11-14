@@ -303,9 +303,12 @@ fast-forward, including through attract mode;
 ### Features
 
 - The whole single-cabinet arcade game.
+- Experimental two-player local split-screen using linked cabinets.
 - Optional cheats: invincibility and infinite missiles.
 
-Linked-cabinet play is not supported.
+LAN play and a Live Monitor are not supported. A scripted linked round has returned both cabinets
+to the demonstration, but player-to-player combat, match results, and the split-screen presentation
+have not yet been manually validated.
 
 ### Getting started
 
@@ -340,6 +343,14 @@ Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
 
 To see or change your actual controller bindings, open **Esc > Controls**. Hold **Tab** to
 fast-forward; **P** pauses and resumes.
+
+### Local multiplayer
+
+In PC play, a second controller can press Start during the demonstration or game selection to join.
+A request made during play waits until the demonstration returns; joining restarts both cabinets
+and starts both players at game selection. Disconnecting Player 2 or pressing F3 returns to solo.
+The default Player 2 keyboard uses **2** for Start, the numeric keypad for flight and weapons,
+and keypad plus/minus for throttle; bindings can be changed under Controls.
 
 ### Game-specific settings
 

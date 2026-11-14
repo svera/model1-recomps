@@ -1132,6 +1132,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.game->booted();
 		bool initialized = false;
 		for (int attempt = 0; attempt < 3; attempt++) {
+			c.game->begin_local_boot();
 			c.machine.reset();
 			if (!interp) c.runtime.attach(c.machine.cpu(), host_game().name);
 			c.machine.forget_camera();
@@ -1188,17 +1189,21 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!cabinets[p]) continue;
 			auto &c = cabinets[p];
 			c->game->booted();   // Apply a saved cabinet role before boot can wait for its old link.
+			c->game->begin_local_boot();
 			std::fill_n(c->machine.m_inputs, 3, uint8_t(0xff));
 			c->machine.reset();
 			if (!interp) c->runtime.attach(c->machine.cpu(), host_game().name);
 			c->machine.forget_camera();
 			c->machine.set_drawing(false);
 		}
+		bool complete = false;
 		for (int f = 0; f < 900; f++) {
 			run_frame();
-			if (cabinets[0]->game->local_boot_complete(cabinets[0]->machine) &&
-				(cabinet_count == 1 || cabinets[1]->game->local_boot_complete(cabinets[1]->machine)) &&
-				(!cabinets[2] || cabinets[2]->game->local_boot_complete(cabinets[2]->machine))) break;
+			complete = true;
+			for (int p = 0; p < instance_count(); p++)
+				if (cabinets[p] && !cabinets[p]->game->local_boot_complete(cabinets[p]->machine))
+					complete = false;
+			if (complete) break;
 		}
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
@@ -1206,9 +1211,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			c->machine.set_drawing(true);
 			c->machine.m_audio_out.clear();
 		}
-		return cabinets[0]->game->local_boot_complete(cabinets[0]->machine) &&
-			(cabinet_count == 1 || cabinets[1]->game->local_boot_complete(cabinets[1]->machine)) &&
-			(!cabinets[2] || cabinets[2]->game->local_boot_complete(cabinets[2]->machine));
+		if (!complete)
+			for (int p = 0; p < instance_count(); p++) if (cabinets[p]) {
+				const auto status = cabinets[p]->game->local_status(cabinets[p]->machine);
+				fprintf(stderr, "two cabinets: cabinet %d boot incomplete (phase=%u role=%u participants=%u)\n",
+					p + 1, status.phase, status.role, status.participants);
+			}
+		return complete;
 	};
 	if (!boot()) { fprintf(stderr, "two cabinets: initial boot did not complete\n"); return 1; }
 	bool reboot = false;
@@ -2538,6 +2547,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 			}
 		}
+		for (int p = 1; p < instance_count(); p++)
+			if (cabinets[p]) cabinets[p]->game->sync_shared_settings(cabinets[0]->machine);
 		if (!boot()) { fprintf(stderr, "two cabinets: linked reset did not complete\n"); return false; }
 		bool again = false;
 		for (int p = 0; p < instance_count(); p++) if (cabinets[p]) again = cabinets[p]->game->booted() || again;
@@ -2842,9 +2853,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 							status.phase, join_pending, status.role,
 							bool(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN),
 							!pc_mode, cabinets[0]->display->icon_set, cabinets[0]->machine.free_cam());
-						for (int p = 0; p < cabinet_count; p++)
+						for (int p = 0; p < cabinet_count; p++) {
+							const auto cabinet_status = cabinets[p]->game->local_status(cabinets[p]->machine);
+							fprintf(stderr, "two cabinets: player=%d phase=%02x subphase=%02x role=%u participants=%u\n",
+								p + 1, cabinet_status.phase, cabinet_status.subphase, cabinet_status.role,
+								cabinet_status.participants);
 							fprintf(stderr, "two cabinets: picture player=%d aspect=%.6f picture_shape=%d\n",
 								p + 1, cabinets[p]->machine.aspect(), cabinets[p]->config.aspect);
+						}
 						if (cabinets[2]) {
 							auto &m = cabinets[2]->machine;
 							const auto monitor_status = cabinets[2]->game->local_status(m);

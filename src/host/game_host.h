@@ -29,7 +29,7 @@ struct local_multiplayer_info
 
 struct local_multiplayer_status
 {
-	unsigned phase = 0, role = 0, participants = 0;
+	unsigned phase = 0, role = 0, participants = 0, subphase = 0;
 };
 
 // The host's side, for the game's
@@ -128,7 +128,8 @@ public:
 	// Machines outlive the session; second and monitor are independently optional, but not both absent.
 	virtual std::unique_ptr<local_cabinet_link> make_local_link(model1 &, model1 *, model1 *) { return {}; }
 	virtual local_multiplayer_status local_status(model1 &) const { return {}; }
-	virtual bool local_boot_complete(const model1 &machine) const { return machine.past_boot(); }
+	virtual void begin_local_boot() {}
+	virtual bool local_boot_complete(model1 &machine) const { return machine.past_boot(); }
 	virtual bool supports_lan() const { return false; }
 	virtual lan_config local_lan_config() const { return {}; }
 	// No policy means a LAN peer loss ends the session rather than fabricating game data.

@@ -14,12 +14,41 @@ int main(int argc, char **argv)
 	regions.title = game::wingwar::ID;
 	model1 machine(std::move(regions));
 	auto host = make_game_host();
-	assert(!host->local_multiplayer() && !host->supports_lan());
+	assert(host->local_multiplayer() && !host->local_multiplayer()->live_monitor && !host->supports_lan());
+	{
+		model1::regions other_regions;
+		other_regions.title = game::wingwar::ID;
+		model1 other(std::move(other_regions));
+		assert(!host->make_local_link(machine, nullptr, nullptr));
+		assert(!host->make_local_link(machine, &other, &other));
+		{
+			auto link = host->make_local_link(machine, &other, nullptr);
+			assert(link && machine.link() && other.link());
+			assert(link->status(0).id == 0 && link->status(2).id == 0);
+		}
+		assert(!machine.link() && !other.link());
+	}
 	bool pc_mode = false;
 	int service_calls = 0, settings_calls = 0;
 	host_context context{machine, "", "", pc_mode, [&] { settings_calls++; }, {}, {},
 		[&] { service_calls++; }};
 	host->start(context);
+	host->begin_local_boot();
+	machine.write8(0x40f004, 0);
+	machine.write8(0x40f006, 2);
+	assert(!host->local_boot_complete(machine));
+	machine.write8(0x40f004, 1);
+	assert(!host->local_boot_complete(machine));
+	machine.write8(0x40f004, 0);
+	assert(host->local_boot_complete(machine) && host->can_join_local_cabinet());
+	machine.write8(0x40f006, 0x0c);
+	for (int subphase = 0; subphase <= 0x1c; subphase++) {
+		machine.write8(0x40f007, uint8_t(subphase));
+		assert(host->can_join_local_cabinet() == (subphase == 3));
+	}
+	machine.write8(0x40f006, 9);
+	machine.write8(0x40f007, 3);
+	assert(!host->can_join_local_cabinet());
 	menu_page cheats;
 	context.push_page = [&](menu_page page) { cheats = std::move(page); };
 	context.back_item = [] { return menu_item{"Back"}; };
@@ -170,11 +199,28 @@ int main(int argc, char **argv)
 			const auto saves = host->new_eeprom(fresh);
 			assert(saves.size() == model1::EEPROM_SIZE);
 			memcpy(fresh.eeprom(), saves.data(), saves.size());
+			assert(game::wingwar::link_role(fresh) == 0);
+			assert(!game::wingwar::set_link_role(fresh, 3));
+			const auto blank_nvram = fresh.nvram();
+			assert(!game::wingwar::set_link_role(fresh, 0));
+			assert(fresh.nvram() == blank_nvram);
+			assert(game::wingwar::set_link_role(fresh, 2));
+			assert(game::wingwar::link_role(fresh) == 2);
+			assert(fresh.eeprom()[0x24] == 1 && fresh.eeprom()[0x25] == 2);
+			assert(game::wingwar::set_link_role(fresh, 0));
+			assert(game::wingwar::link_role(fresh) == 0);
 			fresh.reset();
 			for (int f = 0; f < 700; f++) fresh.run_frame();
 			assert(game::wingwar::assignment_value(fresh, 0) == 0);   // a new player's difficulty: 1
 			assert(game::wingwar::assignment_value(fresh, 1) == 4 && game::wingwar::assignment_value(fresh, 6) == 0);
-			assert(memcmp(fresh.eeprom(), saves.data(), saves.size()) == 0);
+			assert(game::wingwar::link_role(fresh) == 0);
+			auto secondary = make_game_host();
+			host_context secondary_context{fresh, "", "", pc_mode, [] {}, {}, {}, [] {}};
+			secondary->start(secondary_context);
+			assert(secondary->sync_shared_settings(actual));
+			for (size_t i = 0; i < maximum.size(); i++)
+				assert(game::wingwar::assignment_value(fresh, i) == game::wingwar::assignment_value(actual, i));
+			assert(!secondary->sync_shared_settings(actual));
 		}
 		model1 cold(load_regions(argv[1], game::wingwar::ID));
 		memcpy(cold.eeprom(), actual.eeprom(), model1::EEPROM_SIZE);
@@ -258,6 +304,23 @@ int main(int argc, char **argv)
 		};
 		assert(style->read8(0x40f200) == 0);
 		press(0x10);
+		assert(style->read8(0x40f006) == 0x0c && style->read8(0x40f007) == 3);
+		assert(style_host->can_join_local_cabinet());
+		bool mode_selection = false, gameplay = false;
+		for (int f = 0; f < 5000; f++) {
+			style->run_frame();
+			if (style->read8(0x40f006) != 0x0c) continue;
+			if (style->read8(0x40f007) == 3 && style->read16(0x40c000) == 2) {
+				assert(style_host->can_join_local_cabinet());
+				mode_selection = true;
+			}
+			if (style->read8(0x40f007) == 0x0f) {
+				assert(!style_host->can_join_local_cabinet());
+				gameplay = true;
+				break;
+			}
+		}
+		assert(mode_selection && gameplay);
 		assert(style->read8(0x40f006) != 2);
 		auto saved_settings = [&] {
 			FILE *file = tmpfile();

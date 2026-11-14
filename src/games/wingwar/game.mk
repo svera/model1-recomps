@@ -86,10 +86,18 @@ test-wingwar-interpolation: $(BIN)/wingwar_interpolation_test wingwar-regions
 $(BIN)/wingwar_boot_test: $(OBJ)/tests/games/wingwar/boot_test.o $(GAMES_LINK)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+$(BIN)/wingwar_link_test: $(OBJ)/tests/games/wingwar/link_test.o $(GAMES_LINK) $(call objs,$(RT) $(NATIVE)) $(REC_NONE) $(SLJIT_OBJ) $(CORO_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+test-wingwar-link: $(BIN)/wingwar_link_test assets/games/wingwar/wingwar_map.txt wingwar-regions
+	$(BIN)/wingwar_link_test build/wingwar
+	$(BIN)/wingwar_link_test build/wingwar --native assets/games/wingwar/wingwar_map.txt
+test-wingwar-local-host-desktop: $(BIN)/wingwar-native wingwar-regions
+	python3 tests/games/wingwar/local_host_desktop_test.py $(BIN)/wingwar-native build/wingwar
 test-wingwar-boot: $(BIN)/wingwar_boot_test wingwar-regions
 	$(BIN)/wingwar_boot_test build/wingwar
 
 test-wingwar-romset: $(BIN)/romset_test wingwar-regions
 	$(BIN)/romset_test wingwar roms/wingwar.zip $(IOBOARD2_ZIP) build/wingwar
 
-.PHONY: test-wingwar-profile test-wingwar-lod test-wingwar-draw-distance test-wingwar-interpolation test-wingwar-boot test-wingwar-romset test-wingwar-script test-wingwar-ram-code test-wingwar-native-overlays test-wingwar-native-map test-wingwar-native-shared wingwar-recording-seed test-wingwar-recording test-wingwar-host test-wingwar-sky
+.PHONY: test-wingwar-profile test-wingwar-lod test-wingwar-draw-distance test-wingwar-interpolation test-wingwar-boot test-wingwar-romset test-wingwar-script test-wingwar-ram-code test-wingwar-native-overlays test-wingwar-native-map test-wingwar-native-shared wingwar-recording-seed test-wingwar-recording test-wingwar-host test-wingwar-sky test-wingwar-link test-wingwar-local-host-desktop

@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix="vr-local-host-") as directory:
     assert "test host: loaded option2 for cabinet 2" in linked_sound
 
     unsupported = subprocess.run(
-        [str(wingwar), str(data), "--split-screen"],
+        [str(wingwar), str(data), "--split-screen", "--arcade"],
         env=env, capture_output=True, text=True, timeout=30)
     assert unsupported.returncode == 2
     assert "require a game supporting local multiplayer" in unsupported.stderr
