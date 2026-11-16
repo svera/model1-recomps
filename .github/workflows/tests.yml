@@ -51,6 +51,7 @@ jobs:
         run: |
           make -j3 \
             test-host-gamepads \
+            test-host-fullscreen \
             test-mb86233 \
             test-model1io-adc \
             test-model1-sky \

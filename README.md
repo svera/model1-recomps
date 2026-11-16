@@ -390,6 +390,7 @@ Useful shared checks:
 ```sh
 make test-model1io-adc
 make test-host-gamepads
+make test-host-fullscreen
 make test-host-graphics
 make test-vr-profile test-vr-gameplay test-vr-tgp-track
 make test-wingwar-profile

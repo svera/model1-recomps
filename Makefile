@@ -121,7 +121,14 @@ $(OBJ)/%.o: %.cpp
 
 $(OBJ)/tools/model1run.o $(OBJ)/tools/model1script.o: CXXFLAGS += $(SDL_CFLAGS)
 $(OBJ)/tools/games/%/tool.o: CXXFLAGS += $(SDL_CFLAGS)
-$(OBJ)/tests/host_gamepads_test.o $(OBJ)/tests/host_audio_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(OBJ)/tests/host_gamepads_test.o $(OBJ)/tests/host_audio_test.o $(OBJ)/tests/host_fullscreen_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(BIN)/host_fullscreen_test: $(OBJ)/tests/host_fullscreen_test.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
+test-host-fullscreen: $(BIN)/host_fullscreen_test
+	$(BIN)/host_fullscreen_test
+.PHONY: test-host-fullscreen
+
 $(BIN)/host_audio_test: $(OBJ)/tests/host_audio_test.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
