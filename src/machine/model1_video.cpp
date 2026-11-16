@@ -3073,9 +3073,28 @@ bool model1::bench3d(int reps, double &cpu_ms, double &gpu_ms, long long *differ
 		std::vector<uint32_t> cpu(scratch.data(), scratch.data() + size_t(W) * H);
 		ok = run_gpu() >= 0;
 		m_bench_diff = gpu_compare(cpu.data(), scratch.data(), cpu.size());
+		const long long actual_differ = m_bench_diff.all;
 		const long long k = gpu_test_diff(m_bench_diff.all, (long long)cpu.size()) - m_bench_diff.all;   // (tests: as drawn on one only)
 		m_bench_diff.all += k; m_bench_diff.cover += k;
 		*differ = m_bench_diff.all;
+		if (ok && !gpu_diff_ok(m_bench_diff, (long long)cpu.size())) {
+			fprintf(stderr, "GPU startup mismatch samples: backend=%s size=%dx%d actual_differ=%lld injected=%lld\n",
+				m_gpu3d->name(), W, H, actual_differ, k);
+			// Spread at most eight samples across the mismatching pixels, including marker bytes.
+			const long long step = std::max(1LL, (actual_differ + 7) / 8);
+			long long mismatch = 0;
+			int samples = 0;
+			for (size_t i = 0; i < cpu.size() && samples < 8; i++) {
+				const uint32_t a = cpu[i], g = scratch.data()[i];
+				if (a == g) continue;
+				if (mismatch++ % step) continue;
+				const char *kind = (a ^ g) >> 24 ? "marker" :
+					(!(a & 0xffffff) != !(g & 0xffffff)) ? "black/coverage" : "colour";
+				fprintf(stderr, "GPU startup mismatch: sample=%d x=%zu y=%zu cpu=0x%08x gpu=0x%08x xor=0x%08x kind=%s\n",
+					++samples, i % W, i / W, unsigned(a), unsigned(g), unsigned(a ^ g), kind);
+			}
+			fflush(stderr);
+		}
 	}
 	view->x1 = sx1; view->x2 = sx2; view->y1 = sy1; view->y2 = sy2;
 	s_mark_y1 = mk1; s_mark_y2 = mk2;

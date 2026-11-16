@@ -22,6 +22,7 @@
 #include "local_link.h"
 #include "model1_lan.h"
 #include "cabinet_display.h"
+#include "window_fullscreen.h"
 #include "../machine/linked_pair.h"
 #include "../machine/parallel.h"
 #include "../rt/rec_rt.h"
@@ -95,7 +96,22 @@ static void log_display_state(const char *stage, SDL_Window *window, SDL_Rendere
 	fflush(stderr);
 }
 
-static void log_display_event(const SDL_Event &event, SDL_Window *window, SDL_Renderer *renderer)
+struct display_frame_trace
+{
+	int remaining = 0;
+	void arm() { remaining = 3; }
+	void log(const char *stage, SDL_Window *window) const
+	{
+		if (!remaining) return;
+		fprintf(stderr, "display frame: window=%u remaining=%d stage=%s\n",
+			unsigned(SDL_GetWindowID(window)), remaining, stage);
+		fflush(stderr);
+	}
+	void presented() { if (remaining) --remaining; }
+};
+
+static void log_display_event(const SDL_Event &event, SDL_Window *window, SDL_Renderer *renderer,
+	display_frame_trace &trace)
 {
 	switch (event.type) {
 	case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
@@ -115,6 +131,7 @@ static void log_display_event(const SDL_Event &event, SDL_Window *window, SDL_Re
 	default:
 		return;
 	}
+	trace.arm();
 	log_display_state("event received", window, renderer);
 }
 
@@ -991,6 +1008,7 @@ struct local_display
 	}
 	SDL_Window *window = nullptr;
 	SDL_Renderer *renderer = nullptr;
+	window_fullscreen fullscreen;
 	crt::Colours crt_paint;
 	bool icon_set = false;
 	bool renderer_vulkan = false;
@@ -1319,8 +1337,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		const bool start_fullscreen = fullscreen > 0 || (fullscreen < 0 && c.config.fullscreen);
 		c.display->window = SDL_CreateWindow(title.c_str(), width, height, SDL_WINDOW_RESIZABLE |
 			(split ? SDL_WINDOW_HIGH_PIXEL_DENSITY : 0) | (hidden ? SDL_WINDOW_HIDDEN : 0) |
-			(start_fullscreen ? SDL_WINDOW_FULLSCREEN : 0));
+			window_fullscreen::creation_flags(start_fullscreen));
 		if (!c.display->window) { fprintf(stderr, "two cabinets: window: %s\n", SDL_GetError()); return 1; }
+		if (window_fullscreen::borderless && start_fullscreen &&
+			!c.display->fullscreen.set(c.display->window, true)) {
+			fprintf(stderr, "two cabinets: initial fullscreen: %s\n", SDL_GetError());
+			return 1;
+		}
 		c.display->icon_set = set_window_icon(c.display->window);
 		if (!prepare_gpu(c)) return 1;
 		if (c.gpu_crashed && !getenv("SDL_RENDER_DRIVER"))
@@ -1603,8 +1626,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	auto draw_filter = [&](SDL_Renderer *renderer, int player, SDL_Rect viewport, float aspect) {
 		const int kind = cabinets[player]->config.filter;
 		if (!kind) return true;
-		const SDL_FRect dst = cabinet_picture_rect(viewport, aspect);
-		const int w = int(std::lround(dst.w)), h = int(std::lround(dst.h));
+		const SDL_FRect dst = screen_filter_rect(cabinet_picture_rect(viewport, aspect));
+		const int w = int(dst.w), h = int(dst.h);
 		if (w < 1 || h < 1) return true;
 		auto &display = *cabinets[player]->display;
 		auto *&glass = display.glass[player];
@@ -1775,15 +1798,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		apply_shared_settings();
 	};
+	display_frame_trace display_trace;
 	auto set_fullscreen = [&](bool enabled) {
+		display_trace.arm();
 		log_display_state(enabled ? "enter fullscreen: request" : "leave fullscreen: request",
 			cabinets[0]->display->window, cabinets[0]->display->renderer);
-		if (!SDL_SetWindowFullscreen(cabinets[0]->display->window, enabled)) {
+		if (!cabinets[0]->display->fullscreen.set(cabinets[0]->display->window, enabled)) {
 			fprintf(stderr, "two cabinets: fullscreen: %s\n", SDL_GetError());
 			fflush(stderr);
 			return false;
 		}
-		log_display_state("SDL_SetWindowFullscreen returned", cabinets[0]->display->window,
+		log_display_state("fullscreen change returned", cabinets[0]->display->window,
 			cabinets[0]->display->renderer);
 		for (int p = 0; p < cabinet_count; p++) {
 			cabinets[p]->config.fullscreen = enabled;
@@ -1902,10 +1927,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			apply_shared_settings();
 		};
 		actions.fullscreen = [&] {
-			return std::string(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN ? "On" : "Off");
+			return std::string(cabinets[0]->display->fullscreen.active(cabinets[0]->display->window) ? "On" : "Off");
 		};
 		actions.change_fullscreen = [&](int) {
-			const bool enabled = !(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN);
+			const bool enabled = !cabinets[0]->display->fullscreen.active(cabinets[0]->display->window);
 			set_fullscreen(enabled);
 		};
 		actions.live_monitor = menu_item{"Live Monitor",
@@ -2788,7 +2813,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						fprintf(stderr, "two cabinets: status frame=%d cabinets=%d mode=%u phase=%02x join=%d role=%u fullscreen=%d arcade=%d icon=%d free_camera=%d\n",
 							frames, cabinet_count, cabinets[0]->machine.game_mode(),
 							cabinets[0]->machine.work_ram()[0x1138], join_pending, cabinets[0]->machine.read8(0x40dc8c),
-							bool(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN),
+							cabinets[0]->display->fullscreen.active(cabinets[0]->display->window),
 							!pc_mode, cabinets[0]->display->icon_set, cabinets[0]->machine.free_cam());
 						for (int p = 0; p < cabinet_count; p++)
 							fprintf(stderr, "two cabinets: picture player=%d aspect=%.6f picture_shape=%d\n",
@@ -2918,7 +2943,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		last_event_ms = event_ms;
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
-			log_display_event(event, cabinets[0]->display->window, cabinets[0]->display->renderer);
+			log_display_event(event, cabinets[0]->display->window, cabinets[0]->display->renderer, display_trace);
 			if (trace_input && (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
 				event.type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
 				const auto button = SDL_GamepadButton(event.gbutton.button);
@@ -2938,7 +2963,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (layout != cabinet_layout::windows && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
 				join_overlay.is_open() && !join_overlay.capturing() && fullscreen_key(event.key) &&
 				event.key.scancode != SDL_SCANCODE_F) {
-				if (!set_fullscreen(!(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN))) return 1;
+				if (!set_fullscreen(!cabinets[0]->display->fullscreen.active(cabinets[0]->display->window))) return 1;
 				join_overlay.refresh();
 				continue;
 			}
@@ -3058,7 +3083,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					next_picture = {};
 					fprintf(stderr, "two cabinets: layout %s\n", layout == cabinet_layout::side_by_side ? "side-by-side" : "top-bottom");
 				} else if (layout != cabinet_layout::windows && fullscreen_key(event.key)) {
-					if (!set_fullscreen(!(SDL_GetWindowFlags(cabinets[0]->display->window) & SDL_WINDOW_FULLSCREEN))) return 1;
+					if (!set_fullscreen(!cabinets[0]->display->fullscreen.active(cabinets[0]->display->window))) return 1;
 				}
 			} else if (event.type == SDL_EVENT_RENDER_DEVICE_RESET) {
 				for (int p = 0; p < instance_count(); p++)
@@ -3289,7 +3314,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				perf_last_frame = frame_started;
 			}
 			const bool lan_boot_frame = lan_booting;
+			display_trace.log("simulation begin", cabinets[0]->display->window);
 			run_frame();
+			display_trace.log("simulation returned", cabinets[0]->display->window);
 			if (lan_booting && cabinets[0]->machine.past_boot()) {
 				lan_booting = false;
 				cabinets[0]->machine.set_drawing(true);
@@ -3335,6 +3362,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
 			auto &c = *cabinets[p];
+			display_trace.log("picture preparation begin", c.display->window);
 			int width = 0, height = 0;
 			if (!SDL_GetRenderOutputSize(c.display->renderer, &width, &height)) {
 				fprintf(stderr, "two cabinets: display size: %s\n", SDL_GetError());
@@ -3363,22 +3391,30 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				continue;
 			}
 			const uint64_t render_started = perf_enabled ? SDL_GetTicksNS() : 0;
-			if (shape_changed) { c.machine.set_aspect(aspect); c.machine.redraw(); }
+			if (shape_changed) {
+				display_trace.log("aspect change/redraw begin", c.display->window);
+				c.machine.set_aspect(aspect); c.machine.redraw();
+				display_trace.log("aspect change/redraw returned", c.display->window);
+			}
 			bool composed = false;
 			bool whole_picture = true;
 			if (c.machine.smooth() && c.compose_enabled) {
+				display_trace.log("GPU targets/parts begin", c.display->window);
 				prepare_gpu_targets(c);
 				const double now = double(c.machine.frame_number() - 1) + frame_clock.fraction();
 				const int rendered = c.machine.render_parts(now, c.parts);
+				display_trace.log("GPU targets/parts returned", c.display->window);
 				if (rendered == 0) {
 					updated[p] = false;
 					continue;
 				}
 				if (rendered == 1) {
 					const int aa = c.machine.render_scale() / std::max(1, c.config.scale);
+					display_trace.log("GPU composition/resolve begin", c.display->window);
 					composed = c.compose.draw(c.parts, c.machine.frame_w(), c.machine.frame_h(),
 						c.machine.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
 						(aa == 1 || c.compose.resolve(aa, c.machine.frame_w() / aa, c.machine.frame_h() / aa));
+					display_trace.log("GPU composition/resolve returned", c.display->window);
 					if (!composed) {
 						fprintf(stderr, "two cabinets: GPU composition failed at %dx (%s); using the CPU for this session\n",
 							c.machine.render_scale(), SDL_GetError());
@@ -3417,6 +3453,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 			}
 			updated[p] = true;
+			display_trace.log("picture preparation returned", c.display->window);
 			if (perf_enabled) {
 				const uint64_t render_ns = SDL_GetTicksNS() - render_started;
 				perf_render_total[p] += render_ns;
@@ -3434,11 +3471,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 			if (already_presented || !needs_present) continue;
 			auto *renderer = cabinets[p]->display->renderer;
+			auto *window = cabinets[p]->display->window;
 			const uint64_t present_started = perf_enabled ? SDL_GetTicksNS() : 0;
+			display_trace.log("clear begin", window);
 			if (!SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) || !SDL_RenderClear(renderer)) {
 				fprintf(stderr, "two cabinets: clear: %s\n", SDL_GetError());
 				return 1;
 			}
+			display_trace.log("clear returned; picture/filter draw begin", window);
 			for (int view = 0; view < instance_count(); view++) {
 				if (!cabinets[view]) continue;
 				if (cabinets[view]->display != cabinets[p]->display) continue;
@@ -3455,6 +3495,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				if (!draw_filter(renderer, view, viewports[view], picture_aspects[view])) return 1;
 			}
+			display_trace.log("picture/filter draw returned", window);
 			if (screenshot_pending && p == 0) {
 				const std::string folder = data_dir + "/Screenshots";
 				std::error_code ec;
@@ -3483,7 +3524,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					fprintf(stderr, "two cabinets: GPU status notice unavailable\n");
 					return 1;
 				}
+				display_trace.log("menu render begin", window);
 				join_overlay.render();
+				display_trace.log("menu render returned", window);
 			}
 			if (shot_due && p == 0) {
 				if (!save_picture(renderer, "build/host_window_at.png")) return 1;
@@ -3491,10 +3534,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			if (shot_due && p == 2 && !monitor_above() &&
 				!save_picture(renderer, "build/host_monitor_at.png")) return 1;
+			display_trace.log("SDL_RenderPresent begin", window);
 			if (!SDL_RenderPresent(renderer)) {
 				fprintf(stderr, "two cabinets: present: %s\n", SDL_GetError());
 				return 1;
 			}
+			display_trace.log("SDL_RenderPresent returned", window);
+			if (p == 0) display_trace.presented();
 			if (p == 0) ++fps_presents;
 			if (perf_enabled) {
 				const uint64_t present_ns = SDL_GetTicksNS() - present_started;
@@ -4014,11 +4060,14 @@ int main(int argc, char **argv)
 			win_w = int(win_w * k); win_h = int(win_h * k);
 		}
 	}
+	window_fullscreen fullscreen_state;
 	SDL_Window *win = SDL_CreateWindow(host_title(), win_w, win_h,
 									   SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
-									   (fullscreen ? SDL_WINDOW_FULLSCREEN : 0) |
+									   window_fullscreen::creation_flags(fullscreen) |
 									   (getenv("M1_HIDDEN") ? SDL_WINDOW_HIDDEN : 0));   // testing: never on screen
 	if (!win) return fail("Couldn't open the window");
+	if (window_fullscreen::borderless && fullscreen && !fullscreen_state.set(win, true))
+		return fail("Couldn't enter fullscreen");
 	set_window_icon(win);
 	SDL_HideCursor();
 	// Started from a terminal, the window can open behind it or without the keyboard (the keys go
@@ -4562,9 +4611,11 @@ int main(int argc, char **argv)
 	crt::Colours crt_paint;
 	bool crt_on = false;   // (any of them set: the menu says when this renderer can't)
 	auto draw_filter = [&] {
-		SDL_FRect r;
-		if (!cfg.filter || !SDL_GetRenderLogicalPresentationRect(ren, &r)) return;
-		const int w = int(std::lround(r.w)), h = int(std::lround(r.h));
+		SDL_FRect picture;
+		if (!cfg.filter || !SDL_GetRenderLogicalPresentationRect(ren, &picture)) return;
+		// The extra fullscreen row can put picture edges between pixels; keep the CRT grille one-to-one.
+		const SDL_FRect r = screen_filter_rect(picture);
+		const int w = int(r.w), h = int(r.h);
 		if (w < 1 || h < 1) return;
 		if (!glass || w != glass_w || h != glass_h || cfg.filter != glass_kind) {
 			if (glass) SDL_DestroyTexture(glass);
@@ -4622,7 +4673,17 @@ int main(int argc, char **argv)
 			SDL_UpdateTexture(glass, nullptr, px.data(), w * 4);
 			SDL_SetTextureScaleMode(glass, SDL_SCALEMODE_NEAREST);
 		}
-		SDL_RenderTexture(ren, glass, nullptr, nullptr);   // over the picture (the logical area), under the menu
+		int lw = 0, lh = 0;
+		SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
+		if (!SDL_GetRenderLogicalPresentation(ren, &lw, &lh, &mode) ||
+			!SDL_SetRenderLogicalPresentation(ren, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED)) {
+			fprintf(stderr, "screen filter: window pixel coordinates: %s\n", SDL_GetError());
+			return;
+		}
+		if (!SDL_RenderTexture(ren, glass, nullptr, &r))
+			fprintf(stderr, "screen filter: draw: %s\n", SDL_GetError());
+		if (!SDL_SetRenderLogicalPresentation(ren, lw, lh, mode))
+			fprintf(stderr, "screen filter: restore logical presentation: %s\n", SDL_GetError());
 	};
 
 	SDL_AudioSpec spec{ SDL_AUDIO_S16, 2, m1audio::OUT_RATE };
@@ -4683,7 +4744,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "menu: couldn't load assets/ui (the game runs without it)\n");
 	menu.set_footer(host_app_name() + " " + M1_VERSION + (*M1_DATE ? std::string(" \u00b7 ") + M1_DATE : ""));
 	// a new scale or shape reallocates the picture: draw it again at once when the game is stopped
-	auto redraw_if_stopped = [&] { if (paused || menu.is_open()) { m.set_stopped(true); m.redraw(); m.set_stopped(false); still_dirty = true; } };
+	display_frame_trace display_trace;
+	auto redraw_if_stopped = [&] {
+		if (paused || menu.is_open()) {
+			display_trace.log("stopped redraw begin", win);
+			m.set_stopped(true); m.redraw(); m.set_stopped(false); still_dirty = true;
+			display_trace.log("stopped redraw returned", win);
+		}
+	};
 	// Reset (the menu, F3): the menu closes, a paused game unpauses, and the screen goes black at
 	// once while the boot runs unseen (a few seconds on a slow machine), not the last picture held.
 	bool shape_restart = false;   // a new picture shape the game reads at boot, chosen in the menu
@@ -4759,14 +4827,15 @@ int main(int argc, char **argv)
 		apply_aspect(); make_texture(); present_shape(); redraw_if_stopped();
 	};
 	auto set_fullscreen = [&](bool on) {
+		display_trace.arm();
 		log_display_state(on ? "enter fullscreen: request" : "leave fullscreen: request", win, ren);
-		if (!SDL_SetWindowFullscreen(win, on)) {
-			fprintf(stderr, "display: SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
+		if (!fullscreen_state.set(win, on)) {
+			fprintf(stderr, "display: fullscreen change failed: %s\n", SDL_GetError());
 			fflush(stderr);
 			return;
 		}
 		cfg.fullscreen = on; cfg_dirty = true;
-		log_display_state("SDL_SetWindowFullscreen returned; syncing", win, ren);
+		log_display_state("fullscreen change returned; syncing", win, ren);
 		if (!SDL_SyncWindow(win))     // macOS animates into fullscreen: wait for it to finish
 			fprintf(stderr, "display: SDL_SyncWindow failed: %s\n", SDL_GetError());
 		log_display_state("SDL_SyncWindow returned", win, ren);
@@ -4843,8 +4912,8 @@ int main(int argc, char **argv)
 			redraw_if_stopped();
 			log_state("the player's frame rate");
 		};
-		actions.fullscreen = [&] { return on_off(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN); };
-		actions.change_fullscreen = [&](int) { set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)); };
+		actions.fullscreen = [&] { return on_off(fullscreen_state.active(win)); };
+		actions.change_fullscreen = [&](int) { set_fullscreen(!fullscreen_state.active(win)); };
 		actions.background_filter = [&] { return std::string(cfg.smooth_bg ? "Smooth" : "Off"); };
 		actions.change_background_filter = [&](int) {
 			cfg.smooth_bg = !cfg.smooth_bg;
@@ -5525,7 +5594,7 @@ int main(int argc, char **argv)
 		const bool menu_was_open = menu.is_open();
 		bool pads_changed = false;
 		while (SDL_PollEvent(&e)) {
-			log_display_event(e, win, ren);
+			log_display_event(e, win, ren, display_trace);
 			if (e.type == SDL_EVENT_QUIT) running = false;
 			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) { fprintf(stderr, "clock: back in the foreground, restarted\n"); resume_clock(true); }
 			else if (e.type == SDL_EVENT_RENDER_TARGETS_RESET || e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
@@ -5549,15 +5618,17 @@ int main(int argc, char **argv)
 			// (F11 and Alt+Enter with the menu open too, unless it's waiting for a key: Alt+Enter was its Enter)
 			else if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && menu.is_open() && !menu.capturing()
 					 && (e.key.scancode == SDL_SCANCODE_F11 || (e.key.scancode == SDL_SCANCODE_RETURN && (e.key.mod & SDL_KMOD_ALT))))
-				set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN));
+				set_fullscreen(!fullscreen_state.active(win));
 			else if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED ||
 					 e.type == SDL_EVENT_GAMEPAD_REMAPPED || e.type == SDL_EVENT_JOYSTICK_ADDED ||
 					 e.type == SDL_EVENT_JOYSTICK_REMOVED) pads_changed = true;
 			else if (menu.handle_event(e)) continue;
 			else if (e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED && ASPECTS[aspect_i] <= 0) {
+				display_trace.log("resize resources begin", win);
 				float before = shape_now;
 				apply_aspect();
 				if (shape_now != before) { sync.reset(); make_texture(); present_shape(); redraw_if_stopped(); }
+				display_trace.log("resize resources returned", win);
 			}
 			else if (e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN || e.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) {
 				menu.refresh();
@@ -5593,7 +5664,7 @@ int main(int argc, char **argv)
 					while (std::filesystem::exists(shots + name, ec) && shot < 9999);
 					write_png((shots + name).c_str(), saved_frame(), shown_w(), shown_h());
 				} else if (e.key.scancode == SDL_SCANCODE_F11 || fullscreen_key(e.key))
-					set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN));
+					set_fullscreen(!fullscreen_state.active(win));
 			}
 		}
 		// Retry delayed Bluetooth opens, and recover even if a connection event was missed.
@@ -5787,11 +5858,13 @@ int main(int argc, char **argv)
 			if (ff) { due = 8; frame_clock = double(game_run + due); }
 			else if (sound_full) due = 0;   // (the clock stops at the next frame, below)
 			const uint64_t t0 = SDL_GetTicksNS();
+			display_trace.log("simulation begin", win);
 			for (int i = 0; i < due; i++) {
 				if (!frame_inputs()) break;
 				m.run_frame();
 				if (!after_frame(ff)) break;
 			}
+			display_trace.log("simulation returned; picture preparation begin", win);
 			frame_clock = std::min(frame_clock, double(game_run) + 0.999);   // (frames not run: the menu opened, a restart)
 			if (curtain_on_gpu) { show_target = in_texture = true; tp.kind = 'F'; }
 			tp.due = due;
@@ -5929,9 +6002,12 @@ int main(int argc, char **argv)
 		}
 		const uint64_t t1 = SDL_GetTicksNS();
 		const bool show_frame_was_new = show_frame && !paused && !menu.is_open();
+		display_trace.log("picture preparation returned", win);
 		if (show_frame && !in_texture) {
 			const uint64_t tu = SDL_GetTicksNS();
+			display_trace.log("texture upload begin", win);
 			upload();
+			display_trace.log("texture upload returned", win);
 			perf.work += SDL_GetTicksNS() - tu;
 			tp.upload = SDL_GetTicksNS() - tu;
 			if (tp.kind == 'S') tp.kind = 'F';
@@ -5980,8 +6056,10 @@ int main(int argc, char **argv)
 			if (show_frame) still_dirty = false;
 		}
 		if (recorder.active()) show_frame = true;
+		display_trace.log("clear begin", win);
 		SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
 		SDL_RenderClear(ren);
+		display_trace.log("clear returned; picture/filter draw begin", win);
 		// A game can suppress a transition without hiding the host menu.
 		if (!game_part.hide_frame() &&
 			!crt_paint.draw(ren, show_target ? (aa_now() > 1 && gc.resolved() ? gc.resolved() : gc.target()) : tex,
@@ -5991,7 +6069,9 @@ int main(int argc, char **argv)
 		}
 		crt_on = cfg.crt_colours || cfg.brightness != 100 || cfg.gamma != 100;
 		draw_filter();
+		display_trace.log("picture/filter draw returned; menu render begin", win);
 		menu.render();
+		display_trace.log("menu render returned", win);
 		for (uint64_t i = 0; i < record_frames_due && recorder.active(); i++) {
 			if (!recorder.write_frame(ren)) {
 				fprintf(stderr, "record: %s\n", recorder.error().c_str());
@@ -6044,7 +6124,11 @@ int main(int argc, char **argv)
 			ahead_t = SDL_GetTicksNS();
 			gt.start([&] { m.run_frame(); });
 		}
-		SDL_RenderPresent(ren);
+		display_trace.log("SDL_RenderPresent begin", win);
+		if (!SDL_RenderPresent(ren))
+			fprintf(stderr, "display: SDL_RenderPresent failed: %s\n", SDL_GetError());
+		display_trace.log("SDL_RenderPresent returned", win);
+		display_trace.presented();
 		{   // (VF3's pace log: a pass over 1.5 refreshes, by what it ran)
 			const double refresh = screen_hz_now > 0 ? 1e9 / screen_hz_now : 8333333.0;
 			if (double(SDL_GetTicksNS() - pass_t) > 1.5 * refresh) {

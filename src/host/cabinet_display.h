@@ -5,6 +5,12 @@
 
 enum class cabinet_layout { windows, side_by_side, top_bottom };
 
+inline SDL_FRect screen_filter_rect(SDL_FRect picture)
+{
+	const float x = std::round(picture.x), y = std::round(picture.y);
+	return {x, y, std::round(picture.x + picture.w) - x, std::round(picture.y + picture.h) - y};
+}
+
 inline Uint64 next_cabinet_picture(Uint64 deadline, Uint64 now, int fps)
 {
 	const Uint64 period = 1000000000ull / fps;
