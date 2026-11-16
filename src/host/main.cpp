@@ -78,6 +78,71 @@ static constexpr const char *ASPECT_NAMES[] = { "auto", "4:3", "16:10", "16:9", 
 static constexpr int N_ASPECTS = sizeof(ASPECTS) / sizeof(ASPECTS[0]);
 static_assert(sizeof(ASPECT_NAMES) / sizeof(ASPECT_NAMES[0]) == N_ASPECTS);
 
+static void log_display_state(const char *stage, SDL_Window *window, SDL_Renderer *renderer)
+{
+	int w = 0, h = 0;
+	SDL_GetWindowSizeInPixels(window, &w, &h);
+	const char *name = SDL_GetRendererName(renderer);
+	const char *driver = "n/a";
+#if M1_GPU3D_SDL
+	if (name && !strcmp(name, "gpu"))
+		if (auto *device = SDL_GetGPURendererDevice(renderer)) driver = SDL_GetGPUDeviceDriver(device);
+#endif
+	fprintf(stderr, "display: %s: window=%u pixels=%dx%d flags=0x%llx renderer=%s gpu_driver=%s SDL=%d\n",
+		stage, unsigned(SDL_GetWindowID(window)), w, h,
+		static_cast<unsigned long long>(SDL_GetWindowFlags(window)), name ? name : "unknown",
+		driver ? driver : "unknown", SDL_GetVersion());
+	fflush(stderr);
+}
+
+static void log_display_event(const SDL_Event &event, SDL_Window *window, SDL_Renderer *renderer)
+{
+	switch (event.type) {
+	case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+	case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+	case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+		if (event.window.windowID != SDL_GetWindowID(window)) return;
+		fprintf(stderr, "display: event=%s data=%d,%d\n",
+			event.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ? "ENTER_FULLSCREEN" :
+			event.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN ? "LEAVE_FULLSCREEN" : "PIXEL_SIZE_CHANGED",
+			event.window.data1, event.window.data2);
+		break;
+	case SDL_EVENT_RENDER_DEVICE_RESET:
+	case SDL_EVENT_RENDER_TARGETS_RESET:
+		fprintf(stderr, "display: event=%s\n",
+			event.type == SDL_EVENT_RENDER_DEVICE_RESET ? "RENDER_DEVICE_RESET" : "RENDER_TARGETS_RESET");
+		break;
+	default:
+		return;
+	}
+	log_display_state("event received", window, renderer);
+}
+
+static bool check_gpu_picture(model1 &machine, gpu3d &gpu, bool shared, long long *difference = nullptr)
+{
+	fprintf(stderr, "GPU startup check: begin backend=%s shared=%d size=%dx%d\n",
+		gpu.name(), shared, machine.frame_w(), machine.frame_h());
+	fflush(stderr);
+	double cpu_ms = 0, gpu_ms = 0;
+	long long differ = -1;
+	SDL_ClearError();
+	const bool ran = machine.bench3d(1, cpu_ms, gpu_ms, &differ);
+	if (difference) *difference = ran ? differ : -1;
+	const std::string error = SDL_GetError();
+	const long long pixels = (long long)machine.frame_w() * machine.frame_h();
+	const auto &diff = machine.m_bench_diff;
+	const bool ok = ran && differ >= 0 && machine.gpu_diff_ok(diff, pixels);
+	fprintf(stderr, "GPU startup check: %s backend=%s shared=%d completed=%d pixels=%lld "
+		"differ=%lld coverage=%lld beyond_rounding=%lld max_channel_delta=%d "
+		"rounding_limit=%d cpu_ms=%.3f gpu_ms=%.3f SDL_error=%s\n",
+		ok ? "passed" : "FAILED", gpu.name(), shared, ran, pixels, differ,
+		ran ? diff.cover : -1LL, ran ? diff.big : -1LL, ran ? diff.most : -1,
+		model1::GPU_ROUNDING_COLOUR, cpu_ms, gpu_ms,
+		error.empty() ? "none reported" : error.c_str());
+	fflush(stderr);
+	return ok;
+}
+
 struct display_menu_actions
 {
 	std::function<void(menu_page)> push_page;
@@ -1361,11 +1426,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!c.gpu) return false;
 			c.machine.set_gpu3d(c.gpu.get());
 			c.machine.m_gpu3d_chosen = requested == 1;
-			double cpu_ms = 0, gpu_ms = 0;
-			long long differ = -1;
-			const long long pixels = (long long)c.machine.frame_w() * c.machine.frame_h();
-			if (!c.machine.bench3d(1, cpu_ms, gpu_ms, &differ) || differ < 0 ||
-				!c.machine.gpu_diff_ok(c.machine.m_bench_diff, pixels)) {
+			if (!check_gpu_picture(c.machine, *c.gpu, c.gpu_shared)) {
 				c.machine.set_gpu3d(nullptr);
 				c.gpu.reset();
 				return false;
@@ -1715,10 +1776,15 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		apply_shared_settings();
 	};
 	auto set_fullscreen = [&](bool enabled) {
+		log_display_state(enabled ? "enter fullscreen: request" : "leave fullscreen: request",
+			cabinets[0]->display->window, cabinets[0]->display->renderer);
 		if (!SDL_SetWindowFullscreen(cabinets[0]->display->window, enabled)) {
 			fprintf(stderr, "two cabinets: fullscreen: %s\n", SDL_GetError());
+			fflush(stderr);
 			return false;
 		}
+		log_display_state("SDL_SetWindowFullscreen returned", cabinets[0]->display->window,
+			cabinets[0]->display->renderer);
 		for (int p = 0; p < cabinet_count; p++) {
 			cabinets[p]->config.fullscreen = enabled;
 			cabinets[p]->settings_dirty = true;
@@ -2852,6 +2918,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		last_event_ms = event_ms;
 		SDL_Event event;
 		while (SDL_PollEvent(&event)) {
+			log_display_event(event, cabinets[0]->display->window, cabinets[0]->display->renderer);
 			if (trace_input && (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
 				event.type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
 				const auto button = SDL_GamepadButton(event.gbutton.button);
@@ -4279,12 +4346,12 @@ int main(int argc, char **argv)
 		// own, chooses over this.)
 		for (int attempt = 0; cfg.renderer3d != 0 && !a3.tested; attempt++) {
 			a3.tested = true;
-			double c = 0, g = 0;
 			long long d = -1;
 			m.m_gpu3d_chosen = cfg.renderer3d == 1;
-			const long long px = (long long)m.frame_w() * m.frame_h();
 			const auto &dd = m.m_bench_diff;
-			if (!m.bench3d(1, c, g, &d) || d < 0 || !m.gpu_diff_ok(dd, px)) {
+			const bool checked = check_gpu_picture(m, *g3, g3_shared, &d);
+			const long long px = (long long)m.frame_w() * m.frame_h();
+			if (!checked) {
 				if (d > 0) fprintf(stderr, "the 3D on the GPU (%s): its test picture isn't the CPU's (%lld of %lld pixels differ, %lld drawn on one only, %lld by more than %d)\n",
 								   g3->name(), d, px, dd.cover, dd.big, model1::GPU_ROUNDING_COLOUR);
 				else fprintf(stderr, "the 3D on the GPU (%s): its test picture failed\n", g3->name());
@@ -4692,9 +4759,17 @@ int main(int argc, char **argv)
 		apply_aspect(); make_texture(); present_shape(); redraw_if_stopped();
 	};
 	auto set_fullscreen = [&](bool on) {
+		log_display_state(on ? "enter fullscreen: request" : "leave fullscreen: request", win, ren);
+		if (!SDL_SetWindowFullscreen(win, on)) {
+			fprintf(stderr, "display: SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
+			fflush(stderr);
+			return;
+		}
 		cfg.fullscreen = on; cfg_dirty = true;
-		SDL_SetWindowFullscreen(win, on);
-		SDL_SyncWindow(win);     // macOS animates into fullscreen: wait for it to finish
+		log_display_state("SDL_SetWindowFullscreen returned; syncing", win, ren);
+		if (!SDL_SyncWindow(win))     // macOS animates into fullscreen: wait for it to finish
+			fprintf(stderr, "display: SDL_SyncWindow failed: %s\n", SDL_GetError());
+		log_display_state("SDL_SyncWindow returned", win, ren);
 	};
 	auto on_off = [](bool b) { return std::string(b ? "On" : "Off"); };
 	auto wrap = [](int v, int n) { return (v % n + n) % n; };
@@ -5450,6 +5525,7 @@ int main(int argc, char **argv)
 		const bool menu_was_open = menu.is_open();
 		bool pads_changed = false;
 		while (SDL_PollEvent(&e)) {
+			log_display_event(e, win, ren);
 			if (e.type == SDL_EVENT_QUIT) running = false;
 			else if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) { fprintf(stderr, "clock: back in the foreground, restarted\n"); resume_clock(true); }
 			else if (e.type == SDL_EVENT_RENDER_TARGETS_RESET || e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
