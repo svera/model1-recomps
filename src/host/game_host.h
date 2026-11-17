@@ -25,6 +25,7 @@ struct local_multiplayer_info
 	const char *cabinet_game_help = "Player and service settings.";
 	const char *join_wait = "waiting for a safe point";
 	const char *analog_help = "Change this player's analog axes.";
+	bool solo_on_controller_disconnect = true;
 };
 
 struct local_multiplayer_status

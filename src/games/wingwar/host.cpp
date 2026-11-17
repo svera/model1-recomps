@@ -19,7 +19,7 @@ public:
 		static const local_multiplayer_info info{
 			false, "Game and service settings.", "Game settings shared by both cabinets.",
 			"Cabinet game and service settings.", "waiting for the demonstration or game selection",
-			"Change this player's flight controls."
+			"Change this player's flight controls.", false
 		};
 		return &info;
 	}

@@ -25,15 +25,19 @@ with tempfile.TemporaryDirectory(prefix="wingwar-local-host-") as directory:
         assert result.returncode == 0, result.stderr
         return result.stderr
 
+    def assert_kept_split_screen(log):
+        statuses = re.findall(r"two cabinets: status .*cabinets=(\d+) .*join=0 role=(\d+)", log)
+        assert statuses == [("2", "1"), ("2", "1")], log
+        assert "player 2 controller disconnected; keeping split-screen session" in log, log
+        assert "reset complete" not in log, log
+
     reset = run("10:2,100:status,130:f3,180:status,200:close")
     assert "player 2 joined, two cabinets running" in reset, reset
     assert "reset complete, 1 cabinet(s) running" in reset, reset
     assert re.search(r"cabinets=1 .*join=0 role=0", reset), reset
     joined = run("10:pad2,100:status,130:disconnect2,180:status,200:close")
     assert "player 2 joined, two cabinets running" in joined, joined
-    assert re.search(r"cabinets=2 .*join=0 role=1", joined), joined
-    assert "player 2 controller disconnected; returned to solo play" in joined, joined
-    assert re.search(r"cabinets=1 .*join=0 role=0", joined), joined
+    assert_kept_split_screen(joined)
     saved_link = run("10:pad2,100:status,120:close")
     assert "player 2 joined, two cabinets running" in saved_link, saved_link
     assert re.search(r"cabinets=2 .*phase=0c .*role=1", saved_link), saved_link
@@ -66,7 +70,6 @@ with tempfile.TemporaryDirectory(prefix="wingwar-local-host-") as directory:
     assert re.search(r"cabinets=1 .*join=0 role=0", active_reset), active_reset
     active_disconnect = run("1:tab,10:pad2,900:status,910:disconnect2,920:status,930:close", 5000)
     assert_active_game(active_disconnect)
-    assert "player 2 controller disconnected; returned to solo play" in active_disconnect, active_disconnect
-    assert re.search(r"cabinets=1 .*join=0 role=0", active_disconnect), active_disconnect
+    assert_kept_split_screen(active_disconnect)
 
-print("Wing War local host: join, disconnect, reset and return to solo passed")
+print("Wing War local host: join, persistent split-screen on disconnect, reset and return to solo passed")

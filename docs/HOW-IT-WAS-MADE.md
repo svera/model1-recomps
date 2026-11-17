@@ -640,6 +640,24 @@ load/save and simulated sleep. An SDL-GPU host built on macOS also checked curre
 the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
 management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
 
+### Windows borderless fullscreen
+
+The [upstream VF1 workaround](https://github.com/mr-finster/vf1-recomp/commit/0e2c5dd918636ebc34efd038672ed58ee8279095)
+is shared by all three games through `src/host/window_fullscreen.h`. On Windows, fullscreen uses a
+borderless window one pixel taller than the display, avoiding the driver fullscreen presentation path
+that froze with AMD Vulkan. Returning to windowed mode restores the previous size, position and
+maximized state. Startup, menu controls and fullscreen shortcuts use the same state, rather than relying
+on `SDL_WINDOW_FULLSCREEN`, which is not set for the borderless window. macOS, Linux and Steam Deck
+keep their native fullscreen behavior.
+
+The extra row can put the picture's edges between pixels. Screen-filter bounds are rounded to whole
+window pixels so the CRT grille does not duplicate a column and produce a vertical seam.
+
+`make test-host-fullscreen` checks mocked Windows window operations, including the extra row,
+repeated toggles, maximized-window restoration and failure recovery, without comparing rendered pixels.
+All three native hosts build, and macOS runtime checks cover windowed/fullscreen startup and toggling.
+The AMD fullscreen fix and its appearance still need validation on Windows hardware.
+
 ## Free camera, paths and recording
 
 The free-camera and recording features from upstream commits `e82fe453` and `441f03e` are adapted
