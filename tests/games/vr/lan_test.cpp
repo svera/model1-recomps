@@ -208,6 +208,11 @@ static void network_group(int count, bool retirement = true, bool guest_without_
 	}
 	assert(sessions[0]->start({}));
 	for (int n = 0; n < 180 && sessions[count - 1]->role() != LAN_PLAYING; n++) transport();
+	if (count > 2) {
+		model1_lan limited;
+		assert(!limited.begin(*sessions[0], 81, {}, 2) && !limited.active());
+		sessions[0]->clear_error();
+	}
 	for (int i = 0; i < count; i++) {
 		std::function<m1comm::memory(m1comm::memory)> policy;
 		if (retirement && !(guest_without_policy && i == count - 1)) policy = [&, i](m1comm::memory snapshot) {

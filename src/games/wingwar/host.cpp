@@ -37,6 +37,40 @@ public:
 		return {machine.read8(0x40f006), board ? board->read(1) : 0u,
 			board ? board->read(3) : 0u, machine.read8(0x40f007)};
 	}
+	bool supports_lan() const override { return true; }
+	lan_config local_lan_config() const override { return {{'M', '1', 'W', 'W'}, 1, 19810, 0, 0, 0, LAN_LINK, 0, 2}; }
+	std::pair<size_t, size_t> lan_nvram_settings() const override { return {0xf800, 0x80}; }
+	std::vector<uint8_t> lan_settings() const override
+	{
+		std::vector<uint8_t> values;
+		for (size_t i = 0; i < ASSIGNMENTS.size(); i++) {
+			const int value = assignment_value(ctx->machine, i);
+			if (value < 0) return {};
+			values.push_back(uint8_t(value));
+		}
+		return values;
+	}
+	bool apply_lan_settings(std::span<const uint8_t> values) override
+	{
+		if (values.size() != ASSIGNMENTS.size()) {
+			fprintf(stderr, "Wing War LAN: invalid shared assignments\n");
+			return false;
+		}
+		std::array<int, 7> assignments;
+		for (size_t i = 0; i < assignments.size(); i++) {
+			if (values[i] >= ASSIGNMENTS[i].count) {
+				fprintf(stderr, "Wing War LAN: invalid shared assignment %zu\n", i);
+				return false;
+			}
+			assignments[i] = values[i];
+		}
+		if (lan_settings() == std::vector<uint8_t>(values.begin(), values.end())) return true;
+		if (!set_assignments(ctx->machine, assignments)) {
+			fprintf(stderr, "Wing War LAN: cannot apply shared assignments\n");
+			return false;
+		}
+		return true;
+	}
 	void begin_local_boot() override { local_boot_busy = false; }
 	bool local_boot_complete(model1 &machine) const override
 	{
