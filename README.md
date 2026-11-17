@@ -418,7 +418,7 @@ make test-wingwar-profile
 | `src/rt` | Recompiler runtime and startup native recompilation |
 | `src/host` | SDL 3 host, input, pacing, and RmlUi menu |
 | `src/games/<game>` | Game profiles, OM tables, scripted play and host, and game-specific behavior |
-| `assets/games/<game>` | VR address map, icon and other artwork |
+| `assets/games/<game>` | Game address map, icon and other artwork |
 | `src/gpu` | Metal and SDL_GPU renderers and shaders |
 | `tools/recomp` | Ahead-of-time V60-to-C++ recompiler |
 | `tools/mac`, `tools/win`, `tools/linux` | Each platform's `package.sh [game ...]`: the downloads, the same for every game |
