@@ -22,6 +22,22 @@ $(BIN)/vr_gameplay_test: $(OBJ)/tests/games/vr/gameplay_test.o $(GAMES_LINK) $(c
 test-vr-gameplay: $(BIN)/vr_gameplay_test
 	$(BIN)/vr_gameplay_test
 
+$(OBJ)/tests/games/vr/local_host_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(BIN)/vr_local_host_test: $(OBJ)/tests/games/vr/local_host_test.o $(OBJ)/src/games/vr/host.o $(OBJ)/src/games/vr/romset.o $(call objs,$(ROMSET)) $(GAMES_LINK)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(SDL_LIBS)
+test-vr-local-host: $(BIN)/vr_local_host_test
+	$(BIN)/vr_local_host_test
+$(OBJ)/tests/games/vr/local_menu_host.o: CXXFLAGS += $(SDL_CFLAGS)
+$(OBJ)/tests/games/vr/renamed_host.o: src/games/vr/host.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(SDL_CFLAGS) -Dmake_game_host=make_vr_game_host -MMD -c $< -o $@
+$(BIN)/vr_local_menu_host: $(OBJ)/src/host/main_native.o $(OBJ)/tests/games/vr/local_menu_host.o $(OBJ)/tests/games/vr/renamed_host.o $(call objs,src/host/menu.cpp $(ROMSET) src/games/vr/romset.cpp src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) $(RT) $(NATIVE) $(RML_SRC)) $(REC_NONE) $(SLJIT_OBJ) $(MUSASHI_OBJ) $(Z80_OBJ) $(CORO_OBJ) $(GPU3D_OBJ) $(LAN_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(SDL_LIBS) $(FT_LIBS) $(GPU3D_LIBS) $(LAN_LIBS)
+test-vr-local-host-desktop: $(BIN)/vr-native $(BIN)/wingwar-native $(BIN)/vr_local_menu_host vr-regions
+	python3 tests/games/vr/local_host_desktop_test.py $(BIN)/vr-native $(BIN)/wingwar-native build/vr $(BIN)/vr_local_menu_host
+
 $(BIN)/vr_tgp_track_test: tests/games/vr/tgp_track_test.cpp src/games/vr/tgp.h
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $< -o $@
@@ -59,4 +75,4 @@ test-vr-live-monitor: $(BIN)/vr_live_monitor_test vr-regions
 	$(BIN)/vr_live_monitor_test build/vr build/vr/live-monitor
 test-vr-live-monitor-desktop: $(BIN)/vr-native vr-regions
 	python3 tests/games/vr/live_monitor_desktop_test.py $(BIN)/vr-native build/vr
-.PHONY: test-vr-profile test-vr-gameplay test-vr-tgp-track test-vr-link test-vr-link-rom test-vr-two-cabinets test-vr-split-screen test-vr-menu-backdrops test-vr-live-monitor test-vr-live-monitor-desktop
+.PHONY: test-vr-profile test-vr-gameplay test-vr-local-host test-vr-local-host-desktop test-vr-tgp-track test-vr-link test-vr-link-rom test-vr-two-cabinets test-vr-split-screen test-vr-menu-backdrops test-vr-live-monitor test-vr-live-monitor-desktop

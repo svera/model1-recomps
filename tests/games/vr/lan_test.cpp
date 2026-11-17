@@ -1,5 +1,6 @@
 #include "../../../src/host/regions.h"
 #include "../../../src/games/vr/gameplay.h"
+#include "../../../src/games/vr/link.h"
 #include "../../../src/machine/link_packet.h"
 #include "../../../src/rt/native.h"
 #include "../../../src/games/script.h"
@@ -10,6 +11,19 @@
 #include <deque>
 #include <memory>
 #include <random>
+
+static void retirement_policy()
+{
+	m1comm::memory snapshot{};
+	for (size_t i = 0; i < snapshot.size(); i++) snapshot[i] = uint8_t((i % 251) + 1);
+	const auto retired = game::vr::retire_lan_snapshot(snapshot);
+	for (size_t i = 0; i < snapshot.size(); i++) {
+		const uint8_t expected = i == 1 ? 2 : i == 4 ? 1 :
+			i >= 0x10 + 0xb7 ? 0 : snapshot[i];
+		assert(retired[i] == expected);
+	}
+	puts("VR LAN retirement: pose and model preserved, participation cleared");
+}
 
 static void codec()
 {
@@ -160,12 +174,13 @@ static void network_board()
 	puts("LAN board adapter: stable IDs, compact record delivery, stale-session timeout and teardown passed");
 }
 
-static void network_group(int count)
+static void network_group(int count, bool retirement = true, bool guest_without_policy = false)
 {
 	const lan_config config{{'T', 'V', 'R', 'G'}, 3, 29878, 0, 0, 0, LAN_LINK, 0, 4};
 	std::array<std::unique_ptr<lan_session>, 5> sessions;
 	std::array<std::unique_ptr<model1>, 4> machines;
 	std::array<model1_lan, 4> adapters;
+	std::array<int, 4> retirement_calls{};
 	uint64_t now = 0;
 	for (int i = 0; i <= count; i++) {
 		sessions[i] = std::make_unique<lan_session>(config);
@@ -194,7 +209,14 @@ static void network_group(int count)
 	assert(sessions[0]->start({}));
 	for (int n = 0; n < 180 && sessions[count - 1]->role() != LAN_PLAYING; n++) transport();
 	for (int i = 0; i < count; i++) {
-		assert(sessions[i]->role() == LAN_PLAYING && adapters[i].begin(*sessions[i], 81));
+		std::function<m1comm::memory(m1comm::memory)> policy;
+		if (retirement && !(guest_without_policy && i == count - 1)) policy = [&, i](m1comm::memory snapshot) {
+			++retirement_calls[i];
+			snapshot = game::vr::retire_lan_snapshot(snapshot);
+			snapshot[0x10 + 0x50] = 0xd7;
+			return snapshot;
+		};
+		assert(sessions[i]->role() == LAN_PLAYING && adapters[i].begin(*sessions[i], 81, policy));
 		assert(adapters[i].player() == i + 1 && adapters[i].role() == (i ? 2 : 1));
 		model1::regions regions;
 		regions.title = game::id{"vr"};
@@ -236,6 +258,27 @@ static void network_group(int count)
 		for (int slot = 0; slot < count; slot++)
 			assert(board.read(0x10 + unsigned(slot + 1) * 0x1c4) == 0x40 + slot);
 	}
+	if (!retirement || guest_without_policy) {
+		sessions[1]->close();
+		bool ended = false;
+		for (int n = 0; n < 240 && !ended; n++) {
+			transport();
+			const bool host_ok = adapters[0].update(*sessions[0], now, *machines[0]);
+			if (guest_without_policy) {
+				assert(host_ok);
+				ended = !adapters[2].update(*sessions[2], now, *machines[2]);
+			} else {
+				ended = !host_ok;
+				if (!ended) assert(adapters[2].update(*sessions[2], now, *machines[2]));
+			}
+		}
+		const int failed = guest_without_policy ? 2 : 0;
+		assert(ended && sessions[failed]->error().find("cannot continue") != std::string::npos);
+		assert(!adapters[failed].update(*sessions[failed], now, *machines[failed]));
+		for (int i = 0; i < count; i++) adapters[i].stop(*machines[i]);
+		puts("LAN group: peer loss without a game retirement policy repeatedly fails closed");
+		return;
+	}
 	adapters[0].pause(true, now);
 	for (int n = 0; n < 60; n++) poll();
 	for (int i = 0; i < count; i++) assert(adapters[i].paused());
@@ -266,10 +309,15 @@ static void network_group(int count)
 	for (int n = 0; n < 240; n++) poll();
 	assert(!adapters[0].paused() && !adapters[count - 1].paused());
 	for (int i = 0; i < count; i++)
-		if (connected[i])
-			for (int slot = 0; slot < count; slot++)
+		if (connected[i]) {
+			assert(retirement_calls[i] > 0);
+			for (int slot = 0; slot < count; slot++) {
 				assert(machines[i]->link()->read(0x10 + unsigned(slot + 1) * 0x1c4 + 0x10e) ==
 					(connected[slot] ? slot + 1 : 0));
+				if (!connected[slot])
+					assert(machines[i]->link()->read(0x10 + unsigned(slot + 1) * 0x1c4 + 0x50) == 0xd7);
+			}
+		}
 	sessions[0]->close();
 	for (int n = 0; n < 240 && adapters[count - 1].update(*sessions[count - 1], now, *machines[count - 1]); n++) transport();
 	assert(sessions[count - 1]->error().find("host disconnected") != std::string::npos);
@@ -364,7 +412,7 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix, int cou
 				for (int other = 0; other < count; other++) {
 					if (other == p) snapshots[other] = m.link()->snapshot();
 					else if (!connected(other))
-						snapshots[other] = model1_lan::retired_snapshot(peers[p][other].memory());
+						snapshots[other] = game::vr::retire_lan_snapshot(peers[p][other].memory());
 					else {
 						ready = ready && peers[p][other].available();
 						snapshots[other] = peers[p][other].memory();
@@ -437,9 +485,12 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix, int cou
 int main(int argc, char **argv)
 {
 	codec();
+	retirement_policy();
 	network_board();
 	network_group(3);
 	network_group(4);
+	network_group(3, false);
+	network_group(3, true, true);
 	if (argc == 1) return 0;
 	if (argc < 3 || strcmp(argv[1], "--roms")) {
 		fprintf(stderr, "usage: vr_lan_test [--roms <regions> [--impaired] [--grand-prix] [--players 2|3|4] [--dropout]]\n");
