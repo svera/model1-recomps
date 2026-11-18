@@ -26,12 +26,12 @@ public:
 	}
 
 	bool begin(lan_session &session, uint32_t generation,
-		std::function<m1comm::memory(m1comm::memory)> retire_peer = {})
+		std::function<m1comm::memory(m1comm::memory)> retire_peer = {}, int max_players = 4)
 	{
 		const auto members = session.members(true);
-		if (members.size() < 2 || members.size() > 4 ||
+		if (max_players < 2 || max_players > 4 || members.size() < 2 || members.size() > size_t(max_players) ||
 			std::any_of(members.begin(), members.end(), [](const auto &m) { return m.gone; }))
-			return session.fail("A linked race needs two to four connected racers.");
+			return session.fail("Invalid or disconnected LAN cabinet roster.");
 		m_player = 0;
 		m_count = int(members.size());
 		for (int i = 0; i < m_count; i++) {

@@ -14,7 +14,10 @@ int main(int argc, char **argv)
 	regions.title = game::wingwar::ID;
 	model1 machine(std::move(regions));
 	auto host = make_game_host();
-	assert(host->local_multiplayer() && !host->local_multiplayer()->live_monitor && !host->supports_lan());
+	assert(host->local_multiplayer() && !host->local_multiplayer()->live_monitor && host->supports_lan());
+	const auto config = host->local_lan_config();
+	assert(config.mode == LAN_LINK && config.max_devices == 2);
+	assert((host->lan_nvram_settings() == std::pair<size_t, size_t>{0xf800, 0x80}));
 	{
 		model1::regions other_regions;
 		other_regions.title = game::wingwar::ID;
@@ -133,6 +136,17 @@ int main(int argc, char **argv)
 		for (int f = 0; f < 700; f++) actual.run_frame();
 		host_context live{actual, "", "", pc_mode, [] {}, {}, {}, [] {}};
 		host->start(live);
+		const auto lan_original = host->lan_settings();
+		assert(lan_original.size() == game::wingwar::ASSIGNMENTS.size());
+		auto lan_changed = lan_original;
+		lan_changed[0] = uint8_t((lan_changed[0] + 1) % game::wingwar::ASSIGNMENTS[0].count);
+		const auto lan_before = actual.nvram();
+		assert(!host->apply_lan_settings(std::span(lan_changed).first(6)));
+		auto lan_invalid = lan_changed;
+		lan_invalid[3] = game::wingwar::ASSIGNMENTS[3].count;
+		assert(!host->apply_lan_settings(lan_invalid) && actual.nvram() == lan_before);
+		assert(host->apply_lan_settings(lan_changed) && host->lan_settings() == lan_changed);
+		assert(host->apply_lan_settings(lan_original) && host->lan_settings() == lan_original);
 		const auto menu = assignment_menu();
 		const auto original = actual.nvram();
 		std::array<int, 7> expected;

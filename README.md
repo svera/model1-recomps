@@ -303,11 +303,8 @@ fast-forward, including through attract mode;
 
 - The whole single-cabinet arcade game.
 - Experimental two-player local split-screen using linked cabinets.
+- Experimental two-player LAN rooms.
 - Optional cheats: invincibility and infinite missiles.
-
-LAN play and a Live Monitor are not supported. A scripted linked round has returned both cabinets
-to the demonstration, but player-to-player combat, match results, and the split-screen presentation
-have not yet been manually validated.
 
 ### Getting started
 
@@ -350,6 +347,17 @@ A request made during play waits until the demonstration returns; joining restar
 and starts both players at game selection. Disconnecting Player 2 or pressing F3 returns to solo.
 The default Player 2 keyboard uses **2** for Start, the numeric keypad for flight and weapons,
 and keypad plus/minus for throttle; bindings can be changed under Controls.
+
+### LAN multiplayer (experimental)
+
+Play on two computers on the same local network, with the same game version and ROMs.
+Both players need PC play style and one local player. At the demonstration or game
+selection screen, open **LAN** in the menu. One player creates a room; the other
+finds and joins it. The host chooses **Start linked game**, then both press Start.
+
+The host's game assignments apply for the session; each player's settings are restored
+afterward. Only the host can pause; resuming uses a 3–2–1 countdown. Leaving or losing
+either connection ends the session. LAN cannot be combined with local split-screen.
 
 ### Game-specific settings
 

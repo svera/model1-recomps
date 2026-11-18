@@ -1074,6 +1074,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	for (const unsigned char byte : std::string(M1_VERSION " " M1_COMMIT))
 		lan_fingerprint = (lan_fingerprint ^ byte) * 16777619u;
 	std::vector<uint8_t> lan_saved_eeprom;
+	std::vector<uint8_t> lan_saved_nvram_settings;
 	bool lan_leave_requested = false, lan_start_requested = false, lan_open_requested = false;
 	const bool on_demand = layout != cabinet_layout::windows;
 	int cabinet_count = on_demand ? 1 : 2;
@@ -2430,23 +2431,29 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		page.items.push_back(back_item());
 		return page;
 	};
-	const std::string lan_name = "RACER-" + std::to_string(SDL_GetTicksNS() % 10000);
+	const int configured_lan_capacity = the_game().local_lan_config().max_devices;
+	const int lan_capacity = configured_lan_capacity ? configured_lan_capacity : LAN_DEVICES;
+	const bool lan_two_players = lan_capacity == 2;
+	const std::string lan_name = std::string(lan_two_players ? "PILOT-" : "RACER-") + std::to_string(SDL_GetTicksNS() % 10000);
 	auto lan_eligible = [&] {
 		if (!pc_mode || cabinet_count != 1 || cabinets[2] || join_pending) {
-			join_overlay.toast("LAN needs PC play, one local player and Live Monitor off.");
+			join_overlay.toast(local_info->live_monitor ?
+				"LAN needs PC play, one local player and Live Monitor off." :
+				"LAN needs PC play and one local player.");
 			return false;
 		}
 		if (!cabinets[0]->game->can_join_local_cabinet()) {
-			join_overlay.toast("Finish the current race before joining a LAN room.");
+			join_overlay.toast("Finish the current game before joining a LAN room.");
 			return false;
 		}
 		return true;
 	};
 	auto lan_page = [&] {
-		menu_page page{"LAN", "Two to four computers on the same local network; one racer on each.", {}};
+		menu_page page{"LAN", lan_two_players ? "Two computers on the same local network; one player on each." :
+			"Two to four computers on the same local network; one racer on each.", {}};
 		if (!lan.error().empty()) page.items.push_back({lan.error(), "", {}, {}, {}, true});
 		if (network_cabinet.active()) {
-			page.items.push_back({network_cabinet.running() ? "Linked race" : "Preparing linked cabinets",
+			page.items.push_back({network_cabinet.running() ? (lan_two_players ? "Linked game" : "Linked race") : "Preparing linked cabinets",
 				"Only the host can pause. Resume counts down 3, 2, 1.", {}, {}, {}, true});
 		}
 		if (lan.in_room()) {
@@ -2456,11 +2463,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				page.items.push_back({std::string(member.name) + state, "", {}, {}, {}, true});
 			}
 			if (lan.hosting() && !network_cabinet.active())
-				page.items.push_back({"Start linked race", "Two to four racers, all ready. Start the linked session, then use Start to race.",
+				page.items.push_back({lan_two_players ? "Start linked game" : "Start linked race",
+					lan_two_players ? "Two players, both ready. Start the linked session, then press Start to play." :
+					"Two to four racers, all ready. Start the linked session, then use Start to race.",
 					{}, {}, [&] { lan_start_requested = true; }});
 			else if (!network_cabinet.active())
 				page.items.push_back({"Waiting for host to start", "", {}, {}, {}, true});
-			page.items.push_back({"Leave room", "End the linked race and return to solo play.", {}, {},
+			page.items.push_back({"Leave room", lan_two_players ? "End the linked game and return to solo play." :
+				"End the linked race and return to solo play.", {}, {},
 				[&] { lan_leave_requested = true; }});
 		} else if (lan.role() == LAN_JOINING) {
 			page.items.push_back({"Joining room...", "", {}, {}, {}, true});
@@ -2478,7 +2488,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (rooms.empty()) page.items.push_back({"Searching for rooms...", "", {}, {}, {}, true});
 				for (const auto &room : rooms) {
 					page.items.push_back({room.name, "Join this room.",
-						[room] { return std::to_string(room.devices) + "/4"; },
+						[room, lan_capacity] { return std::to_string(room.devices) + "/" + std::to_string(lan_capacity); },
 						{}, [&, room] { if (lan_eligible()) lan.join(room); }});
 				}
 				page.items.push_back({"Stop searching", "", {}, {}, [&] { lan.close(); }});
@@ -2568,11 +2578,21 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		for (auto &samples : perf_render_samples) samples.clear();
 	};
 	bg_saver saver(save_blob);
+	auto nvram_for_save = [&](int player) {
+		auto &c = *cabinets[player];
+		auto nvram = c.machine.nvram();
+		if (player == 0 && !lan_saved_nvram_settings.empty()) {
+			const auto [offset, size] = c.game->lan_nvram_settings();
+			std::copy_n(lan_saved_nvram_settings.begin(), size, nvram.begin() + offset);
+		}
+		return nvram;
+	};
 	auto autosave = [&] {
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
 			auto &c = *cabinets[p];
-			saver.put(c.dir + "/nvram.sav", c.machine.nvram().data(), c.machine.nvram().size());
+			const auto nvram = nvram_for_save(p);
+			saver.put(c.dir + "/nvram.sav", nvram.data(), nvram.size());
 			saver.put(c.dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
 					  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c.machine.eeprom(), model1::EEPROM_SIZE);
 			if (!c.sidecar_path.empty()) {
@@ -2590,7 +2610,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			// Pending menu choices must reach menu_closed(), which requests their restart.
 			if (!join_overlay.is_open() && lan_saved_eeprom.empty()) c->game->keep_arcade_settings();
 			if (p < 2) c->config.ctl[0] = bindings[p];
-			const bool nv = save_blob(c->dir + "/nvram.sav", c->machine.nvram().data(), c->machine.nvram().size());
+			const auto nvram = nvram_for_save(p);
+			const bool nv = save_blob(c->dir + "/nvram.sav", nvram.data(), nvram.size());
 			const bool ee = save_blob(c->dir + (c->machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
 									  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c->machine.eeprom(), model1::EEPROM_SIZE);
 			const std::string settings_path = p == 0 ? data_dir + "/settings.ini" : c->dir + "/settings.ini";
@@ -2779,6 +2800,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			network_cabinet.stop(cabinets[0]->machine);
 			std::copy(lan_saved_eeprom.begin(), lan_saved_eeprom.end(), cabinets[0]->machine.eeprom());
 			lan_saved_eeprom.clear();
+			const auto [offset, size] = cabinets[0]->game->lan_nvram_settings();
+			std::copy_n(lan_saved_nvram_settings.begin(), size, cabinets[0]->machine.nvram().begin() + offset);
+			lan_saved_nvram_settings.clear();
 			cabinets[0]->host->link_player = 0;
 			cabinets[0]->host->standalone_cabinet = true;
 		}
@@ -2810,15 +2834,20 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (bytes.size() < 13 || !std::equal(bytes.begin(), bytes.begin() + 4, "M1LS") ||
 			model1_link::get32(bytes.data() + 4) != lan_fingerprint || bytes[12] != bytes.size() - 13)
 			return lan.fail("Incompatible LAN game data or protocol. Use matching ROMs and builds.");
-		if (!lan_eligible()) return lan.fail("Cannot start LAN while a local race is in progress.");
+		if (!lan_eligible()) return lan.fail("Cannot start LAN while a local game is in progress.");
+		const auto [offset, size] = c.game->lan_nvram_settings();
+		if (offset > c.machine.nvram().size() || size > c.machine.nvram().size() - offset)
+			return lan.fail("Invalid LAN NVRAM settings range.");
 		if (!network_cabinet.begin(lan, model1_link::get32(bytes.data() + 8),
-			c.game->lan_retirement_policy())) return false;
+			c.game->lan_retirement_policy(), lan_capacity)) return false;
 		lan_saved_eeprom.assign(c.machine.eeprom(), c.machine.eeprom() + model1::EEPROM_SIZE);
+		lan_saved_nvram_settings.assign(c.machine.nvram().begin() + offset, c.machine.nvram().begin() + offset + size);
 		if (!c.game->apply_lan_settings(bytes.subspan(13))) return lan.fail("Incompatible LAN race settings.");
 		c.host->standalone_cabinet = false;
 		c.host->link_player = network_cabinet.role();
 		c.game->booted();
 		network_cabinet.attach(c.machine);
+		c.game->begin_local_boot();
 		c.machine.reset();
 		if (!interp) c.runtime.attach(c.machine.cpu(), host_game().name);
 		c.machine.forget_camera();
@@ -2869,9 +2898,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			lan_start_requested = false;
 			const auto members = lan.members();
 			const auto shared = cabinets[0]->game->lan_settings();
-			if (members.size() < 2 || members.size() > 4 || !std::all_of(members.begin(), members.end(),
+			if (members.size() < 2 || members.size() > size_t(lan_capacity) || !std::all_of(members.begin(), members.end(),
 					[](const auto &m) { return m.heard && m.status == 1; }) || shared.empty()) {
-				lan.fail("Two to four ready racers are needed. Finish any local races first.");
+				lan.fail(lan_two_players ? "Two ready players are needed. Finish any local games first." :
+					"Two to four ready racers are needed. Finish any local races first.");
 			} else {
 				std::vector<uint8_t> start(13 + shared.size());
 				std::copy_n("M1LS", 4, start.begin());
@@ -2903,7 +2933,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				lan_notice = "LAN: resuming in " + std::to_string(network_cabinet.countdown()) + "...";
 			else if (network_cabinet.paused()) lan_notice = "LAN: paused by host";
 			else lan_notice = cabinets[0]->game->local_boot_complete(cabinets[0]->machine) ?
-				"LAN linked race - host controls pause" : "LAN: preparing cabinets...";
+				(lan_two_players ? "LAN linked game - host controls pause" : "LAN linked race - host controls pause") :
+				"LAN: preparing cabinets...";
 		}
 		else if (lan.in_room()) lan_notice = "LAN room - open LAN in the menu to start or leave";
 		if (!lan.error().empty()) lan_notice += (lan_notice.empty() ? "" : "\n") + lan.error();

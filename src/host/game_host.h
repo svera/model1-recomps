@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using settings_map = std::map<std::string, std::string>;
@@ -137,6 +138,8 @@ public:
 	virtual std::function<m1comm::memory(m1comm::memory)> lan_retirement_policy() const { return {}; }
 	virtual std::vector<uint8_t> lan_settings() const { return {}; }
 	virtual bool apply_lan_settings(std::span<const uint8_t>) { return false; }
+	// NVRAM bytes temporarily changed by LAN settings or cabinet roles.
+	virtual std::pair<size_t, size_t> lan_nvram_settings() const { return {0, 0}; }
 
 	// Optional text accompanying the battery-backed save (games without one return an empty name).
 	virtual const char *save_sidecar_name() const { return ""; }
