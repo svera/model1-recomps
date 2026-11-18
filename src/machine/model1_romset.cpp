@@ -129,7 +129,7 @@ bool is_game_set(const definition &set, const std::string &path)
 	zip z;
 	if (!z.open(path)) return false;
 	for (const entry &e : z.entries)
-		if (e.crc == set.main_crc) return true;
+		if (e.crc == set.main_crc || (set.alternate && e.crc == set.alternate->main_crc)) return true;
 	return false;
 }
 
@@ -139,22 +139,33 @@ result load(const definition &set, const std::vector<std::string> &zips)
 	std::vector<zip> zs(zips.size());
 	for (size_t i = 0; i < zips.size(); i++)
 		if (!zs[i].open(zips[i])) { res.error = "Couldn't read " + zips[i] + " as a zip file."; return res; }
-	// every file by CRC (and by name), across all the zips
-	auto find = [&](const char *name, const char *alias, uint32_t crc) -> std::pair<const zip *, const entry *> {
+	const definition *selected = &set;
+	if (set.alternate) {
 		for (const zip &z : zs)
 			for (const entry &e : z.entries)
-				if (e.crc == crc && (e.name == name || (alias && e.name == alias))) return { &z, &e };
+				if (e.crc == set.alternate->main_crc) selected = set.alternate;
+	}
+	// every file by CRC (and by name), across all the zips
+	auto find = [&](const char *name, const char *alias, uint32_t crc, bool variable = false) -> std::pair<const zip *, const entry *> {
+		for (const zip &z : zs)
+			for (const entry &e : z.entries)
+				if ((variable || e.crc == crc) && (e.name == name || (alias && e.name == alias))) return { &z, &e };
+		if (variable) return { nullptr, nullptr };
 		for (const zip &z : zs)
 			for (const entry &e : z.entries)
 				if (e.crc == crc) return { &z, &e };
 		return { nullptr, nullptr };
 	};
 	std::vector<uint8_t> regions[N_REGIONS];
-	for (int r = 0; r < N_REGIONS; r++) regions[r].assign(set.regions[r].size, set.regions[r].fill);
+	for (int r = 0; r < N_REGIONS; r++) regions[r].assign(selected->regions[r].size, selected->regions[r].fill);
 	std::vector<std::string> missing;
 	std::vector<uint8_t> d;
 	auto take = [&](const rom &ro) {
-		auto [z, e] = find(ro.name, ro.alias, ro.crc);
+		if (ro.variable && !ro.size) {
+			res.error = std::string(ro.name) + " has no expected size in the ROM definition.";
+			return false;
+		}
+		auto [z, e] = find(ro.name, ro.alias, ro.crc, ro.variable);
 		if (!z) {
 			// a file of the right name but the wrong contents is a different version of the game
 			bool wrong = false;
@@ -162,12 +173,16 @@ result load(const definition &set, const std::vector<std::string> &zips)
 			missing.push_back(std::string(ro.name) + (wrong ? " (a different version)" : ""));
 			return true;
 		}
+		if (ro.size && e->usize != ro.size) {
+			res.error = std::string(ro.name) + " has an incorrect size.";
+			return false;
+		}
 		if (!z->read(*e, d)) { res.error = std::string("The zip's copy of ") + ro.name + " is damaged."; return false; }
 		place(regions[ro.region], ro, d);
 		return true;
 	};
 	for (const rom &ro : CPU_BOARD) if (!take(ro)) return res;
-	for (const rom &ro : set.roms) if (!take(ro)) return res;
+	for (const rom &ro : selected->roms) if (!take(ro)) return res;
 	if (!missing.empty()) {
 		res.error = std::string("This isn't a complete ") + set.display_name + " set (MAME's \"" + set.mame_name + "\"). Missing: ";
 		for (size_t i = 0; i < missing.size() && i < 4; i++) res.error += (i ? ", " : "") + missing[i];
@@ -176,6 +191,7 @@ result load(const definition &set, const std::vector<std::string> &zips)
 		return res;
 	}
 	res.regions.title = set.title;
+	if (selected->save_subdirectory) res.regions.save_subdirectory = selected->save_subdirectory;
 	res.regions.maincpu = std::move(regions[MAINCPU]);
 	res.regions.copro_tables = std::move(regions[COPRO_TABLES]);
 	res.regions.copro_data = std::move(regions[COPRO_DATA]);
@@ -186,13 +202,14 @@ result load(const definition &set, const std::vector<std::string> &zips)
 	res.regions.mpegcpu = std::move(regions[MPEGCPU]);
 	res.regions.mpeg = std::move(regions[MPEG]);
 	if (!regions[TGP_PROGRAM].empty()) { res.regions.tgp_program = std::move(regions[TGP_PROGRAM]); res.has_tgp = true; }
-	if (const supplement *s = set.tgp_program) {
+	if (selected->validate && !selected->validate(res.regions, res.error)) return res;
+	if (const supplement *s = selected->tgp_program) {
 		auto [z, e] = find(s->name, nullptr, s->crc);
 		if (!z || !z->read(*e, d)) { res.error = s->missing; return res; }
 		res.regions.tgp_program = d;
 		res.has_tgp = true;
 	}
-	if (set.use_ioboard) {
+	if (selected->use_ioboard) {
 		auto [z, e] = find("epr-14869b.25", nullptr, IOBOARD_CRC);
 		if (!z || !z->read(*e, d)) {
 			res.error = "Missing or damaged Model 1 I/O BIOS epr-14869b.25 (model1io.zip).";
@@ -201,7 +218,7 @@ result load(const definition &set, const std::vector<std::string> &zips)
 		res.regions.ioboard = d;
 		res.has_ioboard = true;
 	}
-	if (set.use_advanced_ioboard) {
+	if (selected->use_advanced_ioboard) {
 		auto [z, e] = find("epr-16891.6", nullptr, ADVANCED_IOBOARD_CRC);
 		if (!z || !z->read(*e, d)) {
 			res.error = "Missing or damaged Advanced Model 1 I/O BIOS epr-16891.6 (model1io2.zip).";

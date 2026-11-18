@@ -41,3 +41,36 @@ REGIONS = {
 
 # files written when found: (file, crc, output, what happens without it)
 OPTIONAL = []
+
+
+def select_roms(z):
+    """Recognize the v0.3 boot ROM; converted data can vary with build tuning."""
+    extended = any(entry.CRC == 0x8678f78d for entry in z.infolist())
+    if not extended:
+        return ROMS, {}
+    sizes = {}
+    roms = []
+    for name, crc, region, offset, kind in ROMS:
+        if name == 'epr-14878a.4':
+            crc = 0x8678f78d
+        elif name == 'epr-14879a.5':
+            crc = 0x4aecba14
+        elif region in ('maincpu', 'polygons', 'copro_data'):
+            crc = None
+            sizes[name] = 0x200000 if region == 'polygons' else 0x80000
+        roms.append((name, crc, region, offset, kind))
+    return roms, sizes
+
+
+def validate_regions(regions, sizes):
+    if not sizes:
+        return
+    names = ('BIG FOREST', 'BAY BRIDGE', 'ACROPOLIS', 'ALPINE', 'AMAZON FALLS',
+             'DIABLO CANYON', 'METROPOLIS', 'PACIFIC COAST', 'SURFERS OVAL', 'SURFERS ROAD')
+    load = 0x278d70 + 10 * 24
+    program = regions['maincpu']
+    for i, name in enumerate(names):
+        record = program[load + i * 64:load + (i + 1) * 64]
+        if (len(record) != 64 or not 1 <= record[0] <= 3 or record[1] > 9 or record[2] > 2
+                or record[28:42].split(b'\0', 1)[0] != name.encode('ascii')):
+            raise SystemExit('Virtua Racing Extended: invalid course directory')

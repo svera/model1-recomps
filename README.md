@@ -72,6 +72,8 @@ Each game's section below lists what is specific to that game.
 ### Features
 
 - All three courses, four camera views, and the original arcade racing.
+- Optional [Virtua Racing Extended v0.3](https://github.com/ppeltriaux/virtua-racing-extended):
+  seven additional Saturn courses and reverse races in Practice.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
 - Experimental LAN rooms for two to four computers: create a room or find and join one without entering IP addresses.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
@@ -84,6 +86,15 @@ Each game's section below lists what is specific to that game.
 2. Keep **`vr.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
 3. Start the game and select **`vr.zip`** when asked. It remembers your files for next time.
 4. Press **1** on the keyboard or **Start** on your gamepad to play.
+
+**Virtua Racing Extended:** build the mod's `vr.zip` from your own arcade ROMs and European
+Saturn disc using its instructions, then use that zip and `model1io.zip` as above. The
+recognized v0.3 build also supports the mod's tuning options; other mod versions may not
+be recognized. If the original game is already installed, start with `--roms <folder>`
+pointing to the extended archives, or set `roms_folder` in `settings.ini`. Choose Practice
+to select the ten courses and their directions. Grand Prix
+is unchanged, and linked races remain in the normal direction. Extended saves are kept
+separately from original-game saves; controls and other settings are shared.
 
 **Live Monitor:** choose **Display > Picture > Live Monitor > Above players** or
 **Spectator window**.

@@ -48,6 +48,7 @@ public:
 		std::vector<uint8_t> ioboard2;      // epr-16891.6 (advanced Model 1 I/O board), when there
 		std::vector<uint8_t> mpegcpu, mpeg; // DSB ROMs (SWA): enable_sound adds the board when present
 		game::id title;                 // the game (src/games: its own code and data)
+		std::string save_subdirectory;
 	};
 
 	// Testing (the host's M1_TRACE): the one-off work done since the counts were last cleared.
