@@ -35,6 +35,45 @@ static void local_join_screens()
 	assert(!game::vr::in_course_selection(machine));
 }
 
+static void rear_sky_heading()
+{
+	model1::regions regions;
+	regions.title = game::id{"vr"};
+	model1 machine(std::move(regions));
+	machine.write32(0x501a2c, 0x12345678);
+	for (uint32_t pc : {0xfe48cfu, 0xfe48dcu, 0xfe48e2u}) {
+		machine.cpu().pc_ref() = pc;
+		assert(machine.read32(0x501a2c) == 0x12345678);
+		machine.set_rear_view(true);
+		assert(machine.read32(0x501a2c) == (pc == 0xfe48dc ? 0x1234d678u : 0x12345678u));
+		machine.set_rear_view(false);
+	}
+	machine.cpu().pc_ref() = 0;
+	assert(machine.read32(0x501a2c) == 0x12345678);
+	machine.set_rear_view(true);
+	machine.reset();
+	assert(!machine.rear_view());
+}
+
+static void rear_camera_pivot()
+{
+	model1::regions regions;
+	regions.title = game::id{"vr"};
+	model1 machine(std::move(regions));
+	auto callbacks = game::vr::create_gameplay(machine);
+	machine.write32(0x501320, 0x400d00);
+	machine.cpu().set_reg(31, 0x500100);
+	machine.cpu().pc_ref() = 0xff8500;
+	for (int camera = 0; camera < 4; camera++) {
+		machine.write8(0x501d02, camera);
+		machine.write32(0x500100, 0xfefb46);
+		assert(callbacks.rear_view_pivot(0x400d00) == (camera != 1));
+		assert(!callbacks.rear_view_pivot(0x400f80));
+		machine.write32(0x500100, 0xfead29);
+		assert(!callbacks.rear_view_pivot(0x400d00));
+	}
+}
+
 static void observed_race()
 {
 	model1::regions a, b;
@@ -986,6 +1025,109 @@ static void rom_cameras(const char *dir, bool native)
 		native ? "native" : "interpreter");
 }
 
+static void rom_rear_camera(const char *dir, bool native, bool smooth, bool arcade)
+{
+	model1 machine(load_regions(dir, game::id{"vr"}));
+	machine.set_drawing(false);
+	machine.set_smooth(smooth);
+	game::vr::set_extended_draw_distance(machine, !arcade);
+	if (native) {
+		rec::hints map;
+		assert(map.read("assets/games/vr/vr_map.txt"));
+		rec::attach(machine.cpu(), "vr");
+		assert(rec::build_native(machine.program_rom(), map));
+		machine.run_cpu = [](int n) { rec::run(n); };
+	}
+	machine.reset();
+	for (int f = 0; f < 900; f++) machine.run_frame();
+	assert(game::vr::set_coin_setting(machine, game::vr::FREE_PLAY));
+	machine.reset();
+	for (int f = 1; f <= 6000 && machine.work_ram()[0x1138] != 0x14; f++) {
+		machine.m_inputs[0] = uint8_t(~((f >= 3000 && f < 3006) || (f >= 3120 && f < 3126) ? 0x10 : 0));
+		assert(machine.set_analog_input(0, 0x80));
+		machine.run_frame();
+	}
+	assert(machine.work_ram()[0x1138] == 0x14);
+	machine.set_drawing(true);
+	game::vr::camera_cycle cycle;
+	auto frame = [&](bool change, bool rear) {
+		std::fill(std::begin(machine.m_inputs), std::end(machine.m_inputs), 0xff);
+		cycle.update(machine, change);
+		machine.set_rear_view(rear);
+		assert(machine.set_analog_input(1, 0xff));
+		machine.run_frame();
+		if (smooth) machine.render_smooth(double(machine.frame_number()) - 0.5, true);
+	};
+	auto capture = [&](const std::string &name) {
+		if (const char *shots = getenv("VR_REAR_SHOTS")) {
+			const std::string path = std::string(shots) + "/" + name + ".png";
+			assert(write_png(path.c_str(), machine.frame().data(), machine.frame_w(), machine.frame_h()));
+		}
+	};
+	unsigned visited = 0;
+	for (int view = 0; view < 4; view++) {
+		for (int f = 0; f < 40; f++) frame(view && f < 6, false);
+		const int camera = machine.read8(0x501d02);
+		assert(camera >= 0 && camera < 4);
+		visited |= 1u << camera;
+		capture("forward-" + std::to_string(camera));
+		for (int f = 0; f < 40; f++) {
+			frame(false, true);
+			if (f == 0 && view == 0) capture("rear-press");
+		}
+		assert(machine.rear_view() && !machine.free_cam());
+		assert(machine.read8(0x501d02) == camera);
+		assert(machine.m_analog_inputs[1] == 0xff);
+		capture(std::string(arcade ? "rear-arcade-" : smooth ? "rear-smooth-" : "rear-") + std::to_string(camera));
+		for (int f = 0; f < 20; f++) {
+			frame(false, false);
+			if (f == 0 && view == 0) capture("rear-release");
+		}
+		assert(!machine.rear_view() && machine.read8(0x501d02) == camera);
+	}
+	assert(visited == 15);
+	if (native) assert(rec::fallback_count() == 0);
+	printf("VR rear camera (%s, smooth %s, %s distance): all four selected views held and restored\n",
+		native ? "native" : "interpreter", smooth ? "on" : "off", arcade ? "arcade" : "full");
+}
+
+static void rom_rear_physics(const char *dir)
+{
+	const game::id vr{"vr"};
+	model1 forward(load_regions(dir, vr)), rear(load_regions(dir, vr));
+	game::vr::set_extended_draw_distance(forward, false);
+	game::vr::set_extended_draw_distance(rear, false);
+	forward.set_drawing(false);
+	rear.set_drawing(false);
+	forward.reset();
+	rear.reset();
+	auto play = game::make_auto_play(vr, "", 12345, false);
+	assert(play);
+	int active = 0;
+	for (int f = 1; f <= 4800; f++) {
+		const auto inputs = play->frame(f);
+		for (size_t c = 0; c < inputs.analog.size(); c++) {
+			if (inputs.analog[c] >= 0) {
+				assert(forward.set_analog_input(c, uint8_t(inputs.analog[c])));
+				assert(rear.set_analog_input(c, uint8_t(inputs.analog[c])));
+			}
+		}
+		for (size_t c = 0; c < inputs.pressed.size(); c++)
+			forward.m_inputs[c] = rear.m_inputs[c] = uint8_t(~inputs.pressed[c]);
+		const bool reversing = (rear.work_ram()[0x1138] == 0x12 || rear.work_ram()[0x1138] == 0x14) && f % 120 < 60;
+		rear.set_rear_view(reversing);
+		active += reversing;
+		forward.run_frame();
+		rear.run_frame();
+		assert(forward.work_ram()[0x1138] == rear.work_ram()[0x1138]);
+		for (uint32_t car = 0x400d00; car <= 0x401e80; car += 0x280)
+			for (uint32_t field : { 0x1eu, 0x22u, 0x26u, 0x30u, 0x3cu, 0x44u, 0x191u, 0x1abu })
+				assert(forward.read32(car + field) == rear.read32(car + field));
+	}
+	assert(active > 100);
+	puts("VR rear camera: unchanged car simulation with arcade distance while held and released");
+}
+
 static void rom_car_color(const char *dir, bool native)
 {
 	model1 machine(load_regions(dir, game::id{ "vr" }));
@@ -1213,6 +1355,8 @@ int main(int argc, char **argv)
 	machine_settings(false);
 	machine_settings(true);
 	local_join_screens();
+	rear_sky_heading();
+	rear_camera_pivot();
 	observed_race();
 	scripted_inputs();
 	scenery_lists();
@@ -1233,6 +1377,13 @@ int main(int argc, char **argv)
 		rom_car_color(argv[1], std::string(argv[2]) == "--car-color-native");
 	else if (argc > 2 && (std::string(argv[2]) == "--cameras" || std::string(argv[2]) == "--cameras-native"))
 		rom_cameras(argv[1], std::string(argv[2]) == "--cameras-native");
+	else if (argc > 2 && std::string(argv[2]) == "--rear-physics")
+		rom_rear_physics(argv[1]);
+	else if (argc > 2 && (std::string(argv[2]) == "--rear" || std::string(argv[2]) == "--rear-native" ||
+		std::string(argv[2]) == "--rear-smooth" || std::string(argv[2]) == "--rear-smooth-native" ||
+		std::string(argv[2]) == "--rear-arcade"))
+		rom_rear_camera(argv[1], std::string(argv[2]).find("native") != std::string::npos,
+			std::string(argv[2]).find("smooth") != std::string::npos, std::string(argv[2]).find("arcade") != std::string::npos);
 	else if (argc > 2 && (std::string(argv[2]) == "--monitor" || std::string(argv[2]) == "--monitor-native"))
 		rom_monitor(argv[1], std::string(argv[2]) == "--monitor-native");
 	else if (argc > 2 && (std::string(argv[2]) == "--qualifying" || std::string(argv[2]) == "--qualifying-native"))

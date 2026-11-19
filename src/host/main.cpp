@@ -465,6 +465,7 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN) || (prof.pad_stick_vertical && ly > dead)) press(C_DOWN);
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -dead) press(C_LEFT);
 			if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > dead) press(C_RIGHT);
+			prof.right_stick_input(in, p, SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTY));
 			if (back) {
 				// View held: hotkeys on Start, LB, RB and R3, not moves
 				const bool pstart = btn(SDL_GAMEPAD_BUTTON_START);

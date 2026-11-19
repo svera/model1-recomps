@@ -153,6 +153,8 @@ public:
 	void free_cam_reset();
 	void free_cam_move(float forward, float right, float up, float yaw, float pitch);
 	void set_free_cam_pose(const free_cam_pose &pose);
+	void set_rear_view(bool on) { m_rear_view = on; }
+	bool rear_view() const { return m_rear_view && !m_free_cam; }
 	// Antialiasing's Low: the 3D's edges smoothed after it's drawn (edge_aa.cpp), at the render
 	// scale, for about a tenth of the cost of drawing 4 times the pixels
 	void set_edge_aa(bool on) { if (m_edge_aa != on) { m_edge_aa = on; recheck_gpu3d(); } }
@@ -364,6 +366,10 @@ private:
 	segas24_tile m_tiles;
 	bitmap_rgb32 m_bitmap;
 	bool m_free_cam = false;
+	bool m_rear_view = false;
+	std::array<float, 3> m_rear_view_origin{};
+	glm::vec3 m_rear_view_up{0, 1, 0};
+	std::optional<uint32_t> m_list_rear_target[2];
 	free_cam_pose m_free_cam_pose;
 	std::array<float, 12> m_free_cam_matrix = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
 	int m_scale = 1;
@@ -381,6 +387,7 @@ private:
 		bool has_light = false;
 		bool above_hud = false;
 		bool screen_space = false;                  // HUD viewport, independent of the world camera
+		bool rear_view_pivot = false;
 		uint32_t owner = 0;                          // (video_traits::records) 0: not known, 1: the still world, else its record
 	};
 	using projection_view = std::array<uint32_t, 8>; // viewport and screen-space projection translation
@@ -1089,8 +1096,9 @@ private:
 	int push_direct(int list_offset);
 	int draw_direct(bitmap_rgb32 &bitmap, const rectangle &cliprect, int list_offset);
 	int skip_direct(int list_offset) const;
-	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0, const game::model_bounds *bounds = nullptr);
-	void free_cam_point(point_t *point) const;
+	void    push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner = 0, const game::model_bounds *bounds = nullptr, bool rear = false);
+	void free_cam_point(point_t *point, bool rear) const;
+	void update_rear_view_origin();
 	void    draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 
 	void set_current_render_list();
