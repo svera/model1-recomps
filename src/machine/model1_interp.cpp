@@ -86,6 +86,7 @@ void model1::set_smooth(bool on)
 // it is a matrix command's (the record in the register, else the still world), and the camera.
 void model1::list_written(int buffer, uint32_t word)
 {
+	if (word == 0) m_list_rear_target[buffer].reset();
 	if (m_gameplay.matrix_objects) {
 		m_list_extra[buffer].erase(word);
 		uint32_t at = word;
@@ -94,7 +95,7 @@ void model1::list_written(int buffer, uint32_t word)
 		if (!extra.empty()) m_list_extra[buffer][at] = std::move(extra);
 		else if (at != word) m_list_extra[buffer].erase(at);
 	}
-	if ((!m_smooth && !m_gameplay.object) || !m_video->records) return;
+	if ((!m_smooth && !m_gameplay.object && !m_gameplay.rear_view_pivot) || !m_video->records) return;
 	const game::draw_records &r = *m_video->records;
 	if (m_smooth && m_gameplay.draw_camera) {
 		const auto camera = m_gameplay.draw_camera(buffer);
@@ -124,6 +125,9 @@ void model1::list_written(int buffer, uint32_t word)
 			break;
 		}
 	owners[word & 0x7fff] = owner;
+	if (owner > 1 && !m_list_rear_target[buffer] && m_gameplay.rear_view_pivot &&
+		m_gameplay.rear_view_pivot(owner))
+		m_list_rear_target[buffer] = word & 0x7fff;
 }
 
 void model1::index_objects(logic_frame &lf)
@@ -196,6 +200,7 @@ void model1::index_objects(logic_frame &lf)
 			break;
 		case 0xb: {
 			slot sl;
+			sl.rear_view_pivot = m_list_rear_target[m_picture_buffer] == uint32_t(off);
 			for (const auto &view : m_video->edge_viewports)
 				if (int16_t(viewport[0]) == view.x && 383 - (int16_t(viewport[1]) - 39) == view.y)
 					sl.screen_space = true;

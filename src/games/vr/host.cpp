@@ -280,11 +280,14 @@ public:
 
 	void before_frame() override
 	{
-		bool pressed = false;
+		bool pressed = false, rear = false;
 		for (int port : { 1, 2 }) {
 			pressed |= !(ctx->machine.m_inputs[port] & CAMERA_CYCLE_INPUT);
-			ctx->machine.m_inputs[port] |= CAMERA_CYCLE_INPUT;
+			rear |= !(ctx->machine.m_inputs[port] & CAMERA_REAR_INPUT);
+			ctx->machine.m_inputs[port] |= CAMERA_CYCLE_INPUT | CAMERA_REAR_INPUT;
 		}
+		const uint8_t phase = ctx->machine.work_ram()[0x1138];
+		ctx->machine.set_rear_view(rear && (phase == 0x12 || phase == 0x14) && ctx->link_player != 3);
 		cameras.update(ctx->machine, pressed);
 	}
 

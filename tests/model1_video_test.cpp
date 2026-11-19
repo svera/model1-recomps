@@ -182,6 +182,80 @@ struct model1_video_test
 		puts("Free-camera path: interpolation, event timing, and invalid input checked");
 	}
 
+	static void rear_camera_transform()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		model1::point_t point;
+		point.x = 2; point.y = 3; point.z = 4;
+		m.free_cam_point(&point, true);
+		assert(point.x == -2 && point.y == 3 && point.z == -4);
+		m.free_cam_point(&point, true);
+		assert(point.x == 2 && point.y == 3 && point.z == 4);
+		m.free_cam_point(&point, false);
+		assert(point.x == 2 && point.y == 3 && point.z == 4);
+
+		m.m_rear_view_origin = { 2, 3, 4 };
+		m.m_rear_view_up = glm::normalize(glm::vec3(0, 1, 1));
+		m.free_cam_point(&point, true);
+		assert(point.x == 2 && point.y == 3 && point.z == 4);
+		point.z += 2;
+		m.free_cam_point(&point, true);
+		assert(std::abs(point.x - 2) < 1e-5f && std::abs(point.y - 5) < 1e-5f && std::abs(point.z - 4) < 1e-5f);
+	}
+
+	static void rear_camera_interpolated_pivot()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		m.set_rear_view(true);
+		m.m_replaying = true;
+		m.m_logic[1].slots.resize(2);
+		auto &pivot = m.m_logic[1].slots[1];
+		pivot.rear_view_pivot = true;
+		pivot.mat[9] = 2; pivot.mat[10] = 3; pivot.mat[11] = 4;
+		m.m_blend.resize(2);
+		std::copy_n(pivot.mat, 12, m.m_blend[1].begin());
+		m.m_blend[1][11] = 8;
+		m.m_blend_ok = { 0, 1 };
+		m.m_blend_from.resize(2);
+		m.m_blend_to.resize(2);
+		m.m_blend_light.resize(2);
+		m.update_rear_view_origin();
+		assert((m.m_rear_view_origin == std::array<float, 3>{ 2, 3, 8 }));
+		assert(m.m_replay_slot == 0);
+		m.m_blend_ok[1] = 0;
+		m.update_rear_view_origin();
+		assert((m.m_rear_view_origin == std::array<float, 3>{ 2, 3, 4 }));
+		pivot.rear_view_pivot = false;
+		m.update_rear_view_origin();
+		assert((m.m_rear_view_origin == std::array<float, 3>{}));
+		assert(m.m_rear_view_up == glm::vec3(0, 1, 0));
+	}
+
+	static void rear_camera_list_pivot()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		m.write32(0x501320, 0x400d00);
+		m.write8(0x501d02, 0);
+		m.cpu().set_reg(19, 0x400d00);
+		m.cpu().set_reg(31, 0x500100);
+		m.write32(0x500100, 0xfefb46);
+		m.cpu().pc_ref() = 0xff8500;
+		m.write32(0x600040, 0xb);
+		m.write32(0x610040, 0xb);
+		assert(m.m_list_rear_target[0] == 32 && m.m_list_rear_target[1] == 32);
+		m.write32(0x500100, 0xfead29);
+		m.write32(0x600000, 0xb);
+		assert(!m.m_list_rear_target[0] && m.m_list_rear_target[1] == 32);
+		m.reset();
+		assert(!m.m_list_rear_target[0] && !m.m_list_rear_target[1]);
+	}
+
 	static void free_camera_hides_tile_layers()
 	{
 		for (game::id title : { game::id{ "vr" }, game::id{ "swa" }, game::id{ "wingwar" } }) {
@@ -4224,6 +4298,9 @@ int main(int argc, char **argv)
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();
 	model1_video_test::free_camera_path();
+	model1_video_test::rear_camera_transform();
+	model1_video_test::rear_camera_interpolated_pivot();
+	model1_video_test::rear_camera_list_pivot();
 	model1_video_test::free_camera_hides_tile_layers();
 	model1_video_test::free_camera_parts_layers();
 	model1_video_test::narrow_screen_backdrops();

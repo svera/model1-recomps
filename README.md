@@ -113,12 +113,16 @@ Non-Steam Game and set **Start In** to the extracted **VirtuaRacing** folder.
 | Brake | Down | Left trigger |
 | Shift up / down | X / Z | A / B (Cross / Circle) |
 | Change camera | C | Y / Triangle |
+| Look back while racing | Hold V | Hold right stick down |
 | Start | 1 | Start |
 | Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
 
 To see or change your actual controller bindings, open **Esc > Controls > Player 1 >
 Pad buttons**.
+External rear views swing around the car so it stays visible; the onboard view turns in place.
+Release the look-back control to return to the selected camera. The keyboard binding can
+be changed in Controls; the right stick's look-back axis is not remappable.
 
 Under **Controls > Player 1 > Analog axes > Steering curve**, **Arcade** (formerly
 Linear) keeps the original response. **Standard** (the default) replaces Exponential with a nonlinear
