@@ -40,6 +40,7 @@ set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
 add_subdirectory("${FT_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/freetype")
 
+option(M1_ALWAYS_FRAME_TIMINGS "Keep frame timing diagnostics enabled" OFF)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/version.h"
     "#define M1_VERSION \"android-dev\"\n#define M1_DATE \"\"\n#define M1_COMMIT \"\"\n")
 add_library(main SHARED ${source_list})
@@ -47,6 +48,9 @@ target_compile_features(main PRIVATE cxx_std_20)
 target_compile_options(main PRIVATE -O2)
 target_compile_definitions(main PRIVATE M1_NATIVE=1 M1_GPU3D_SDL=1 SLJIT_CONFIG_AUTO=1
     RMLUI_STATIC_LIB RMLUI_FONT_ENGINE_FREETYPE RMLUI_SDL_VERSION_MAJOR=3)
+if(M1_ALWAYS_FRAME_TIMINGS)
+    target_compile_definitions(main PRIVATE M1_ALWAYS_FRAME_TIMINGS=1)
+endif()
 target_include_directories(main PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
     "${REPO}/third_party/glm" "${REPO}/src/core/shim_include"
     "${REPO}/third_party/musashi" "${REPO}/build/musashi"

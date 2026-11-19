@@ -51,6 +51,17 @@ android {
             }
         }
     }
+    buildTypes {
+        diagnostics {
+            initWith debug
+            versionNameSuffix '-diagnostics'
+            externalNativeBuild {
+                cmake {
+                    arguments '-DM1_ALWAYS_FRAME_TIMINGS=ON'
+                }
+            }
+        }
+    }
     externalNativeBuild {
         cmake {
             path 'CMakeLists.txt'

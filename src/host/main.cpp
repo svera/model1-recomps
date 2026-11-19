@@ -4997,7 +4997,13 @@ int main(int argc, char **argv)
 	bool running = true, paused = false, show_frame = true;
 	// F9: timings in the title bar (and on stderr) every 120 frames; a frame has 17.4 ms
 	struct perf_stats { bool show = false; int frames = 0, starved = 0, held = 0, long_frame = 0, long_picture = 0, long_other = 0, ahead = 0; uint64_t emu = 0, emu_max = 0, present = 0, work = 0, shown = 0, since = SDL_GetTicksNS(); };
-	perf_stats perf{ cfg.timings || getenv("M1_PERF") != nullptr };
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	constexpr bool force_frame_timings = true;
+#else
+	constexpr bool force_frame_timings = false;
+#endif
+	perf_stats perf{ force_frame_timings || cfg.timings || getenv("M1_PERF") != nullptr };
+	if (force_frame_timings) fprintf(stderr, "frame timing diagnostics: always enabled in this build\n");
 	// No load governor: the render scale, antialiasing and frame rate are the player's.
 	uint64_t started_at = 0;              // (the first picture: the log's start)
 	double picture_budget = 1;
@@ -5932,7 +5938,7 @@ int main(int argc, char **argv)
 					if (replay_mode) SDL_SetWindowTitle(win, paused ? (std::string(host_title()) + ": manual play paused - P to play").c_str() : host_title());
 					if (paused) save_recording("paused");
 				}
-				else if (e.key.scancode == SDL_SCANCODE_F9) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }
+				else if (e.key.scancode == SDL_SCANCODE_F9 && !force_frame_timings) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }
 				else if (e.key.scancode == SDL_SCANCODE_F3) reset_game();
 				else if (e.key.scancode == SDL_SCANCODE_F5) player_scale_to(cfg.scale % 6 + 1);
 				else if (e.key.scancode == SDL_SCANCODE_F6) set_shape((aspect_i + 1) % N_ASPECTS);
