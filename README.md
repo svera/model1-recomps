@@ -160,6 +160,8 @@ set. No IP addresses or account are needed.
    **Live Monitor** off.
 2. Wait for the demo or course-selection screen, then open the menu
    (**Esc** on a keyboard) and choose **LAN**.
+   **Your name** starts with a random name and is remembered; select it to change it
+   (up to 10 letters, numbers, spaces, dots or hyphens).
 3. One player chooses **Create room**. This player is the **host**.
 4. The other players choose **Find rooms**, then select the host's room.
 5. Once everyone is ready, the host chooses **Start linked race**.
@@ -354,6 +356,7 @@ Play on two computers on the same local network, with the same game version and 
 Both players need PC play style and one local player. At the demonstration or game
 selection screen, open **LAN** in the menu. One player creates a room; the other
 finds and joins it. The host chooses **Start linked game**, then both press Start.
+**Your name** is randomly chosen initially and remembered; select it to change it.
 
 The host's game assignments apply for the session; each player's settings are restored
 afterward. Only the host can pause; resuming uses a 3–2–1 countdown. Leaving or losing

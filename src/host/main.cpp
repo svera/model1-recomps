@@ -21,6 +21,7 @@
 #include "frame_recorder.h"
 #include "local_link.h"
 #include "model1_lan.h"
+#include "lan_name.h"
 #include "cabinet_display.h"
 #include "window_fullscreen.h"
 #include "../machine/parallel.h"
@@ -55,6 +56,7 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #include <algorithm>
 #include <atomic>
 #include <array>
+#include <deque>
 #include <optional>
 #include <tuple>
 #include <cmath>
@@ -641,6 +643,7 @@ struct settings
 	static constexpr const char *BUILD = M1_VERSION " " M1_DATE " " M1_COMMIT;
 	std::string auto_3d;    // Auto's findings, per render scale and antialiasing ("3x1:g,2x0:c")
 	std::string roms_folder;   // where the player keeps the game's zip (vf.zip, vr.zip) (roms_folder = ...; read before the game starts, kept as written)
+	std::string lan_name;
 	bool fullscreen = false, timings = false, arcade = false, smooth_bg = false, show_fps = false;
 	player_controls ctl[2];
 
@@ -687,6 +690,10 @@ struct settings
 			auto_3d.clear();
 		}
 		if (auto it = kv.find("roms_folder"); it != kv.end()) roms_folder = it->second;
+		if (auto it = kv.find("lan_name"); it != kv.end()) {
+			if (valid_lan_name(it->second)) lan_name = it->second;
+			else fprintf(stderr, "settings: invalid LAN name; a new name will be generated\n");
+		}
 		for (int p = 0; p < 2; p++) ctl[p].load(kv, p, controls);
 		if (game) game->load_settings(kv);
 		// settings from before the Menu button: Arcade mode's View tapped was a coin. It stays one
@@ -725,6 +732,7 @@ struct settings
 		fprintf(f, "crt_colours = %d\nbrightness = %d\ngamma = %d\n", crt_colours, brightness, gamma);
 		if (!auto_3d.empty()) fprintf(f, "auto_3d = %s\nauto_3d_build = %s\n", auto_3d.c_str(), BUILD);
 		if (!roms_folder.empty()) fprintf(f, "roms_folder = %s\n", roms_folder.c_str());
+		if (!lan_name.empty()) fprintf(f, "lan_name = %s\n", lan_name.c_str());
 		for (int p = 0; p < 2; p++) ctl[p].save(f, p, game.controls());
 		const bool flushed = flush_to_disk(f);
 		if (fclose(f) == 0 && flushed && replace_file(path, tmp)) return true;
@@ -2434,7 +2442,27 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	const int configured_lan_capacity = the_game().local_lan_config().max_devices;
 	const int lan_capacity = configured_lan_capacity ? configured_lan_capacity : LAN_DEVICES;
 	const bool lan_two_players = lan_capacity == 2;
-	const std::string lan_name = std::string(lan_two_players ? "PILOT-" : "RACER-") + std::to_string(SDL_GetTicksNS() % 10000);
+	auto &lan_name = cabinets[0]->config.lan_name;
+	lan_name_editor name_editor;
+	bool editing_lan_name = false, invalid_lan_input = false;
+	std::string lan_name_error;
+	auto persist_lan_name = [&](const std::string &name) {
+		auto &c = *cabinets[0];
+		const std::string old = c.config.lan_name;
+		c.config.lan_name = name;
+		c.config.ctl[0] = bindings[0];
+		if (c.config.save(data_dir + "/settings.ini", *c.game)) return true;
+		c.config.lan_name = old;
+		lan_name_error = "Could not save your LAN name. Check the settings folder.";
+		return false;
+	};
+	auto ensure_lan_name = [&] {
+		if (!lan_name.empty()) return true;
+		const std::string generated = std::string(lan_two_players ? "PILOT-" : "RACER-") + std::to_string(SDL_rand(10000));
+		if (persist_lan_name(generated)) return true;
+		lan.fail(lan_name_error);
+		return false;
+	};
 	auto lan_eligible = [&] {
 		if (!pc_mode || cabinet_count != 1 || cabinets[2] || join_pending) {
 			join_overlay.toast(local_info->live_monitor ?
@@ -2477,10 +2505,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			page.items.push_back({"Cancel", "", {}, {}, [&] { lan_leave_requested = true; }});
 		} else {
 			page.items.push_back({"Create room", "Other computers on this network can find your room automatically.", {}, {}, [&] {
-				if (lan_eligible() && lan.open(lan_name)) { lan.clear_error(); lan.host(); }
+				if (lan_eligible() && ensure_lan_name() && lan.open(lan_name)) { lan.clear_error(); lan.host(); }
 			}});
 			page.items.push_back({"Find rooms", "Search this local network. No IP address is needed.", {}, {}, [&] {
-				if (lan_eligible() && lan.open(lan_name)) { lan.clear_error(); lan.search(); }
+				if (lan_eligible() && ensure_lan_name() && lan.open(lan_name)) { lan.clear_error(); lan.search(); }
 			}});
 			if (lan.role() == LAN_SEARCHING) {
 				auto rooms = lan.rooms();
@@ -2493,6 +2521,48 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 				page.items.push_back({"Stop searching", "", {}, {}, [&] { lan.close(); }});
 			}
+			menu_item name{"Your name", "Up to 10 letters, numbers, spaces, dots or hyphens. Changing it stops a room search.",
+				[&] { return editing_lan_name ? name_editor.text + "|" : lan_name; }, {}, [&] {
+					name_editor = {lan_name, true};
+					lan_name_error.clear();
+					invalid_lan_input = false;
+					editing_lan_name = true;
+					if (!join_overlay.capture_text("Typing replaces the name. Enter saves, Esc cancels. A-Z, 0-9, space, . and - (10 characters).",
+						[&](const SDL_Event &event) {
+							bool done = false;
+							if (event.type == SDL_EVENT_TEXT_INPUT) {
+								invalid_lan_input = !name_editor.append(event.text.text);
+								if (invalid_lan_input)
+									lan_name_error = "Use up to 10 letters, numbers, spaces, dots or hyphens.";
+								else lan_name_error.clear();
+							} else if (event.type == SDL_EVENT_KEY_DOWN) {
+								if (event.key.scancode == SDL_SCANCODE_BACKSPACE) { name_editor.backspace(); invalid_lan_input = false; lan_name_error.clear(); }
+								else if (!event.key.repeat && (event.key.scancode == SDL_SCANCODE_RETURN || event.key.scancode == SDL_SCANCODE_KP_ENTER)) done = true;
+							} else if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+								if (event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) { editing_lan_name = false; lan_name_error.clear(); return true; }
+								if (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH) done = true;
+							}
+							if (done && !invalid_lan_input) {
+								if (!valid_lan_name(name_editor.text)) lan_name_error = "Enter a name without leading or trailing spaces.";
+								else {
+									const bool changed = name_editor.text != lan_name;
+									if (!persist_lan_name(name_editor.text)) { join_overlay.refresh(); return false; }
+									if (changed && lan.role() == LAN_SEARCHING) lan.close();
+									lan.clear_error();
+									editing_lan_name = false;
+									lan_name_error.clear();
+									return true;
+								}
+							}
+							join_overlay.refresh();
+							return false;
+						}, [&] { editing_lan_name = false; lan_name_error.clear(); })) {
+						editing_lan_name = false;
+						lan_name_error = "Cannot open text input. Check your keyboard settings.";
+					}
+				}};
+			name.below = [&] { return lan_name_error; };
+			page.items.push_back(std::move(name));
 		}
 		page.items.push_back(back_item());
 		return page;
@@ -2950,6 +3020,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		// The desktop smoke tests use the same event timeline as the single-cabinet host.
 		const char *events_ms = getenv("M1_EVENTS_MS");
 		const uint64_t event_ms = SDL_GetTicks() - events_started;
+		std::deque<std::string> injected_text;
 		if (const char *events = events_ms ? events_ms : getenv("M1_EVENTS_AT"))
 			for (const char *at = events; *at;) {
 				int pass = -1;
@@ -3088,6 +3159,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 							fprintf(stderr, "two cabinets: resize: %s\n", SDL_GetError());
 							return 1;
 						}
+					} else if (!strncmp(name, "text-", 5)) {
+						injected_text.emplace_back(name + 5);
+						event.type = SDL_EVENT_TEXT_INPUT;
+						event.text.windowID = SDL_GetWindowID(cabinets[0]->display->window);
+						event.text.text = injected_text.back().c_str();
 					} else {
 						const bool released = !strncmp(name, "up-", 3);
 						event.type = released ? SDL_EVENT_KEY_UP : SDL_EVENT_KEY_DOWN;
@@ -3339,6 +3415,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (lan_open_requested) {
 			lan_open_requested = false;
+			ensure_lan_name();
 			join_overlay.open(main_page());
 			join_overlay.push(lan_page());
 		}

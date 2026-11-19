@@ -1,9 +1,22 @@
 #include "../src/host/lan_session.h"
+#include "../src/host/lan_name.h"
 #include <cassert>
 #include <cstdio>
 
 int main()
 {
+	lan_name_editor edit{"RACER-123", true};
+	assert(edit.append("svera") && edit.text == "SVERA");
+	assert(edit.append(" 2") && edit.text == "SVERA 2" && valid_lan_name(edit.text));
+	assert(!edit.append("@") && edit.text == "SVERA 2");
+	assert(!edit.append("1234") && edit.text == "SVERA 2");
+	edit.backspace();
+	assert(edit.text == "SVERA ");
+	assert(!valid_lan_name(edit.text) && !valid_lan_name("") && !valid_lan_name(" RACER"));
+	edit = {"RACER-123", true};
+	edit.backspace();
+	assert(edit.text.empty() && edit.append("PILOT-9999") && valid_lan_name(edit.text));
+	assert(!edit.append("X"));
 	const lan_config config{{'T', 'M', '1', 'L'}, 1, 29874, 0, 0, 0, LAN_LINK, 0, 2};
 	lan_session host(config), guest(config), third(config);
 	assert(host.open("HOST") && guest.open("GUEST") && third.open("THIRD"));
@@ -16,9 +29,11 @@ int main()
 	};
 	for (int i = 0; i < 180 && guest.rooms().empty(); i++) update();
 	assert(!guest.rooms().empty());
+	assert(std::string(guest.rooms().front().name) == "HOST");
 	assert(guest.join(guest.rooms().front()));
 	for (int i = 0; i < 180 && !guest.in_room(); i++) update();
 	assert(guest.in_room() && host.members().size() == 2);
+	assert(std::string(host.members()[1].name) == "GUEST");
 	assert(third.search());
 	for (int i = 0; i < 180 && third.rooms().empty(); i++) update();
 	assert(!third.rooms().empty() && third.join(third.rooms().front()));

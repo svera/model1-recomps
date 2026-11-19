@@ -2,6 +2,7 @@
 #include <RmlUi/Core.h>
 #include "RmlUi_Platform_SDL.h"
 #include "RmlUi_Renderer_SDL.h"
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -63,6 +64,7 @@ game_menu::game_menu() : m(std::make_unique<impl>()) {}
 
 game_menu::~game_menu()
 {
+	stop_text_capture();
 	if (m->ctx) {
 		Rml::RemoveContext(m->ctx->GetName());
 		Rml::Shutdown();
@@ -159,6 +161,7 @@ void game_menu::open(menu_page root)
 void game_menu::close()
 {
 	if (!ready()) return;
+	stop_text_capture();
 	m_capture = nullptr;
 	if (auto c = std::exchange(m_capture_cancel, nullptr)) c();
 	m->doc->Hide();
@@ -178,6 +181,7 @@ void game_menu::push(menu_page p)
 
 void game_menu::pop()
 {
+	stop_text_capture();
 	m_capture = nullptr;
 	if (auto c = std::exchange(m_capture_cancel, nullptr)) c();
 	if (m_stack.size() <= 1) { close(); return; }
@@ -248,6 +252,24 @@ void game_menu::capture(std::string prompt, std::function<bool(const SDL_Event &
 	m_capture = std::move(on_event);
 	m_capture_cancel = std::move(on_cancel);
 	show_help();
+}
+
+bool game_menu::capture_text(std::string prompt, std::function<bool(const SDL_Event &)> on_event, std::function<void()> on_cancel)
+{
+	if (!SDL_StartTextInput(m->win)) {
+		fprintf(stderr, "menu: cannot start text input: %s\n", SDL_GetError());
+		return false;
+	}
+	m_text_capture = true;
+	capture(std::move(prompt), std::move(on_event), std::move(on_cancel));
+	return true;
+}
+
+void game_menu::stop_text_capture()
+{
+	if (m_text_capture && !SDL_StopTextInput(m->win))
+		fprintf(stderr, "menu: cannot stop text input: %s\n", SDL_GetError());
+	m_text_capture = false;
 }
 
 void game_menu::show_help()
@@ -351,12 +373,13 @@ bool game_menu::handle_event(const SDL_Event &e)
 	if (m_capture) {
 		switch (e.type) {
 		case SDL_EVENT_KEY_DOWN:
-			if (e.key.repeat) return true;
-			if (e.key.scancode == SDL_SCANCODE_ESCAPE) { m_capture = nullptr; if (auto c = std::exchange(m_capture_cancel, nullptr)) c(); build(); return true; }
+			if (e.key.repeat && !m_text_capture) return true;
+			if (e.key.scancode == SDL_SCANCODE_ESCAPE) { stop_text_capture(); m_capture = nullptr; if (auto c = std::exchange(m_capture_cancel, nullptr)) c(); build(); return true; }
 			[[fallthrough]];
+		case SDL_EVENT_TEXT_INPUT:
 		case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
 			auto f = m_capture;
-			if (f(e)) { m_capture = nullptr; m_capture_cancel = nullptr; build(); }
+			if (f(e)) { stop_text_capture(); m_capture = nullptr; m_capture_cancel = nullptr; build(); }
 			return true;
 		}
 		case SDL_EVENT_KEY_UP: case SDL_EVENT_GAMEPAD_BUTTON_UP:
