@@ -753,7 +753,12 @@ The host accounts for that cell as submitted and fills in the rest. Later cells 
 budget checks; Arcade distance, collision masks, and the stored budget are unchanged.
 
 While VR's look-back control is held, the renderer rotates the world 180 degrees, preserving
-the HUD, and uses the Full-distance scenery supplements even if Arcade distance is selected.
+the HUD. Arcade look-back supplements only the camera's original 5x5 cell neighborhood,
+without its forward-facing visibility restriction. The camera cell is captured from R21 at
+`FF7DC5`, before later routines reuse that register. Static scenery, extra cars and breakable
+boards are restricted to that neighborhood; animated props' render-only mask reads add only
+its bits. The rear-view renderer clips geometry outside its view, and collision checks still
+use the original stored masks. Full distance continues to supplement the entire course.
 External views orbit the player's car origin and upright axis from the world-space matrix
 submitted by `FEFB46`, keeping the car's distance and on-screen position rather than turning
 away from it. The pivot is recorded with each display list and follows the car's interpolated

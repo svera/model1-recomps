@@ -66,7 +66,25 @@ void prepare_scenery(model1 &machine, gameplay_state &state)
 		}
 		state.scenery_selected[cell] = true;
 	}
+	const uint32_t center = machine.cpu().reg(21);
+	if (center >= 256) {
+		fprintf(stderr, "VR draw distance: invalid camera cell %u\n", center);
+		std::abort();
+	}
+	state.nearby_scenery.fill(0);
+	for (int dy = -2; dy <= 2; dy++)
+		for (int dx = -2; dx <= 2; dx++) {
+			const int x = int(center & 15) + dx, y = int(center >> 4) + dy;
+			if (x < 0 || x >= 16 || y < 0 || y >= 16) continue;
+			const int cell = y * 16 + x;
+			state.nearby_scenery[cell / 32] |= 1u << (cell % 32);
+		}
 	state.scenery_pending = true;
+}
+
+bool supplement_cell(const gameplay_state &state, int cell)
+{
+	return state.extended_draw_distance || (state.nearby_scenery[cell / 32] & (1u << (cell % 32)));
 }
 
 std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &state)
@@ -129,7 +147,7 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 	}
 	std::sort(cells.begin(), cells.end());
 	for (const auto &[distance, cell] : cells) {
-		if (submitted[cell]) continue;
+		if (submitted[cell] || !supplement_cell(state, cell)) continue;
 		visit_cell(cell, [&](uint32_t record, uint32_t polygon) {
 			objects.push_back({ bus.read32(record + 4), polygon, 0 });
 		});
@@ -144,6 +162,7 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 				fprintf(stderr, "VR draw distance: invalid car cell %u for record %06x\n", cell, car);
 				std::abort();
 			}
+			if (!supplement_cell(state, cell)) continue;
 			if (machine.read32(0x501ac0 + cell / 32 * 4) & (1u << (cell % 32))) continue;
 			const uint32_t list = machine.read32(car + 0xa8);
 			const uint32_t polygon = read_rom(list, 12);
@@ -173,6 +192,7 @@ std::vector<render_object> scenery_objects(model1 &machine, gameplay_state &stat
 			fprintf(stderr, "VR draw distance: invalid breakable board cell %u\n", cell);
 			std::abort();
 		}
+		if (!supplement_cell(state, cell)) continue;
 		if (machine.read32(0x501ac0 + cell / 32 * 4) & (1u << (cell % 32))) continue;
 		auto number = [&](uint32_t offset) { return std::bit_cast<float>(machine.read32(record + offset)); };
 		const auto transform = record_pose(machine, record, {
@@ -194,6 +214,7 @@ gameplay_callbacks create_gameplay(model1 &machine)
 	callbacks.reset = [&machine, state] {
 		machine.set_rear_view(false);
 		state->scenery_pending = false;
+		state->nearby_scenery.fill(0);
 		state->attract_rank_pending = true;
 		state->observed_racers = 0;
 	};
@@ -324,10 +345,12 @@ gameplay_callbacks create_gameplay(model1 &machine)
 		// Render-only scenery and flags use the narrow mask; collidable props use the wider one.
 		if ((state->extended_draw_distance || machine.rear_view()) && address >= 0x501aa0 && address <= 0x501abc &&
 			(pc == 0xffd77a || pc == 0xffd928 || pc == 0xffdaba || pc == 0xffc1b2 ||
-			 pc == 0xffbf7b)) return 0xffffffffu;
+			 pc == 0xffbf7b))
+			return value | (state->extended_draw_distance ? 0xffffffffu : state->nearby_scenery[(address - 0x501aa0) / 4]);
 		if ((state->extended_draw_distance || machine.rear_view()) && address >= 0x501ac0 && address <= 0x501adc &&
 			(pc == 0xffb0eb || pc == 0xffb769 || pc == 0xffaac4 || pc == 0xffb679 ||
-			 pc == 0xffdc4d || pc == 0xffd0e2)) return 0xffffffffu;
+			 pc == 0xffdc4d || pc == 0xffd0e2))
+			return value | (state->extended_draw_distance ? 0xffffffffu : state->nearby_scenery[(address - 0x501ac0) / 4]);
 		// FE48DC selects the panorama's full-turn column from the camera heading.
 		if (machine.rear_view() && pc == 0xfe48dc && address == 0x501a2c)
 			return value ^ 0x8000;
