@@ -12,6 +12,7 @@ struct gameplay_state : game::gameplay_state
 	bool attract_rank_pending = false;
 	bool standalone_car_color = false;
 	std::array<bool, 256> scenery_selected{};
+	std::array<uint32_t, 8> nearby_scenery{};   // camera's 5x5 cells, without directional culling
 	struct observed_car {
 		uint32_t flags = 0;
 		std::array<uint8_t, 0x1c6 - 0x14> race{};

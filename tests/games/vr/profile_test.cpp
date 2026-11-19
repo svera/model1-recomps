@@ -407,6 +407,20 @@ int main(int argc, char **argv)
 	assert(controls.pad[C_UP] == SDL_GAMEPAD_BUTTON_SOUTH);
 	assert(controls.pad[C_DOWN] == SDL_GAMEPAD_BUTTON_EAST);
 	assert(!game::vr::CONTROLS.pad_stick_vertical);
+	uint8_t input[3]{};
+	for (int axis : { -32768, 0, 16000 }) {
+		game::vr::CONTROLS.right_stick_input(input, 0, axis);
+		assert(input[1] == 0);
+	}
+	game::vr::CONTROLS.right_stick_input(input, 0, 16001);
+	assert(input[1] == game::vr::CAMERA_REAR_INPUT);
+	input[1] = 0;
+	game::vr::CONTROLS.right_stick_input(input, 1, 32767);
+	assert(input[1] == 0 && input[2] == game::vr::CAMERA_REAR_INPUT);
+	assert(controls.key[game::vr::C_REAR] == SDL_SCANCODE_V);
+	std::fill(std::begin(input), std::end(input), 0);
+	game::vr::CONTROLS.press(input, 0, game::vr::C_REAR);
+	assert(input[0] == 0 && input[1] == game::vr::CAMERA_REAR_INPUT && input[2] == 0);
 	assert(controls.pad[C_COIN] == SDL_GAMEPAD_BUTTON_DPAD_UP);
 	assert(controls.key[game::vr::C_ACCELERATOR] != controls.key[C_RIGHT]);
 	assert(controls.pad[game::vr::C_CAMERA] == SDL_GAMEPAD_BUTTON_NORTH);
@@ -423,9 +437,11 @@ int main(int argc, char **argv)
 	assert(game::vr::CONTROLS.hold_start);
 	assert(!control_profile{}.hold_start);
 	auto remapped = controls;
-	remapped.load({ { "p1_key_camera", "V" }, { "p1_pad_camera", "a" } }, 0, game::vr::CONTROLS);
+	remapped.load({ { "p1_key_camera", "V" }, { "p1_pad_camera", "a" },
+		{ "p1_key_look_back", "B" } }, 0, game::vr::CONTROLS);
 	assert(remapped.key[game::vr::C_CAMERA] == SDL_SCANCODE_V);
 	assert(remapped.pad[game::vr::C_CAMERA] == SDL_GAMEPAD_BUTTON_SOUTH);
+	assert(remapped.key[game::vr::C_REAR] == SDL_SCANCODE_B);
 	FILE *saved = tmpfile();
 	assert(saved);
 	remapped.save(saved, 0, game::vr::CONTROLS);
@@ -435,6 +451,7 @@ int main(int argc, char **argv)
 	fclose(saved);
 	assert(text.find("p1_key_camera = V\n") != std::string::npos);
 	assert(text.find("p1_pad_camera = a\n") != std::string::npos);
+	assert(text.find("p1_key_look_back = B\n") != std::string::npos);
 	// every pad action the page shows is one the game has
 	for (int a : game::vr::CONTROLS.pad_actions) assert(game::vr::CONTROLS.visible(a));
 }

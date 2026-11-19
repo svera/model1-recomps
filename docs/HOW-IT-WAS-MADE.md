@@ -640,6 +640,24 @@ load/save and simulated sleep. An SDL-GPU host built on macOS also checked curre
 the fallback notice and the first menu press retaining Auto while scheduling a retry. Windows power
 management and actual Vulkan/Direct3D 12 driver switching still need Windows runtime validation.
 
+### Windows borderless fullscreen
+
+The [upstream VF1 workaround](https://github.com/mr-finster/vf1-recomp/commit/0e2c5dd918636ebc34efd038672ed58ee8279095)
+is shared by all three games through `src/host/window_fullscreen.h`. On Windows, fullscreen uses a
+borderless window one pixel taller than the display, avoiding the driver fullscreen presentation path
+that froze with AMD Vulkan. Returning to windowed mode restores the previous size, position and
+maximized state. Startup, menu controls and fullscreen shortcuts use the same state, rather than relying
+on `SDL_WINDOW_FULLSCREEN`, which is not set for the borderless window. macOS, Linux and Steam Deck
+keep their native fullscreen behavior.
+
+The extra row can put the picture's edges between pixels. Screen-filter bounds are rounded to whole
+window pixels so the CRT grille does not duplicate a column and produce a vertical seam.
+
+`make test-host-fullscreen` checks mocked Windows window operations, including the extra row,
+repeated toggles, maximized-window restoration and failure recovery, without comparing rendered pixels.
+All three native hosts build, and macOS runtime checks cover windowed/fullscreen startup and toggling.
+The AMD fullscreen fix and its appearance still need validation on Windows hardware.
+
 ## Free camera, paths and recording
 
 The free-camera and recording features from upstream commits `e82fe453` and `441f03e` are adapted
@@ -734,6 +752,21 @@ needed for the host-only track, so Full admits the first cell at `FF84A2` while 
 The host accounts for that cell as submitted and fills in the rest. Later cells retain their normal
 budget checks; Arcade distance, collision masks, and the stored budget are unchanged.
 
+While VR's look-back control is held, the renderer rotates the world 180 degrees, preserving
+the HUD. Arcade look-back supplements only the camera's original 5x5 cell neighborhood,
+without its forward-facing visibility restriction. The camera cell is captured from R21 at
+`FF7DC5`, before later routines reuse that register. Static scenery, extra cars and breakable
+boards are restricted to that neighborhood; animated props' render-only mask reads add only
+its bits. The rear-view renderer clips geometry outside its view, and collision checks still
+use the original stored masks. Full distance continues to supplement the entire course.
+External views orbit the player's car origin and upright axis from the world-space matrix
+submitted by `FEFB46`, keeping the car's distance and on-screen position rather than turning
+away from it. The pivot is recorded with each display list and follows the car's interpolated
+matrix in smooth frames. The onboard view turns in place. The panorama column selection is
+shifted by half a turn without changing
+the camera heading in RAM. Releasing the control restores the selected camera and draw-distance
+behavior; free camera remains a separate mode.
+
 The shared renderer draws these objects with that matrix and its material/light state. Interpolated
 frames snapshot the extra objects with their matrix slot, so they use the same camera interpolation
 as the world. Additional geometry has its own depth-sort accumulator, leaving the original objects'
@@ -769,21 +802,73 @@ the system and player input bytes; the host presses them through a single Change
 callbacks and ADC, then the board firmware transfers them to dual-port RAM for the V60.
 
 The shared MAME-derived V60, TGP, video, and sound implementations handle the game, and its profile
-enables the existing frame interpolation at 30 Hz. Wing War currently runs on the V60 interpreter:
-there is no address map for startup-native recompilation, and the release launcher builds the
-interpreter executable. The cold-boot regression inserts a coin and presses Start, verifies Start
+enables the existing frame interpolation at 30 Hz. The initial bring-up used the V60 interpreter;
+desktop and release builds now use the native backend by default (see "Wing War as a native build").
+The cold-boot regression inserts a coin and presses Start, verifies Start
 reaches the board's dual-port RAM, and first observes 3D geometry on frame 493; geometry is submitted
 in 206 of the 700 simulated frames, with about 4.8 million TGP cycles executed. It also checks the
 Advanced board firmware's shared-RAM signature and that the TGP program is active. This proves that
 the ROM-backed machine boots into active 3D output, not that every mission, sound effect, EEPROM
-setting, or real-hardware I/O behavior has been validated. The Advanced board's diagnostic LCD,
-R360 drive connector, and Wing War's linked-cabinet M1COMM are not implemented.
+setting, or real-hardware I/O behavior has been validated. The Advanced board's diagnostic LCD and
+R360 drive connector are not implemented. Desktop linked-cabinet support is experimental, as
+described below.
 
 Validation with the local World archive and `model1io2.zip`: `make test-wingwar-profile`,
 `make test-wingwar-romset`, and `make test-wingwar-boot`. The ROM-set check verifies the Advanced
 BIOS in addition to the game ROMs, and compares its extracted image with the C++ loader. The boot
 test checks the board clock advances, digital inputs transfer through DPRAM, and the game reaches
 active 3D output after coin and Start.
+
+### Wing War's linked-cabinet investigation
+
+The World ROM's settings record contains a communication enable byte at offset `0x24` and a
+board mode byte at `0x25`. On boot these appear at `0x40f824` and `0x40f825`. In the tested
+two-cabinet setup, enable is `1`, and the first and second cabinets use modes `1` and `2`.
+The test edits both the checksum-protected record and its backup in each I/O board EEPROM; this
+is now handled by the checksum-aware settings helper for the local host.
+
+The ROM's setup routine at `0xb2e` checks communication-board RAM, clears it, writes the mode to
+`0xb00001`, toggles CN at `0xb01000`, and waits for board status. Once connected it reads the
+cabinet ID and count from `0xb00002` and `0xb00003`, retaining the zero-based ID and count at
+`0x40ef00` and `0x40ef01`. The loop at `0xac7` publishes a `0x1c4`-byte local record from
+`0x40e388` at `0xb00010` and sets `0xb00004`; the loop at `0xa94` reads two records from
+`0xb001d4` into `0x40e000` and `0x40e1c4`. The existing M1COMM HLE supplies IDs and delivers
+these slots; this describes the emulated exchange, not a validation of the physical serial protocol.
+
+Wing War's `local_link` session wraps the scanline-lockstep `linked_pair`; it requires two distinct
+machines and does not offer a monitor. The Wing War host opts in to experimental desktop local
+multiplayer. `make test-wingwar-link` uses the World ROM, Advanced I/O
+firmware and interpreter. Both cabinets report two participants, and each ROM reads both
+distinct cabinet records. With free play, a Start press on cabinet 1 moves its phase at `0x40f006`
+from `2` to `0x0c`; cabinet 2 receives that phase in the first record and enters phase `9`.
+When cabinet 2 presses Start 200 frames later, both advance to phase `0x0c`, subphase `0x0f`
+in the tested run. During the subsequent gameplay phase the test applies different flight inputs,
+checks that both boards exchange once per frame, and verifies changing peer position words pass
+through both board snapshots, each ROM's received records, and its scene data. It requires the
+received value to match a board snapshot from the last 12 video frames. The scripted run then
+observes both machines reach subphase `0x18` and return to demonstration phase `2`. After another
+linked start it resets both machines during subphase `0x0f`, starts again, disconnects the transport
+during play, restores standalone roles and verifies both machines boot and accept Start.
+
+The same test runs two native cabinets against two interpreter cabinets with the shipped map.
+It compares CPU registers, work RAM, NVRAM, EEPROM, I/O and TGP cycle counts, and link-board
+snapshots at every frame, and requires zero native function fallbacks throughout each boot and
+play segment. The linked paths revealed missing native entries, now retained in
+`src/games/wingwar/native_entries.txt` and the shipped map. These phase values are observations,
+not a complete description of gameplay or a verified match result. The test does not establish
+that players can see or damage each other, cover other match outcomes, or validate the visual
+layout.
+
+The host sets standalone or linked roles before boot using the checksum-protected settings record,
+waits for the ROM's busy-to-ready transition, and permits a queued join in phase `2` (the
+demonstration) or phase `0x0c`/subphase `3` (game selection). Joining reboots both cabinets into
+linked selection and uses Player 1's game assignments; a request during gameplay waits for the
+demonstration. Reset
+and Player 2 controller removal restore standalone operation. `make test-wingwar-local-host-desktop`
+checks joining, queued-join cancellation, reset, controller removal, and a solo launch after linked
+settings have been saved, using nonvisual desktop events. It also checks both cabinets are in
+subphase `0x0f` before testing F3 reset and controller removal during linked play. The linked-play
+validation above remains limited; the test does not verify the visual layout or a match result.
 
 ### Wing War's initial scripted code coverage
 
@@ -1989,6 +2074,23 @@ speeds cannot move guest checks outside the host's pause windows.
 processes, including guest departures down to two and last-racer teardown.
 
 ## VR's local multiplayer entry and disconnect handling
+
+The local-cabinet host is shared infrastructure, but games must explicitly opt in through
+`game_host::local_multiplayer()` after implementing their linked roles, boot readiness and safe
+join handling. The host obtains the title, recompiler map, backgrounds, default frame rate,
+diagnostics and multiplayer menu descriptions from the registered game and its host.
+Live Monitor and LAN are separate game capabilities; VR supplies its LAN configuration and
+diagnostic fields. Wing War has not opted in: its communication settings and linked play still
+need implementation and ROM-backed validation. `make test-vr-local-host` and
+`make test-vr-local-host-desktop` cover the capability contract and the nonvisual VR solo,
+join and reset path, including rejection of Wing War's split-screen option. A test host layered
+over VR also checks game-specific menu callbacks, per-player options and sound settings, and
+per-cabinet sidecar persistence. The local host obtains its link session from the game's host;
+VR supplies an M1COMM session, while another game can provide a different transport. The Model 1
+LAN adapter accepts a game-specific peer-retirement policy: VR preserves the departing car's pose
+and clears its participation data. Without a retirement policy, a peer loss ends the session rather
+than inventing game state. LAN still uses the Model 1 packet and board protocol and requires separate
+validation before another game can opt in.
 
 Local play is an on-demand mode in the normal VR PC launch, and it boots only one cabinet.
 The first controller to press Start claims Player 1 and starts solo play, regardless of

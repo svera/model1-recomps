@@ -1330,8 +1330,16 @@ void model1::close_steps()
 	edges.clear();
 }
 
-void model1::free_cam_point(point_t *p) const
+void model1::free_cam_point(point_t *p, bool rear) const
 {
+	if (rear) {
+		const glm::vec3 origin(m_rear_view_origin[0], m_rear_view_origin[1], m_rear_view_origin[2]);
+		const glm::vec3 relative = glm::vec3(p->x, p->y, p->z) - origin;
+		const glm::vec3 turned = origin + 2.0f * glm::dot(relative, m_rear_view_up) * m_rear_view_up - relative;
+		p->x = turned.x;
+		p->y = turned.y;
+		p->z = turned.z;
+	}
 	if (!m_free_cam) return;
 	const auto &m = m_free_cam_matrix;
 	const float x = p->x, y = p->y, z = p->z;
@@ -1346,7 +1354,7 @@ void model1::free_cam_point(point_t *p) const
 // the preceding object so the z~40k wall occludes them (real-hardware
 // capture); resetting per object made them sort at z=0 (nearest) and paint
 // through the wall.
-void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner, const game::model_bounds *bounds)
+void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner, const game::model_bounds *bounds, bool rear)
 {
 	const uint32_t object_texture = tex_adr, object_polygon = poly_adr, object_size = size;
 	auto invalid = [&](const char *reason, uint32_t polygon) {
@@ -1374,6 +1382,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		poly_data = (float *)m_poly_rom;
 
 	const bool foreground = std::find(m_video->foreground_objects.begin(), m_video->foreground_objects.end(), poly_adr) != m_video->foreground_objects.end();
+	rear = rear && !foreground;
 	const size_t polygon_words = poly_adr & 0x800000 ? 0x400000 : m_regions.polygons.size() / sizeof(uint32_t);
 	poly_adr &= 0x7fffff;
 	if (poly_adr > polygon_words || polygon_words - poly_adr < 6) {
@@ -1384,7 +1393,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	game::object_effects effect;
 	if (m_gameplay.object && !m_probing) effect = m_gameplay.object(owner, tex_adr, poly_adr, size, poly_data);
 	if (effect.hidden) return;
-	const bool clipped_object = bounds && !effect.point && m_view->outside(*bounds);
+	const bool clipped_object = bounds && !rear && !effect.point && m_view->outside(*bounds);
 	std::vector<uint32_t> *colours = nullptr;
 	// Periodic copies share their rotation and lighting; translation and distance fade do not affect this colour.
 	if (bounds && !clipped_object && !effect.point && !effect.normal && !effect.polygon && !effect.material && !effect.colour && effect.lightmode < 0) {
@@ -1463,7 +1472,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			const glm::vec3 p = glm::inverse(at) * -glm::vec3(t[9] + m_view->vxx, t[10] + m_view->vyy, t[11] + m_view->vzz);
 			e.x = p.x, e.y = p.y, e.z = p.z;
 			m_view->transform_point(&e);
-			free_cam_point(&e);
+			free_cam_point(&e, rear);
 			extra_eye = glm::vec3(e.x, e.y, e.z);
 			extra_check = glm::length(extra_eye) > 0;
 		}
@@ -1521,8 +1530,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	pose_depths(old_p1);
 	m_view->transform_point(old_p0);
 	m_view->transform_point(old_p1);
-	free_cam_point(old_p0);
-	free_cam_point(old_p1);
+	free_cam_point(old_p0, rear);
+	free_cam_point(old_p1, rear);
 
 	if (old_p0->z > 0)
 	{
@@ -1612,8 +1621,8 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		pose_depths(p1);
 		m_view->transform_point(p0);
 		m_view->transform_point(p1);
-		free_cam_point(p0);
-		free_cam_point(p1);
+		free_cam_point(p0, rear);
+		free_cam_point(p1, rear);
 		if (p0->z > 0)
 		{
 			m_view->project_point(p0);
@@ -1833,7 +1842,7 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			point_t p;
 			p.x = m.x, p.y = m.y, p.z = m.z;
 			m_view->transform_point(&p);
-			free_cam_point(&p);
+			free_cam_point(&p, rear);
 			return glm::vec3(p.x, p.y, p.z);
 		};
 		const glm::vec3 origin = view_of(glm::vec3(0));
@@ -2306,6 +2315,35 @@ void model1::view_t::set_view_translation(float x, float y)
 
 
 
+void model1::update_rear_view_origin()
+{
+	m_rear_view_origin = {};
+	m_rear_view_up = {0, 1, 0};
+	if (!rear_view()) return;
+	if (m_replaying) {
+		const auto &slots = m_logic[m_replay_older ? 0 : 1].slots;
+		for (size_t i = 0; i < slots.size(); i++) {
+			const auto &part = slots[i];
+			if (!part.rear_view_pivot) continue;
+			float blended[12];
+			m_replay_slot = int(i);
+			const float *mat = smooth_matrix(0, blended) ? blended : part.mat;
+			std::copy_n(mat + 9, 3, m_rear_view_origin.begin());
+			m_rear_view_up = glm::normalize(glm::vec3(mat[3], mat[4], mat[5]));
+			m_replay_slot = 0;
+			m_shade_from = m_shade_to = m_shade_light = nullptr;
+			break;
+		}
+	} else {
+		const int buffer = m_display_list_current == m_display_list1 ? 1 : 0;
+		if (const auto offset = m_list_rear_target[buffer]) {
+			for (int i = 0; i < 3; i++)
+				m_rear_view_origin[i] = readf(*offset + 20 + i * 2);
+			m_rear_view_up = glm::normalize(glm::vec3(readf(*offset + 8), readf(*offset + 10), readf(*offset + 12)));
+		}
+	}
+}
+
 void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_pass pass)
 {
 	m_render_done = 1;
@@ -2314,6 +2352,7 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 		// smooth motion draws the kept list (model1_interp.cpp)
 		if (m_replaying) { m_display_list_current = m_logic[m_replay_older ? 0 : 1].list.data(); m_replay_slot = 0; }
 		else set_current_render_list();
+		update_rear_view_origin();
 		M1_LOG(LOG_TGP, "VIDEO: render list %d\n", get_list_number());
 
 		m_view->init_translation_matrix();
@@ -2328,6 +2367,7 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 
 		int list_offset = 0;
 		projection_view viewport{};
+		bool hud_view = false, hud_viewport = false;
 		std::optional<std::array<float, 2>> zoom;
 		auto apply_zoom = [&] {
 			if (!zoom) return;
@@ -2354,11 +2394,11 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 					if (m_replaying && smooth_matrix(readi(list_offset + 4), blended)) {
 						memcpy(current, m_view->translation, sizeof current);
 						m_view->set_translation_matrix(blended);
-						push_object(readi(list_offset + 2), readi(list_offset + 4), readi(list_offset + 6), old_z, owner);
+						push_object(readi(list_offset + 2), readi(list_offset + 4), readi(list_offset + 6), old_z, owner, nullptr, rear_view() && !hud_view && !hud_viewport);
 						m_view->set_translation_matrix(current);
 						m_shade_from = m_shade_to = m_shade_light = nullptr;
 					} else
-						push_object(readi(list_offset + 2), readi(list_offset + 4), readi(list_offset + 6), old_z, owner);
+						push_object(readi(list_offset + 2), readi(list_offset + 4), readi(list_offset + 6), old_z, owner, nullptr, rear_view() && !hud_view && !hud_viewport);
 				}
 				list_offset += 8;
 				break;
@@ -2398,6 +2438,8 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				float x2 = readi16(list_offset + 12);
 				float y1 = 383 - (readi16(list_offset + 14) - 39);
 
+				hud_viewport = std::any_of(m_video->edge_viewports.begin(), m_video->edge_viewports.end(),
+					[&](const auto &view) { return xc == view.x && yc == view.y; });
 				const float offset = hud_view_offset(xc, yc, true);
 				m_view->set_viewport(xc + offset, yc, x1 + offset, x2 + offset, y1, y2);
 				apply_zoom();
@@ -2507,7 +2549,8 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 								float blended[12];
 								m_view->set_translation_matrix(smooth_matrix(object.polygon, blended) ? blended : part.mat);
 								quad_t *first = m_quadpt;
-								push_object(object.texture, object.polygon, object.size, retained_z, part.owner);
+								push_object(object.texture, object.polygon, object.size, retained_z, part.owner, nullptr,
+									rear_view() && !part.screen_space);
 								for (quad_t *q = first; q < m_quadpt; q++) q->obj = object.polygon;
 								m_shade_from = m_shade_to = m_shade_light = nullptr;
 							}
@@ -2550,7 +2593,7 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 							quad_t *first = m_quadpt;
 							m_object_fade = object.fade;
 							push_object(object.texture, object.polygon, object.size, extra_z, object.owner ? object.owner : owner,
-								object.bounds ? &*object.bounds : nullptr);
+								object.bounds ? &*object.bounds : nullptr, rear_view() && !hud_view && !hud_viewport);
 							m_object_fade = 1;
 							for (quad_t *q = first; q < m_quadpt; q++) q->obj = object.polygon;
 							m_view->set_translation_matrix(mat);
@@ -2564,6 +2607,8 @@ void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_
 				M1_LOG(LOG_TGP, "VIDEO:   trans (%f, %f)\n", readf(list_offset + 2), readf(list_offset + 4));
 				{
 					const float x = readf(list_offset + 2), y = readf(list_offset + 4);
+					hud_view = std::any_of(m_video->edge_views.begin(), m_video->edge_views.end(),
+						[&](const auto &view) { return x == view.x && y == view.y; });
 					viewport[6] = uint32_t(readi(list_offset + 2));
 					viewport[7] = uint32_t(readi(list_offset + 4));
 					m_view->set_view_translation(x + hud_view_offset(x, y), y);
@@ -3073,9 +3118,28 @@ bool model1::bench3d(int reps, double &cpu_ms, double &gpu_ms, long long *differ
 		std::vector<uint32_t> cpu(scratch.data(), scratch.data() + size_t(W) * H);
 		ok = run_gpu() >= 0;
 		m_bench_diff = gpu_compare(cpu.data(), scratch.data(), cpu.size());
+		const long long actual_differ = m_bench_diff.all;
 		const long long k = gpu_test_diff(m_bench_diff.all, (long long)cpu.size()) - m_bench_diff.all;   // (tests: as drawn on one only)
 		m_bench_diff.all += k; m_bench_diff.cover += k;
 		*differ = m_bench_diff.all;
+		if (ok && !gpu_diff_ok(m_bench_diff, (long long)cpu.size())) {
+			fprintf(stderr, "GPU startup mismatch samples: backend=%s size=%dx%d actual_differ=%lld injected=%lld\n",
+				m_gpu3d->name(), W, H, actual_differ, k);
+			// Spread at most eight samples across the mismatching pixels, including marker bytes.
+			const long long step = std::max(1LL, (actual_differ + 7) / 8);
+			long long mismatch = 0;
+			int samples = 0;
+			for (size_t i = 0; i < cpu.size() && samples < 8; i++) {
+				const uint32_t a = cpu[i], g = scratch.data()[i];
+				if (a == g) continue;
+				if (mismatch++ % step) continue;
+				const char *kind = (a ^ g) >> 24 ? "marker" :
+					(!(a & 0xffffff) != !(g & 0xffffff)) ? "black/coverage" : "colour";
+				fprintf(stderr, "GPU startup mismatch: sample=%d x=%zu y=%zu cpu=0x%08x gpu=0x%08x xor=0x%08x kind=%s\n",
+					++samples, i % W, i / W, unsigned(a), unsigned(g), unsigned(a ^ g), kind);
+			}
+			fflush(stderr);
+		}
 	}
 	view->x1 = sx1; view->x2 = sx2; view->y1 = sy1; view->y2 = sy2;
 	s_mark_y1 = mk1; s_mark_y2 = mk2;

@@ -161,6 +161,8 @@ struct gameplay_callbacks
 	std::function<std::vector<render_object>(uint32_t &)> matrix_objects;
 	// World-to-view camera recovered from completed matrix writes, for games without camera RAM.
 	std::function<std::optional<std::array<float, 12>>(int)> draw_camera;
+	// Identify a world-space matrix write whose origin look-back should orbit (owner).
+	std::function<bool(uint32_t)> rear_view_pivot;
 	// Snapshot active records when a relevant matrix is written, before visibility advances.
 	std::function<std::vector<game::record_visibility>(uint32_t)> record_visibility;
 	std::function<void()> render_begin;

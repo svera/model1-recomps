@@ -16,17 +16,22 @@ uint16_t crc(const uint8_t *data)
 	return uint16_t(r >> 16);
 }
 
+bool valid_block(const uint8_t *s)
+{
+	return !memcmp(s, "S32AF0", 6) && crc(s + 0xa) == uint16_t(s[8] | s[9] << 8);
+}
+
 uint8_t *block(model1 &m)
 {
 	auto *s = m.nvram().data() + 0xf800;
-	if (memcmp(s, "S32AF0", 6) || crc(s + 0xa) != uint16_t(s[8] | s[9] << 8)) return nullptr;
-	return s;
+	return valid_block(s) ? s : nullptr;
 }
 
 template<class Edit>
-bool edit_record(model1 &m, Edit edit)
+bool edit_record(model1 &m, Edit edit, bool allow_eeprom = false)
 {
 	auto *s = block(m);
+	if (!s && allow_eeprom && valid_block(m.eeprom())) s = m.eeprom();
 	if (!s) return false;
 	std::array<uint8_t, 0x80> candidate;
 	memcpy(candidate.data(), s, candidate.size());
@@ -40,10 +45,10 @@ bool edit_record(model1 &m, Edit edit)
 	next[8] = uint8_t(sum);
 	next[9] = uint8_t(sum >> 8);
 	memcpy(next + 0x44, next + 8, 0x3c);
-	memcpy(s, next, candidate.size());
+	memcpy(m.nvram().data() + 0xf800, next, candidate.size());
 	if (auto *words = m.eeprom_words())
-		for (size_t i = 0; i < 0x40; i++) words[i] = uint16_t(s[i * 2] | s[i * 2 + 1] << 8);
-	else memcpy(m.eeprom(), s, 0x80);
+		for (size_t i = 0; i < 0x40; i++) words[i] = uint16_t(next[i * 2] | next[i * 2 + 1] << 8);
+	else memcpy(m.eeprom(), next, 0x80);
 	return true;
 }
 
@@ -117,6 +122,28 @@ int64_t free_play_coin_setting(int64_t value)
 {
 	// The service menu selects entry 25 and flag bit 7, leaving the credit ratios intact.
 	return (value & ~int64_t(0xc0ff)) | 0x8000 | FREE_PLAY;
+}
+
+int link_role(model1 &m)
+{
+	const auto *s = block(m);
+	if (!s && valid_block(m.eeprom())) s = m.eeprom();
+	if (!s) return -1;
+	if (s[0x24] > 1 || (s[0x24] && (s[0x25] < 1 || s[0x25] > 2))) return -2;
+	return s[0x24] ? s[0x25] : 0;
+}
+
+bool set_link_role(model1 &m, int role)
+{
+	if (role < 0 || role > 2) return false;
+	return edit_record(m, [role](uint8_t *s) {
+		const uint8_t enabled = role != 0;
+		const uint8_t mode = role ? uint8_t(role) : s[0x25];
+		if (s[0x24] == enabled && s[0x25] == mode) return false;
+		s[0x24] = enabled;
+		s[0x25] = mode;
+		return true;
+	}, true);
 }
 
 }

@@ -51,6 +51,7 @@ struct control_profile
 	std::array<uint8_t, 2> start_bits{};              // each player's start button in the system byte
 	bool hold_start = false;                         // keep Start pressed after its initial pulse
 	bool pad_stick_vertical = true;                  // map the pad's left stick up/down to Up/Down
+	uint8_t right_stick_down_bit = 0;                 // optional host-only action in the player byte
 	bool steering_curve = false;
 	std::array<std::array<SDL_Scancode, C_COUNT>, 2> keys{};   // the defaults, per player
 	std::array<int, C_COUNT> pad;                     // (PAD_NONE until set)
@@ -81,6 +82,10 @@ struct control_profile
 	{
 		const int port = action_ports[action] >= 0 ? action_ports[action] : button_ports[player ? 1 : 0];
 		in[port] |= bit(player, action);
+	}
+	void right_stick_input(uint8_t (&in)[3], int player, int y) const
+	{
+		if (right_stick_down_bit && y > 16000) in[button_ports[player ? 1 : 0]] |= right_stick_down_bit;
 	}
 	const char *label(int action) const { return labels[action] ? labels[action] : CONTROL_NAMES[action]; }
 	const char *name(int action) const { return names[action] ? names[action] : CONTROL_KEYS[action]; }

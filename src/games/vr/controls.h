@@ -11,8 +11,9 @@ namespace game::vr {
 enum : uint8_t { SHIFT_DOWN = 0x10, SHIFT_UP = 0x20 };   // player 1's input byte (IO_PROFILE)
 
 // its pedals in the shared button slots (src/host/controls.h): keys for the analog channels
-enum : int { C_ACCELERATOR = C_BUTTON_1, C_BRAKE, C_CAMERA };
+enum : int { C_ACCELERATOR = C_BUTTON_1, C_BRAKE, C_CAMERA, C_REAR };
 inline constexpr uint8_t CAMERA_CYCLE_INPUT = 0x40;   // Host-only action, consumed before I/O.
+inline constexpr uint8_t CAMERA_REAR_INPUT = 0x80;
 
 // Course selection and initials entry read the wheel as a position. With a pad, Left/Right (D-pad,
 // stick or keys) instead step a cursor one course or letter at a time, repeating while held, and the
@@ -128,6 +129,7 @@ inline const control_profile CONTROLS = [] {
 	c.title = ID;
 	c.show_player_2 = false;
 	c.pad_stick_vertical = false;
+	c.right_stick_down_bit = CAMERA_REAR_INPUT;
 	c.add(C_UP, "Shift Up");
 	c.add(C_DOWN, "Shift Down");
 	c.add(C_LEFT, "Steer Left");
@@ -136,6 +138,8 @@ inline const control_profile CONTROLS = [] {
 	c.add(C_BRAKE, "Brake", "brake");
 	c.add(C_CAMERA, "Cycle camera", "camera");
 	c.bits[C_CAMERA] = CAMERA_CYCLE_INPUT;
+	c.add(C_REAR, "Look back", "look_back");
+	c.bits[C_REAR] = CAMERA_REAR_INPUT;
 	for (int a : { C_START, C_COIN, C_MENU }) c.add(a);
 	c.key_names[C_UP] = "shift_up";
 	c.key_names[C_DOWN] = "shift_down";
@@ -148,6 +152,7 @@ inline const control_profile CONTROLS = [] {
 	k1[C_UP] = SDL_SCANCODE_X; k1[C_DOWN] = SDL_SCANCODE_Z; k1[C_LEFT] = SDL_SCANCODE_LEFT; k1[C_RIGHT] = SDL_SCANCODE_RIGHT;
 	k1[C_ACCELERATOR] = SDL_SCANCODE_UP; k1[C_BRAKE] = SDL_SCANCODE_DOWN; k1[C_START] = SDL_SCANCODE_1;
 	k1[C_CAMERA] = SDL_SCANCODE_C;
+	k1[C_REAR] = SDL_SCANCODE_V;
 	k2[C_UP] = SDL_SCANCODE_I; k2[C_DOWN] = SDL_SCANCODE_K; k2[C_LEFT] = SDL_SCANCODE_J; k2[C_RIGHT] = SDL_SCANCODE_L;
 	k2[C_ACCELERATOR] = SDL_SCANCODE_U; k2[C_BRAKE] = SDL_SCANCODE_O; k2[C_START] = SDL_SCANCODE_2;
 	c.pad[C_UP] = SDL_GAMEPAD_BUTTON_SOUTH;
@@ -156,11 +161,11 @@ inline const control_profile CONTROLS = [] {
 	c.pad[C_START] = SDL_GAMEPAD_BUTTON_START;
 	c.pad[C_MENU] = SDL_GAMEPAD_BUTTON_BACK;
 	c.pad[C_CAMERA] = SDL_GAMEPAD_BUTTON_NORTH;
-	c.pad_actions = { C_UP, C_DOWN, C_CAMERA, C_START, C_COIN, C_MENU };   // (steering and pedals: Analog axes)
+	c.pad_actions = { C_UP, C_DOWN, C_CAMERA, C_REAR, C_START, C_COIN, C_MENU };   // (steering and pedals: Analog axes)
 	// the shift was on Up and Down before it had keys of its own
 	c.renamed_keys = { { C_UP, "up", SDL_SCANCODE_UP, SDL_SCANCODE_X }, { C_DOWN, "down", SDL_SCANCODE_DOWN, SDL_SCANCODE_Z } };
 	c.analog_keys = { { 0, C_LEFT, C_RIGHT, true }, { 1, -1, C_ACCELERATOR, false }, { 2, -1, C_BRAKE, false } };
-	c.pad_buttons_help = "Change the shift, camera, start, coin and menu buttons.";
+	c.pad_buttons_help = "Change the shift, camera, look-back, start, coin and menu buttons.";
 	c.analog_help = "For a pad, select and move a stick axis or squeeze a trigger. The keyboard also has separate steering, accelerator and brake keys. On course selection and initials entry, tap the stick, D-pad or keys Left/Right to move one course or letter (hold to repeat), and press Accelerator (default: right trigger or Up key) to confirm.";
 	return c;
 }();

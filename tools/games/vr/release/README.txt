@@ -30,6 +30,11 @@ Up accelerates, Down brakes, X/Z shift up/down, C cycles the four cameras, 1 sta
 and 5 inserts a coin. Gamepad: left stick X
 steers, right trigger accelerates, left trigger brakes, A / Cross shifts up, B / Circle
 shifts down, Y / Triangle cycles cameras, and D-pad Up inserts a coin in Arcade mode.
+While racing, hold V or the right stick down to look back; release it to return to the
+selected camera. The keyboard binding can be changed in Controls; the right stick's
+look-back axis is not remappable.
+External rear views swing around the car to keep it visible; the onboard view turns in place.
+Look back respects the selected draw distance: Arcade supplements nearby scenery only.
 To see or change your actual controller bindings, open Controls > Player 1 > Pad buttons.
 Check Coin for your Insert Coin button; the default is D-pad Up. Coins are only needed
 in Arcade play style. The game starts with the configured Start control.

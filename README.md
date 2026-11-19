@@ -3,8 +3,7 @@
 <p align="center"><b>SEGA classic arcade games on your computer, with sharper graphics,
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
-This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes. The Model 1 was used by
-multiple games; this repository currently supports Virtua Racing, Star Wars Arcade, and Wing War.
+This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes: *Virtua Racing*, *Star Wars Arcade* and *Wing War*.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
@@ -114,12 +113,16 @@ Non-Steam Game and set **Start In** to the extracted **VirtuaRacing** folder.
 | Brake | Down | Left trigger |
 | Shift up / down | X / Z | A / B (Cross / Circle) |
 | Change camera | C | Y / Triangle |
+| Look back while racing | Hold V | Hold right stick down |
 | Start | 1 | Start |
 | Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
 
 To see or change your actual controller bindings, open **Esc > Controls > Player 1 >
 Pad buttons**.
+External rear views swing around the car so it stays visible; the onboard view turns in place.
+Release the look-back control to return to the selected camera. The keyboard binding can
+be changed in Controls; the right stick's look-back axis is not remappable.
 
 Under **Controls > Player 1 > Analog axes > Steering curve**, **Arcade** (formerly
 Linear) keeps the original response. **Standard** (the default) replaces Exponential with a nonlinear
@@ -161,6 +164,8 @@ set. No IP addresses or account are needed.
    **Live Monitor** off.
 2. Wait for the demo or course-selection screen, then open the menu
    (**Esc** on a keyboard) and choose **LAN**.
+   **Your name** starts with a random name and is remembered; select it to change it
+   (up to 10 letters, numbers, spaces, dots or hyphens).
 3. One player chooses **Create room**. This player is the **host**.
 4. The other players choose **Find rooms**, then select the host's room.
 5. Once everyone is ready, the host chooses **Start linked race**.
@@ -303,9 +308,9 @@ fast-forward, including through attract mode;
 ### Features
 
 - The whole single-cabinet arcade game.
+- Experimental two-player local split-screen using linked cabinets.
+- Experimental two-player LAN rooms.
 - Optional cheats: invincibility and infinite missiles.
-
-Linked-cabinet play is not supported.
 
 ### Getting started
 
@@ -340,6 +345,26 @@ Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
 
 To see or change your actual controller bindings, open **Esc > Controls**. Hold **Tab** to
 fast-forward; **P** pauses and resumes.
+
+### Local multiplayer
+
+In PC play, a second controller can press Start during the demonstration or game selection to join.
+A request made during play waits until the demonstration returns; joining restarts both cabinets
+and starts both players at game selection. Disconnecting Player 2 or pressing F3 returns to solo.
+The default Player 2 keyboard uses **2** for Start, the numeric keypad for flight and weapons,
+and keypad plus/minus for throttle; bindings can be changed under Controls.
+
+### LAN multiplayer (experimental)
+
+Play on two computers on the same local network, with the same game version and ROMs.
+Both players need PC play style and one local player. At the demonstration or game
+selection screen, open **LAN** in the menu. One player creates a room; the other
+finds and joins it. The host chooses **Start linked game**, then both press Start.
+**Your name** is randomly chosen initially and remembered; select it to change it.
+
+The host's game assignments apply for the session; each player's settings are restored
+afterward. Only the host can pause; resuming uses a 3–2–1 countdown. Leaving or losing
+either connection ends the session. LAN cannot be combined with local split-screen.
 
 ### Game-specific settings
 
@@ -391,6 +416,7 @@ Useful shared checks:
 ```sh
 make test-model1io-adc
 make test-host-gamepads
+make test-host-fullscreen
 make test-host-graphics
 make test-vr-profile test-vr-gameplay test-vr-tgp-track
 make test-wingwar-profile
@@ -436,7 +462,7 @@ session replaces the previous log.
 | `src/rt` | Recompiler runtime and startup native recompilation |
 | `src/host` | SDL 3 host, input, pacing, and RmlUi menu |
 | `src/games/<game>` | Game profiles, OM tables, scripted play and host, and game-specific behavior |
-| `assets/games/<game>` | VR address map, icon and other artwork |
+| `assets/games/<game>` | Game address map, icon and other artwork |
 | `src/gpu` | Metal and SDL_GPU renderers and shaders |
 | `tools/recomp` | Ahead-of-time V60-to-C++ recompiler |
 | `tools/mac`, `tools/win`, `tools/linux` | Each platform's `package.sh [game ...]`: the downloads, the same for every game |
