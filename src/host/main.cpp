@@ -1048,7 +1048,7 @@ struct local_cabinet
 	std::unique_ptr<game_host> game;
 	settings config;
 	std::unique_ptr<host_context> host;
-	std::string dir;
+	std::string dir, save_dir;
 	std::string sidecar_path;
 	std::shared_ptr<local_display> display;
 	SDL_Texture *texture = nullptr;
@@ -1106,9 +1106,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			return false;
 		}
 		c.dir = p == 0 ? data_dir : p == 1 ? data_dir + "/two-cabinets/2" : data_dir + "/live-monitor";
+		c.save_dir = c.dir;
+		if (!regions.save_subdirectory.empty()) c.save_dir += "/" + regions.save_subdirectory;
 		std::error_code ec;
-		std::filesystem::create_directories(c.dir, ec);
-		if (ec) { fprintf(stderr, "two cabinets: cannot create %s: %s\n", c.dir.c_str(), ec.message().c_str()); return false; }
+		std::filesystem::create_directories(c.save_dir, ec);
+		if (ec) { fprintf(stderr, "two cabinets: cannot create %s: %s\n", c.save_dir.c_str(), ec.message().c_str()); return false; }
 		for (int slot = 0; slot < 2; slot++) c.config.ctl[slot] = player_controls::defaults(slot, c.game->controls());
 		c.config.fps = game::get_video(host_game()).default_fps;
 		if (getenv("SteamDeck")) { c.config.fullscreen = true; c.config.aspect = 2; }
@@ -1148,9 +1150,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.machine.enable_sound();
 		c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, p == 2 ? 0.0f : c.config.effects / 100.0f);
 		auto load_save = [&](const char *name, uint8_t *destination, size_t size, bool eeprom = false) {
-			std::string path = c.dir + "/" + name;
+			std::string path = c.save_dir + "/" + name;
 			bool exists = std::filesystem::exists(path, ec);
-			if (!ec && !exists && p == 0) {
+			if (!ec && !exists && p == 0 && regions.save_subdirectory.empty()) {
 				path = data_dir + "/two-cabinets/1/" + name;
 				exists = std::filesystem::exists(path, ec);
 			}
@@ -1184,7 +1186,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.host->standalone_cabinet = cabinet_count == 1 && p != 2;
 		c.game->start(*c.host);
 		if (*c.game->save_sidecar_name()) {
-			c.sidecar_path = c.dir + "/" + c.game->save_sidecar_name();
+			c.sidecar_path = c.save_dir + "/" + c.game->save_sidecar_name();
 			const bool exists = std::filesystem::exists(c.sidecar_path, ec);
 			if (ec) {
 				fprintf(stderr, "two cabinets: cannot inspect save %s: %s\n", c.sidecar_path.c_str(), ec.message().c_str());
@@ -2663,8 +2665,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!cabinets[p]) continue;
 			auto &c = *cabinets[p];
 			const auto nvram = nvram_for_save(p);
-			saver.put(c.dir + "/nvram.sav", nvram.data(), nvram.size());
-			saver.put(c.dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
+			saver.put(c.save_dir + "/nvram.sav", nvram.data(), nvram.size());
+			saver.put(c.save_dir + (c.machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
 					  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c.machine.eeprom(), model1::EEPROM_SIZE);
 			if (!c.sidecar_path.empty()) {
 				const auto text = c.game->save_sidecar();
@@ -2682,8 +2684,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!join_overlay.is_open() && lan_saved_eeprom.empty()) c->game->keep_arcade_settings();
 			if (p < 2) c->config.ctl[0] = bindings[p];
 			const auto nvram = nvram_for_save(p);
-			const bool nv = save_blob(c->dir + "/nvram.sav", nvram.data(), nvram.size());
-			const bool ee = save_blob(c->dir + (c->machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
+			const bool nv = save_blob(c->save_dir + "/nvram.sav", nvram.data(), nvram.size());
+			const bool ee = save_blob(c->save_dir + (c->machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
 									  p == 0 && !lan_saved_eeprom.empty() ? lan_saved_eeprom.data() : c->machine.eeprom(), model1::EEPROM_SIZE);
 			const std::string settings_path = p == 0 ? data_dir + "/settings.ini" : c->dir + "/settings.ini";
 			const bool config = c->config.save(settings_path, *c->game);
@@ -3907,6 +3909,7 @@ int main(int argc, char **argv)
 	input_replay::recording replay, record;
 	bool recording = false;
 	std::string arg_roms;   // --roms <folder>: where the player's zip is (over M1_ROMS and settings.ini's roms_folder)
+	bool arg_regions = false;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
 		if (a == "--scale" && i + 1 < argc) arg_scale = atoi(argv[++i]);
@@ -3962,6 +3965,7 @@ int main(int argc, char **argv)
 			std::error_code ec;
 			if (!std::filesystem::is_directory(a, ec)) { fprintf(stderr, "%s: no such folder (options start with --)\n", a.c_str()); return 2; }
 			dir = a;
+			arg_regions = true;
 		}
 	}
 	if (preview_credits) {
@@ -4052,7 +4056,9 @@ int main(int argc, char **argv)
 	const char *portable = nullptr;   // (portable mode: the marker's name)
 	{
 		std::error_code ec;
-		if (std::filesystem::exists(dir + "/maincpu.bin", ec)) {
+		const char *env_roms = getenv("M1_ROMS");
+		if ((arg_regions || (arg_roms.empty() && (!env_roms || !*env_roms))) &&
+			std::filesystem::exists(dir + "/maincpu.bin", ec)) {
 			game = load_regions(dir, host_game());
 		} else {
 			// portable mode (a file named portable.txt beside the program, or beside a Mac's .app)
@@ -4119,6 +4125,13 @@ int main(int argc, char **argv)
 		std::filesystem::create_directories(dir, ec);
 		if (ec) { fprintf(stderr, "VR link: cannot create cabinet data folder %s: %s\n", dir.c_str(), ec.message().c_str()); return 1; }
 	}
+	std::string save_dir = dir;
+	if (!game.save_subdirectory.empty()) {
+		save_dir += "/" + game.save_subdirectory;
+		std::error_code ec;
+		std::filesystem::create_directories(save_dir, ec);
+		if (ec) { fprintf(stderr, "Cannot create game save folder %s: %s\n", save_dir.c_str(), ec.message().c_str()); return 1; }
+	}
 	const std::string settings_path = dir + "/settings.ini";
 	settings cfg;
 	bool cfg_dirty = false;      // saved at exit only when the player changed something
@@ -4166,8 +4179,8 @@ int main(int argc, char **argv)
 	m.set_sky_filter(cfg.smooth_bg);
 	m.set_aspect(ASPECTS[aspect_i] > 0 ? ASPECTS[aspect_i] : 16.0f / 9.0f);
 	// the real I/O board's 93C46 and the stand-in's image are laid out differently
-	const std::string nv_path = dir + "/nvram.sav",
-		ee_path = dir + (m.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav");
+	const std::string nv_path = save_dir + "/nvram.sav",
+		ee_path = save_dir + (m.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav");
 	if (!replay_mode) {
 		load_blob(nv_path, m.nvram().data(), m.nvram().size());
 		if (!load_blob(ee_path, m.eeprom(), model1::EEPROM_SIZE)) {
@@ -4191,7 +4204,7 @@ int main(int argc, char **argv)
 	game_ctx.replay = replay_mode;
 	game_ctx.link_player = link_player;
 	game_part.start(game_ctx);   // (before the code is recompiled: an instruction it changes goes in it)
-	const std::string rank_path = *game_part.save_sidecar_name() ? dir + "/" + game_part.save_sidecar_name() : std::string();
+	const std::string rank_path = *game_part.save_sidecar_name() ? save_dir + "/" + game_part.save_sidecar_name() : std::string();
 	uint32_t rank_saved = game_part.save_sidecar_version();
 	if (!rank_path.empty())
 		if (FILE *f = fopen(rank_path.c_str(), "rb")) {

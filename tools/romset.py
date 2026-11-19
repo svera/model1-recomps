@@ -55,6 +55,10 @@ ALIASES = {'opr14744.bin': 'opr-14744.58', 'opr14745.bin': 'opr-14745.59',
            'opr14746.bin': 'opr-14746.62', 'opr14747.bin': 'opr-14747.63'}
 
 def find(z, name, crc):
+    if crc is None:
+        if name in z.namelist():
+            return name
+        sys.exit(f'{name}: not in the zip')
     by_crc = {i.CRC: i.filename for i in z.infolist()}
     for n in (name, ALIASES.get(name)):
         if n and n in z.namelist() and z.getinfo(n).CRC == crc:
@@ -104,13 +108,16 @@ def main():
     out = args[1] if len(args) > 1 else f'build/{game}'
     extra = args[2:]
     title = load_game(game)
-    roms = BOARD_ROMS + title.ROMS
     regions = {k: bytearray([fill]) * size for k, (size, fill) in {**COMMON_REGIONS, **title.REGIONS}.items()}
     os.makedirs(out, exist_ok=True)
     with zipfile.ZipFile(src) as z:
+        selected, sizes = title.select_roms(z) if hasattr(title, 'select_roms') else (title.ROMS, {})
+        roms = BOARD_ROMS + selected
         for name, crc, region, off, kind in roms:
             data = z.read(find(z, name, crc))
-            if zlib.crc32(data) != crc:
+            if name in sizes and len(data) != sizes[name]:
+                sys.exit(f'{name}: incorrect size {len(data)}, expected {sizes[name]}')
+            if crc is not None and zlib.crc32(data) != crc:
                 sys.exit(f'{name}: CRC {zlib.crc32(data):08x}, expected {crc:08x}')
             r = regions[region]
             if kind == 'raw':
@@ -125,6 +132,8 @@ def main():
                     r[off + 2 * i:off + 2 * i + 2] = data[i:i + 2]
             elif kind == 'byte32':
                 r[off:off + 4 * len(data):4] = data
+    if hasattr(title, 'validate_regions'):
+        title.validate_regions(regions, sizes)
     for k, r in regions.items():
         with open(os.path.join(out, k + '.bin'), 'wb') as f:
             f.write(r)
