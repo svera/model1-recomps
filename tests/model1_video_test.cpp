@@ -19,6 +19,155 @@
 
 struct model1_video_test
 {
+	static void frustum_clipping()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_view->a_bottom = m.m_view->a_right = 1;
+		m.m_view->a_top = m.m_view->a_left = -1;
+		model1::point_t p[] = {{-.5f, -.5f, 1}, {.5f, -.5f, 1}, {.5f, .5f, 1}, {-.5f, .5f, 1}};
+		model1::quad_t q(0, 1, &p[0], &p[1], &p[2], &p[3]);
+		auto clip = [&](bool preclassify = false) {
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			int level = 0;
+			const unsigned out = preclassify ? m.fclip_classify(level, q) : 0;
+			if (out != 15) m.fclip_push_quad(level, q, out);
+			return m.m_quadpt - m.m_quaddb.get();
+		};
+		assert(clip() == 1 && m.m_pointpt == m.m_pointdb.get());
+		assert(clip(true) == 1 && m.m_pointpt == m.m_pointdb.get());
+		for (auto &point : p) point.x += 3;
+		assert(clip() == 0 && m.m_pointpt == m.m_pointdb.get());
+		assert(clip(true) == 0 && m.m_pointpt == m.m_pointdb.get());
+		p[0].x = p[3].x = -.5f;
+		assert(clip() == 1 && m.m_pointpt - m.m_pointdb.get() == 2);
+		assert(m.m_pointdb[0].x == 1 && m.m_pointdb[1].x == 1);
+		assert(clip(true) == 1 && m.m_pointpt - m.m_pointdb.get() == 2);
+		assert(m.m_pointdb[0].x == 1 && m.m_pointdb[1].x == 1);
+	}
+
+	static void deferred_object_projection()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_view->ext = 0;
+		m.m_view->scale = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = {
+			-2, -2, 8, 2, -2, 8,
+			0, 0, 0, -1, -1, -1, 8, 1, -1, 8,
+			0, 0, 0, -1, 0, 1, 8, 0, 0, 0,
+		};
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t unlinked = 1, triangle = 0x4000 | (1 << 8) | 2;
+		std::memcpy(poly + 6, &unlinked, sizeof(unlinked));
+		std::memcpy(poly + 16, &triangle, sizeof(triangle));
+		m.m_tgp_ram[0] = 0x400;
+		m.m_pointpt = m.m_pointdb.get();
+		m.m_quadpt = m.m_quaddb.get();
+		m.m_pointdb[0].fx = -123;
+		m.m_pointdb[1].fx = -123;
+		float depth = 0;
+		m.push_object(0x40000, 0x800000, 2, depth);
+		assert(m.m_quadpt == m.m_quaddb.get() + 1);
+		assert(m.m_pointdb[0].fx == -123 && m.m_pointdb[1].fx == -123);
+		const auto &q = m.m_quaddb[0];
+		assert(q.p[0] == &m.m_pointdb[3] && q.p[0]->fx == 264 && q.p[0]->fy == 208);
+		assert(q.p[1] == &m.m_pointdb[2] && q.p[1]->fx == 232 && q.p[1]->fy == 208);
+		assert(q.p[2] != q.p[3] && q.p[2]->fx == 248 && q.p[2]->fy == 176);
+		assert(q.p[2]->fx == q.p[3]->fx && q.p[2]->fy == q.p[3]->fy);
+	}
+
+	static void object_vertex_reuse()
+	{
+		const float object[] = {
+			-2, -2, 8, 2, -2, 8,
+			0, 0, 0, -1, -1, -1, 8, 1, -1, 8,
+			0, 0, 0, -1, -1, -1, 8, 1, 1, 8,
+			0, 0, 0, -1, 2, -2, 8, 0, 0, 0,
+		};
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		regions.polygons.resize(sizeof object);
+		std::memcpy(regions.polygons.data(), object, sizeof object);
+		const uint32_t quad = 0x4601, triangle = 0x4502;
+		for (int word : {6, 16})
+			std::memcpy(regions.polygons.data() + word * 4, &quad, sizeof quad);
+		std::memcpy(regions.polygons.data() + 26 * 4, &triangle, sizeof triangle);
+		model1 m(std::move(regions));
+		m.m_view->ext = 0;
+		m.m_view->scale = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		m.m_tgp_ram[0] = 0x400;
+		auto geometry = [&](bool reuse, float x) {
+			m.benchmark_vertex_reuse = reuse;
+			m.m_view->translation[9] = x;
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			float depth = 1;
+			m.push_object(0x40000, 0, 3, depth);
+			assert(m.m_quadpt == m.m_quaddb.get() + 3);
+			assert(m.m_quadpt[-1].p[2] != m.m_quadpt[-1].p[3]);
+			std::vector<std::tuple<float, float, float, float, int>> result;
+			for (auto *q = m.m_quaddb.get(); q != m.m_quadpt; q++)
+				for (auto *p : q->p)
+					result.emplace_back(p->x, p->y, p->z, q->z, q->col);
+			return result;
+		};
+		const auto baseline = geometry(false, 0);
+		assert(geometry(true, 0) == baseline);
+		const auto moved = geometry(false, 1);
+		assert(moved != baseline && geometry(true, 1) == moved);
+	}
+
+	static void vr_tile_layer_reuse()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_tiles.update(m.m_pens);
+		auto generation = [&](int layer) { return m.cached_layer(layer, 0).gen; };
+		const auto first = generation(1);
+		++m.m_frame;
+		assert(generation(1) == first);
+
+		m.tile_write(0x5002, 1); // Scroll on the separate sky map.
+		m.tile_write(0x2000, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first);
+		m.m_palette->set_pen_color(0x1000, 1, 2, 3);
+		assert(generation(1) == first);
+
+		m.tile_write(0, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 1);
+		m.char_write(16, 0x1111);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 2);
+		m.m_palette->set_pen_color(0, 1, 2, 3);
+		assert(generation(1) == first + 3);
+		m.tile_write(0x6000, 0x8000);
+		assert(generation(1) == first + 4);
+
+		m.tile_write(0x5004, 0x4000);
+		const auto split = generation(1);
+		m.tile_write(0x1000, 1); // The split window can draw from the paired map.
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == split + 1);
+		m.work_ram()[0x1138] = 0x12;
+		assert(generation(1) == split + 2);
+	}
+
 	static void vr_menu_backdrops(const char *dir)
 	{
 		auto check = [](model1 &m) {
@@ -3050,6 +3199,25 @@ struct model1_video_test
 		assert(lit != 0 && none == 0);
 		for (int sh = 0; sh <= 16; sh += 8)
 			assert(std::abs(int((half >> sh) & 0xff) - int(std::lround(((lit >> sh) & 0xff) * .5f))) <= 1);
+
+		const float front[12]{1, 0, 0, 0, 1, 0, 0, 0, 1};
+		const float back[12]{1, 0, 0, 0, 1, 0, 0, 0, -1};
+		const float shade_light[4]{};
+		m.m_view->light = glm::vec3(0, 0, -1);
+		std::copy_n(front, 12, m.m_view->translation);
+		m.m_view->set_lightparam(0, 1, 0, 0, 0);
+		m.m_shade_from = front;
+		m.m_shade_to = back;
+		m.m_shade_light = shade_light;
+		m.m_alpha = .5f;
+		assert(colour(1) == 0xffffff);  // Unlit material ignores both endpoint shades.
+		m.m_tgp_ram[0] = 1;
+		for (int channel : {0, 0x2000, 0x4000}) m.m_color_xlat[(31 << 8) | channel] = 0;
+		assert(colour(1) == 0x808080);  // White and black endpoints; the current pose is white.
+		m.m_view->set_lightparam(0, 1.25f, -.25f, 0, 0);
+		m.m_shade_from = back;
+		m.m_shade_to = front;
+		assert(colour(1) == 0xffffff);  // A negative starting shade uses the current pose.
 	}
 
 	static void foreground_order()
@@ -4280,6 +4448,24 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 1 && std::string(argv[1]) == "--object-lighting") {
+		model1_video_test::backface_specular();
+		model1_video_test::object_fade();
+		puts("Object lighting tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--vr-tile-layer-reuse") {
+		model1_video_test::vr_tile_layer_reuse();
+		puts("VR tile layer cache tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--frustum-clipping") {
+		model1_video_test::frustum_clipping();
+		model1_video_test::deferred_object_projection();
+		model1_video_test::object_vertex_reuse();
+		puts("Frustum clipping tests passed");
+		return 0;
+	}
 	if (argc > 1 && std::string(argv[1]) == "--record-interpolation") {
 		model1_video_test::scenery_records();
 		model1_video_test::swaying_camera();
@@ -4295,6 +4481,8 @@ int main(int argc, char **argv)
 		model1_video_test::tile_slide_interpolation();
 		return 0;
 	}
+	model1_video_test::frustum_clipping();
+	model1_video_test::vr_tile_layer_reuse();
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();
 	model1_video_test::free_camera_path();

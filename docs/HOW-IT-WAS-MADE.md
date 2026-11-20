@@ -2442,6 +2442,274 @@ presentations/s respectively; the first joined window includes transition overhe
 excluded from that comparison. Performance reports now show presentations/s explicitly,
 separately from game-frame throughput.
 
+## VR's Android frame pacing
+
+The Pixel 9a's 120 FPS setting is a target, not a measured frame rate. At 1x
+with antialiasing off, the logged widescreen scene rendered at 662x384 and
+was then scaled to the 2424x1080 window. Reducing the internal scale from 2x
+helped, but at 1x most of the measured frame time was in scene preparation,
+not the call to present the picture.
+
+Build the opt-in APK with `tools/android/build.sh assembleDiagnostics`. Its
+`frame phases` line reports average and peak wall times per pass for picture
+preparation, composition, work before presenting, `SDL_RenderPresent`, and
+game-thread waits. The `scene phases` line separates the 3D path, other
+screen work, and time outside the screen update, including interpolation.
+The 3D timing includes CPU preparation and submission; it is not GPU
+execution time.
+
+For Perfetto, enable `ftrace/print`, app tracing
+(`atrace_apps: "recomp.vr1.android:game"`), and scheduler events in the
+`linux.ftrace` data source. The `timing window` line records the window
+duration and end time on Android's boot clock for alignment with the trace.
+Use `M1 new picture submitted` to measure submission gaps, not display
+scanout. The trace separates tile decoding, individual layer rebuilds, and
+the render thread's wait for tile workers after it finishes its own jobs.
+Rebuilds can overlap across threads. Within `M1 tile rebuild 1`, the
+`M1 layer 1 tile drawing`, `M1 layer 1 span scan`, and `M1 HUD pinning`
+slices distinguish the main costs.
+
+CPU samples pointed to tile drawing and geometry preparation. Tile drawing
+now skips masked runs and scans transparent padding in blocks. VR reuses
+unchanged non-sky layers across game ticks, invalidating them when tile
+graphics, scrolling, masks, the tile palette, or relevant display state
+changes. A dirty transparent layer clears only its previous row spans.
+The geometry path transforms and projects a triangle's duplicate vertex
+once, with separate storage for clipping. Frustum clipping classifies
+vertices inline and skips fully visible planes without recursion; crossings
+retain the same intersection math. Rejected faces skip screen projection
+unless a later face reuses their vertices. Unlit faces skip shading, and
+interpolated faces only calculate the current-pose shade when they cannot
+use a blend of the two endpoints.
+
+With deferred projection, median submission rate rose from 46 to 49 new
+pictures/s across the sampled runs, and median 3D time dropped from 6.46
+to 6.14 ms per pass. The 37 pictures/s dips still recurred. In a separate
+24-second trace at 1x, AA off, Vulkan, and a 120 FPS target, layer 1 finished
+last in 10 of the 11 tile batches that took at least 8 ms. In those 10
+rebuilds, median CPU time was 2.99 ms for HUD pinning, 1.67 ms for scanning
+transparent spans, and 1.63 ms for drawing tiles. Across the trace, 162 of
+1,118 submission gaps (14.5%) exceeded 30 ms, with a 95th-percentile gap
+of about 35 ms. These are short gameplay samples, not controlled benchmarks.
+
+HUD pinning now checks occupancy in eight-pixel runs, looks up artwork
+groups only for occupied cells, and reuses the group buffer. It copies the
+source only when a group needs to move. In a follow-up 24-second capture
+at the same settings, 130 of 1,146 submission gaps (11.3%) exceeded 30 ms,
+down from 14.5%. The 95th-percentile gap fell from 35.0 to 33.2 ms.
+However, median HUD pinning CPU time rose from 1.02 to 1.35 ms across all
+HUD slices. When layer 1 finished last in a batch of at least 8 ms, its
+median HUD CPU time was 3.16 ms, versus 2.99 ms in the baseline. This pair
+of live captures does not establish a HUD speedup or show that the code
+change caused the improvement in submission gaps.
+
+A second 24-second capture on the same updated build, with the player
+repeating the same race segment, had 153 of 1,099
+submission gaps (13.9%) over 30 ms, with a 95th-percentile gap of 34.5 ms.
+Median HUD pinning CPU time was 1.61 ms overall and 2.75 ms in the 12 slow
+batches where layer 1 finished last. The variation between captures on
+the same build makes the first pacing improvement inconclusive. To isolate
+the code change, alternate the baseline and updated builds using identical
+recorded inputs and start each capture at the same in-game point.
+
+For the controlled comparison, one diagnostics APK exposed both HUD paths
+and fed them the same built-in VR script (not a recording of the player's
+laps). The runs were ordered baseline, updated, updated, baseline, at 1x,
+AA off, Vulkan, and a 120 FPS target. Perfetto measurements were restricted
+to approximately emulated frames 3850-4850; one run's boundaries occurred
+one frame later. A private `files/hud-benchmark` marker selects `baseline`
+or `updated` on launch. An optional second token selects the FPS target
+(`60` or `120`, default `120`). Removing the marker restores normal play.
+
+| Run | Median HUD CPU time | Submission gaps over 30 ms | Submission gap p95 |
+| --- | ---: | ---: | ---: |
+| Baseline 1 | 1.784 ms | 85 / 865 (9.83%) | 33.27 ms |
+| Updated 1 | 1.764 ms | 84 / 878 (9.57%) | 34.10 ms |
+| Updated 2 | 1.752 ms | 85 / 899 (9.45%) | 33.05 ms |
+| Baseline 2 | 1.663 ms | 103 / 879 (11.72%) | 34.76 ms |
+
+Both updated runs had fewer long submission gaps, but neither beat both
+baseline runs on HUD CPU time. The pacing difference was comparable to
+the variation between the two baseline runs, so this test does not
+establish a useful HUD speedup or a reliable pacing improvement.
+
+The same diagnostics build then compared FPS targets with the updated HUD
+path fixed. Runs were ordered 120, 60, 60, 120, at 1x, AA off, and Vulkan
+on the 120 Hz display. Each measurement used approximately emulated frames
+3850-4850. Both targets fell short of their requested picture rate.
+
+| Target | New pictures/s | Submission gaps over 30 ms | Submission gap p95 |
+| --- | ---: | ---: | ---: |
+| 120, first run | 48.42 | 128 / 840 (15.24%) | 35.04 ms |
+| 60, first run | 47.42 | 105 / 827 (12.70%) | 35.11 ms |
+| 60, second run | 47.70 | 92 / 828 (11.11%) | 33.73 ms |
+| 120, second run | 50.98 | 88 / 884 (9.95%) | 33.36 ms |
+
+Pooling both runs per target, 60 FPS produced 47.56 new pictures/s versus
+49.70 at 120 FPS. Gaps over 30 ms were 11.90% versus 12.53%, and the 95th
+percentile was about 34.2 ms at both targets. The small change in long gaps
+was within run-to-run variation, so lowering the target did not reliably
+improve submission pacing in this segment.
+
+The next trace measures what makes VR rebuild layer 1. In the Android
+diagnostics build, `M1 layer 1 inv` appears inside actual rebuilds, not cache
+checks. It counts distinct primary-map entries affected since the last rebuild
+by map writes or changes to the graphics those entries reference. The two
+counts can overlap; their union is the entry count. It separately flags a
+split-window dependency on the paired map, scroll/control, active line scroll,
+mask, full decode, palette, game mode, and cache layout or reset. A full decode
+counts the whole primary map, not 4,096 individually changed entries. The counts
+track map state, not visible pixels or the HUD groups that would have to move.
+
+On the Pixel 9a, the fixed-input run at 1x, AA off, Vulkan, and a 120 FPS
+target recorded 509 layer 1 rebuilds between emulated frames 3850 and 4850.
+Every rebuild was triggered by direct writes to the primary map, with none
+of the other invalidation flags set. The median was 8 entries out of 4,096;
+the largest change covered 81.
+
+| Distinct changed entries | All layer 1 rebuilds | Layer 1 rebuilds in tile batches taking at least 8 ms |
+| --- | ---: | ---: |
+| 1-8 | 401 | 13 |
+| 9-32 | 99 | 7 |
+| 33-128 | 9 | 0 |
+
+Layer 1 finished last in all 20 slow batches, and even there the largest
+change was only 18 entries. The app submitted 880 new pictures in 17.38 s
+(50.65/s); 89 of 879 submission gaps exceeded 30 ms and the p95 was
+32.18 ms. This was an invalidation measurement, not an optimization A/B.
+It supports prototyping partial layer 1 updates for sparse map writes,
+keeping full rebuilds as a fallback. The prototype must account for old and
+new HUD group coverage: changing one entry can change how a whole group
+is placed, so patching only the changed tile rectangles is not sufficient.
+
+The first partial-update prototype expanded dirty bands to neighboring
+occupied rows, but on this segment the expansion always exceeded its
+half-layer budget. The revised prototype instead saves the ordered HUD
+clear-and-move operations from a full rebuild. For direct map writes with
+unchanged scroll, mask, palette, and layout, it draws the affected
+eight-pixel bands into scratch space. It checks that every cell in those
+bands still has the same occupancy and artwork group. If so, it replays the
+saved operations from the fresh source pixels and updates only those row
+spans. Replaying in order preserves overlaps between moved groups; a change
+in group membership falls back to rebuilding the full layer.
+
+The same diagnostics APK ran four scripted trials in partial, full, full,
+partial order, at 1x, AA off, Vulkan, and a 120 FPS target. Measurements use
+the boot-clock boundaries near emulated frames 3850-4850. Rebuild timings
+are wall time, and picture gaps are app submissions, not panel scanout.
+
+| Layer 1 path | New pictures/s | Submission gaps over 30 ms | Submission gap p95 | Median layer 1 rebuild |
+| --- | ---: | ---: | ---: | ---: |
+| Partial, first run | 66.65 | 21 / 1156 (1.82%) | 24.88 ms | 0.58 ms |
+| Full, first run | 56.28 | 53 / 977 (5.42%) | 30.16 ms | 4.42 ms |
+| Full, second run | 52.24 | 82 / 907 (9.04%) | 32.54 ms | 4.36 ms |
+| Partial, second run | 65.34 | 23 / 1133 (2.03%) | 26.21 ms | 0.61 ms |
+
+Pooling both runs, submissions rose from 54.26 to 65.99 new pictures/s
+(22%), gaps over 30 ms fell from 7.17% to 1.92%, and the p95 fell from
+31.62 to 25.55 ms. Tile worker batches taking at least 8 ms fell from 27 to
+2. The partial path handled 991 of 1,023 layer 1 rebuilds, redrawing 2-6 of
+48 bands; the other 32 changed group membership. At the time of this test
+the prototype was diagnostics-only: `partial 120` selected it for the
+scripted run and `partial-play` selected it for manual validation.
+
+A 20-second manual-play trace on the Pixel 9a confirmed that the prototype
+also ran with live inputs at 1x, AA off, Auto (GPU), and a 120 FPS target.
+It handled 586 of 607 layer 1 rebuilds; the other 21 changed group
+membership. Median layer 1 rebuild wall time was 0.50 ms. The app submitted
+58.43 new pictures/s, with 33 of 1,157 submission gaps over 30 ms (2.85%)
+and a p95 of 27.67 ms. This was not a matched A/B. Separately, the player
+reported that the HUD looked good during this manual session.
+
+Partial layer 1 updates are now the default for Virtua Racing on Android,
+without a marker or a diagnostics build. Other platforms and layers keep
+their existing paths. A full rebuild still handles changes to group
+membership or global layer state. The diagnostics benchmark retains
+`updated 120` as the full-rebuild control and `partial 120` as the
+partial-update trial.
+
+With partial HUD updates enabled, a fresh Pixel 9a Perfetto capture sampled
+CPU stacks and scheduler activity during the same fixed-input Vulkan run
+(1x, AA off, 120 FPS target, emulated frames 3850-4850). In that 17.37 s
+window, the app submitted 1,159 new pictures, with 24 of 1,158 gaps over
+30 ms. The render thread spent 11.55 s running and about 0.31 s runnable
+but not running. Tile decode averaged 0.02 ms per call; picture preparation
+averaged 9.30 ms per submission. This was a profiling run, not an A/B.
+
+Of the render thread's 761 samples whose leaf mapped to the game's native
+library, 285 were in `push_object` (including inlined work), 65 in
+`record_quads`, and 24 in `sort_quads`. Within `push_object`, vertex
+transforms, face rejection, and lighting stood out. Only 35 samples mapped
+to the whole face setup region before the first vertex transform; that
+region includes more than ROM reads, and some addresses had no line
+information. The profile does not make a strong case for caching decoded
+ROM data. A more promising experiment is reusing transformed vertices
+within an eligible ROM-backed object, preserving face order and leaving
+per-face lighting and effect callbacks unchanged.
+
+The prototype used a 64-slot cache of exact model-space coordinate bits
+and their transformed XYZ values, scoped to one ROM-backed object draw.
+Projection, clipping, and face state still use separate point storage.
+The prototype bypasses dynamic polygon RAM, point effects, and special
+camera and eye-crossing paths.
+
+Four Pixel 9a trials on one diagnostics APK compared `partial 120` with
+`vertices 120` (partial HUD on in both), in off/on/on/off order. The
+fixed-input Vulkan run used 1x, AA off, and the same measured emulated
+frame interval. These are app submissions, not panel scanout.
+
+| Vertex reuse | New pictures/s | Submission gaps over 30 ms | Submission gap p95 |
+| --- | ---: | ---: | ---: |
+| Off, first run | 63.26 | 29 / 1098 | 26.62 ms |
+| On, first run | 60.91 | 28 / 1057 | 27.08 ms |
+| On, second run | 68.02 | 22 / 1181 | 24.97 ms |
+| Off, second run | 65.63 | 28 / 1138 | 26.37 ms |
+
+Pooled throughput was 64.44 pictures/s without reuse and 64.46 with it.
+Long gaps went from 2.55% to 2.23% and the p95 from 26.55 to 26.36 ms;
+both differences were small relative to run-to-run variation. Median
+picture preparation was 9.26 ms without reuse and 9.34 ms with it. This
+prototype showed no reliable gain and is not enabled for ordinary play.
+
+The `lighting 120` diagnostics run measured 16,863,226 lit faces in the
+same scripted segment. The final clipper emitted no geometry for 10,179,956
+of them (60.4%). For 9,991,604 faces (59.3% of all lit faces), the first
+plane with any outside vertex rejected the entire face, so no clip
+intersection was needed. These are counts of face visits, not unique faces.
+
+The `early-clip 120` prototype runs that same classification before
+lighting. It preserves texture and depth updates and face links, excludes
+paths that need a colour callback or retain face colours, and passes the
+classification on to the clipper for faces that survive. Four trials on
+the same APK compared `partial 120` and `early-clip 120` in off/on/on/off
+order. Partial HUD updates were on and vertex reuse was off in both.
+
+| Early rejection | New pictures/s | Submission gaps over 30 ms | Submission gap p95 | Median picture preparation |
+| --- | ---: | ---: | ---: | ---: |
+| Off, first run | 62.03 | 18 / 1076 | 26.97 ms | 9.65 ms |
+| On, first run | 67.35 | 12 / 1171 | 24.44 ms | 8.89 ms |
+| On, second run | 66.56 | 22 / 1154 | 25.73 ms | 8.92 ms |
+| Off, second run | 61.78 | 42 / 1072 | 27.62 ms | 9.60 ms |
+
+Pooled throughput rose from 61.91 to 66.95 new pictures/s (+8.2%).
+Median preparation fell from 9.63 to 8.90 ms, and the submission gap p95
+fell from 27.21 to 24.92 ms. Gaps over 30 ms fell from 2.79% to 1.46%
+when pooled, though the individual runs overlapped on that metric. During
+validation, `early-clip-play` in the private `files/hud-benchmark` marker
+enabled early rejection without scripted inputs or settings overrides.
+
+A 20-second manual-play trace on the Pixel 9a, with early rejection
+enabled at 1x, AA off, Auto (GPU), and a 120 FPS target, measured 65.36
+new pictures/s and 9.06 ms median picture preparation. The 95th-percentile
+submission gap was 25.41 ms, and 18 of 1,300 gaps exceeded 30 ms (1.38%).
+This was a live sample, not a matched A/B. Separately, the player
+reported no visible anomalies during the manual widescreen race.
+
+Early face rejection is now the default for Virtua Racing on Android,
+without a marker or a diagnostics build. Other games and platforms keep
+their existing paths. The diagnostics benchmark retains `partial 120` as
+the early-rejection-off control and `early-clip 120` as the on trial.
+
 ## The TGP's rounding
 
 VR's attract race differed from a cabinet video: at the tunnel exit the green car (car 0) drove

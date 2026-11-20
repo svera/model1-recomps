@@ -3890,12 +3890,54 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 
 int main(int argc, char **argv)
 {
+	std::unique_ptr<game::auto_play> hud_benchmark;
+	bool hud_benchmark_baseline = false;
+	bool hud_benchmark_partial = false;
+	bool benchmark_vertex_reuse = false;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	bool benchmark_lighting = false;
+	bool benchmark_early_clip = false;
+	model1::face_lighting_counts face_lighting;
+#endif
+	int hud_benchmark_fps = 120;
+	constexpr int hud_benchmark_begin = 3850, hud_benchmark_end = 4850;
 #ifdef __ANDROID__
 	if (!SDL_GetAndroidInternalStoragePath()) {
 		SDL_Init(SDL_INIT_VIDEO);
 		message_box(SDL_MESSAGEBOX_ERROR, "Virtua Racing", "Cannot access the app's private storage.");
 		return 1;
 	}
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	const std::string hud_option = std::string(SDL_GetAndroidInternalStoragePath()) + "/hud-benchmark";
+	if (FILE *f = fopen(hud_option.c_str(), "r")) {
+		char mode[16]{}, fps[8]{}, extra[2]{};
+		const int fields = fscanf(f, "%15s %7s %1s", mode, fps, extra);
+		fclose(f);
+		if (fields == 1 && !strcmp(mode, "partial-play")) {
+			hud_benchmark_partial = true;
+		} else if (fields == 1 && !strcmp(mode, "early-clip-play")) {
+			benchmark_early_clip = true;
+		} else {
+			hud_benchmark_baseline = !strcmp(mode, "baseline");
+			benchmark_vertex_reuse = !strcmp(mode, "vertices");
+			benchmark_lighting = !strcmp(mode, "lighting");
+			benchmark_early_clip = !strcmp(mode, "early-clip");
+			hud_benchmark_partial = benchmark_vertex_reuse || benchmark_lighting || benchmark_early_clip || !strcmp(mode, "partial");
+			if (fields < 1 || fields > 2 || (!hud_benchmark_baseline && !hud_benchmark_partial && strcmp(mode, "updated")) ||
+				(fields == 2 && strcmp(fps, "60") && strcmp(fps, "120"))) {
+				fprintf(stderr, "HUD diagnostics: expected partial-play or early-clip-play, or baseline, updated, partial, vertices, lighting, or early-clip optionally followed by 60 or 120\n");
+				return 1;
+			}
+			if (!strcmp(fps, "60")) hud_benchmark_fps = 60;
+			// The machine can reset its picture-check counter during the run.
+			if (setenv("M1_G3_NO_VERIFY", "1", 1) != 0) {
+				perror("HUD benchmark M1_G3_NO_VERIFY");
+				return 1;
+			}
+			hud_benchmark = game::make_auto_play(game::id{"vr"}, "", 0, false);
+		}
+	}
+#endif
 #endif
 #ifdef __APPLE__
 	// the game, its drawing and its sound on the performance cores: without it an M-series Mac can put
@@ -4160,6 +4202,12 @@ int main(int argc, char **argv)
 	for (int p = 0; p < 2; p++)
 		cfg.ctl[p] = player_controls::defaults(p, controls);
 	cfg.load(settings_path, controls, &game_part);
+	if (hud_benchmark) {
+		cfg.arcade = true;
+		cfg.scale = cfg.aa = 1;
+		cfg.fps = hud_benchmark_fps;
+		cfg.renderer3d = 1;
+	}
 	if (link_player) cfg.arcade = false;
 	if (arg_scale) cfg.scale = std::clamp(arg_scale, 1, 6);
 	if (arg_aspect >= 0) cfg.aspect = arg_aspect;
@@ -4184,6 +4232,28 @@ int main(int argc, char **argv)
 	const bool fullscreen = cfg.fullscreen;
 	const int scale = cfg.scale;
 	model1 m(std::move(game));
+	m.benchmark_vertex_reuse = benchmark_vertex_reuse;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	m.hud_benchmark_baseline = hud_benchmark_baseline;
+	if (hud_benchmark) {
+		m.hud_partial_updates = hud_benchmark_partial;
+		m.early_face_rejection = benchmark_early_clip;
+	}
+	if (hud_benchmark) fprintf(stderr, "HUD benchmark: %s at %d FPS\n",
+		hud_benchmark_baseline ? "baseline" : benchmark_vertex_reuse ? "vertices" :
+			benchmark_lighting ? "lighting" : benchmark_early_clip ? "early-clip" :
+			hud_benchmark_partial ? "partial" : "updated", hud_benchmark_fps);
+	else if (hud_benchmark_partial) fprintf(stderr, "HUD diagnostics: partial updates enabled for manual play\n");
+#else
+	(void)hud_benchmark_baseline;
+	(void)hud_benchmark_partial;
+#endif
+#ifdef __ANDROID__
+	if (!hud_benchmark && m.title().name == "vr")
+		fprintf(stderr, "VR HUD: partial layer updates enabled\n");
+	if (!hud_benchmark && m.early_face_rejection)
+		fprintf(stderr, "VR renderer: early face rejection enabled\n");
+#endif
 	if (link_player) m.enable_link([&](const m1comm::memory &out, m1comm::memory &in) { return link.exchange(out, in); });
 	m.enable_sound();
 	// antialiasing draws larger and averages down: within 8x the arcade's size in all (at 32:9 that is
@@ -4620,7 +4690,7 @@ int main(int argc, char **argv)
 		if (g3_shared) fprintf(stderr, "the 3D on the GPU: on the renderer's device, straight into its textures\n");
 		if (const char *c = getenv("M1_GPU3D_CHECK")) m.m_gpu3d_check = std::max(0, atoi(c));
 #if M1_GPU3D_SDL
-		m.m_gpu3d_verify = getenv("M1_G3_NO_VERIFY") ? 0 : 3;   // (the game's pictures: three checked against the CPU's)
+		m.m_gpu3d_verify = hud_benchmark || getenv("M1_G3_NO_VERIFY") ? 0 : 3;
 #endif
 	}
 	// Auto: the GPU whenever its test picture passes (the CPU only after a GPU error, for the run).
@@ -4675,7 +4745,7 @@ int main(int argc, char **argv)
 		// older cards draw nothing on one and are fine on the other (vf2-recomp #3: a GTX 970); the
 		// 3D has a device of its own, so the screen's renderer is untouched. SDL_GPU_DRIVER, SDL's
 		// own, chooses over this.)
-		for (int attempt = 0; cfg.renderer3d != 0 && !a3.tested; attempt++) {
+		for (int attempt = 0; !hud_benchmark && cfg.renderer3d != 0 && !a3.tested; attempt++) {
 			a3.tested = true;
 			long long d = -1;
 			m.m_gpu3d_chosen = cfg.renderer3d == 1;
@@ -4996,14 +5066,24 @@ int main(int argc, char **argv)
 
 	bool running = true, paused = false, show_frame = true;
 	// F9: timings in the title bar (and on stderr) every 120 frames; a frame has 17.4 ms
-	struct perf_stats { bool show = false; int frames = 0, starved = 0, held = 0, long_frame = 0, long_picture = 0, long_other = 0, ahead = 0; uint64_t emu = 0, emu_max = 0, present = 0, work = 0, shown = 0, since = SDL_GetTicksNS(); };
+	struct phase_time {
+		uint64_t total = 0, peak = 0;
+		void add(uint64_t ns) { total += ns; peak = std::max(peak, ns); }
+	};
+	struct perf_stats {
+		bool show = false;
+		int frames = 0, starved = 0, held = 0, long_frame = 0, long_picture = 0, long_other = 0, ahead = 0;
+		uint64_t emu = 0, emu_max = 0, present = 0, work = 0, shown = 0, since = SDL_GetTicksNS();
+		phase_time prep, scene, compose, prep_other, pre_present, render_present, game_wait;
+		phase_time scene_3d, scene_screen_other, scene_outside_screen;
+	};
 #ifdef M1_ALWAYS_FRAME_TIMINGS
 	constexpr bool force_frame_timings = true;
 #else
 	constexpr bool force_frame_timings = false;
 #endif
 	perf_stats perf{ force_frame_timings || cfg.timings || getenv("M1_PERF") != nullptr };
-	if (force_frame_timings) fprintf(stderr, "frame timing diagnostics: always enabled in this build\n");
+	if (force_frame_timings) fprintf(stderr, "frame timing diagnostics: always enabled in this build (phase breakdown)\n");
 	// No load governor: the render scale, antialiasing and frame rate are the player's.
 	uint64_t started_at = 0;              // (the first picture: the log's start)
 	double picture_budget = 1;
@@ -5647,6 +5727,14 @@ int main(int argc, char **argv)
 	// scene changes' hold, its sound
 	bool replay_manual_first = replay_mode;
 	auto frame_inputs = [&]() -> bool {
+		if (hud_benchmark) {
+			const auto in = hud_benchmark->frame(int(game_run + 1), m);
+			for (size_t port = 0; port < in.pressed.size(); ++port) m.m_inputs[port] = uint8_t(~in.pressed[port]);
+			for (size_t channel = 0; channel < in.analog.size(); ++channel)
+				if (in.analog[channel] >= 0) m.set_analog_input(int(channel), uint8_t(in.analog[channel]));
+			game_part.before_frame();
+			return true;
+		}
 		switch (read_inputs(m, pads, pstate, cfg.ctl, controls, game_part, g_service)) {
 		case hotkey::menu: open_menu(); break;
 		case hotkey::scale: player_scale_to(cfg.scale % 4 + 1); break;
@@ -5811,8 +5899,35 @@ int main(int argc, char **argv)
 		if (!replay_to_handoff()) return 1;
 	}
 	audio_wake_clock wake_clock;
+	int hud_boundary = hud_benchmark_begin;
 	while (running) {
 		if (link.failed()) break;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		if (hud_benchmark && game_run >= hud_boundary) {
+			timespec stamp{};
+			if (clock_gettime(CLOCK_BOOTTIME, &stamp) != 0) {
+				perror("HUD benchmark boot clock");
+				break;
+			}
+			fprintf(stderr, "HUD benchmark boundary: frame %lld mode %02x camera %08x boot %llu\n",
+				(long long)game_run, unsigned(m.game_mode()), m.camera(),
+				(unsigned long long)stamp.tv_sec * 1000000000ull + stamp.tv_nsec);
+			if (hud_boundary == hud_benchmark_end) {
+				if (benchmark_lighting) {
+					m.benchmark_face_lighting = nullptr;
+					fprintf(stderr, "Face lighting: lit=%llu evaluations=%llu rejected=%llu rejected_evaluations=%llu shared_plane=%llu before_crossing=%llu\n",
+						(unsigned long long)face_lighting.lit, (unsigned long long)face_lighting.evaluations,
+						(unsigned long long)face_lighting.rejected, (unsigned long long)face_lighting.rejected_evaluations,
+						(unsigned long long)face_lighting.shared_plane, (unsigned long long)face_lighting.before_crossing);
+				}
+				break;
+			}
+			if (benchmark_lighting) m.benchmark_face_lighting = &face_lighting;
+			hud_boundary = hud_benchmark_end;
+		}
+#else
+		(void)hud_boundary;
+#endif
 		if (!started_at) { started_at = SDL_GetTicksNS(); log_state("the start"); }
 		bool in_texture = false;           // this pass's picture is on the GPU already (or the last one stays)
 		curtain = carried_curtain;
@@ -6188,8 +6303,20 @@ int main(int argc, char **argv)
 				  vsync_on = SDL_GetRenderVSync(ren, &v) && v != 0;
 			  } }
 			if (m.smooth() && !sync.holding() && !unseen && picture_due) {
+				android_frame_trace prepare("M1 picture preparation");
 				const double now = double(m.frame_number() - 1) + std::clamp(frame_clock - double(game_run), 0.0, 1.0);
 				const uint64_t tr = SDL_GetTicksNS();
+				const uint64_t screen_before = force_frame_timings ? m.m_work.screen_ns : 0;
+				const uint64_t scene_3d_before = force_frame_timings ? m.m_work.scene_3d_ns : 0;
+				auto scene_timing = [&] {
+					if (!force_frame_timings) return;
+					const uint64_t screen = m.m_work.screen_ns - screen_before;
+					const uint64_t scene_3d = m.m_work.scene_3d_ns - scene_3d_before;
+					perf.scene_3d.add(scene_3d);
+					perf.scene_screen_other.add(screen - scene_3d);
+					// SDL and the machine use separate monotonic clocks.
+					perf.scene_outside_screen.add(tp.draw - std::min(tp.draw, screen));
+				};
 				const double t = std::min(now, double(m.frame_number()));
 				tp.now = t;
 				tp.kind = 'N';
@@ -6198,6 +6325,7 @@ int main(int argc, char **argv)
 					const int r = m.render_parts(t, parts);
 					const uint64_t tc = SDL_GetTicksNS();
 					tp.draw = tc - tr;
+					scene_timing();
 					if (r == 0) tp.kind = 'C';
 					else if (r == 2) tp.kind = 'W';
 					const bool composed = r == 1 && gc.draw(parts, m.frame_w(), m.frame_h(), m.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
@@ -6206,7 +6334,7 @@ int main(int argc, char **argv)
 					if (composed) {
 						show_target = in_texture = true;
 						++gpu_pictures;
-						if (gpu_verified < 3 && (gpu_pictures - gpu_check_from == (gpu_verified == 0 ? 1 : gpu_verified == 1 ? 60 : 600) || gpu_recheck)) {
+						if (!hud_benchmark && gpu_verified < 3 && (gpu_pictures - gpu_check_from == (gpu_verified == 0 ? 1 : gpu_verified == 1 ? 60 : 600) || gpu_recheck)) {
 							if (!gpu_recheck) gpu_verified++;
 							std::vector<uint32_t> back;
 							const size_t px = size_t(m.frame_w()) * m.frame_h();
@@ -6272,9 +6400,17 @@ int main(int argc, char **argv)
 				} else {
 					if (!m.render_smooth(t)) { tp.kind = 'C'; cut_hold = true; }
 					tp.draw = SDL_GetTicksNS() - tr;
+					scene_timing();
 				}
-				perf.present += SDL_GetTicksNS() - tr;
-				perf.work += SDL_GetTicksNS() - tr;
+				const uint64_t prep_ns = SDL_GetTicksNS() - tr;
+				perf.present += prep_ns;
+				perf.work += prep_ns;
+				if (force_frame_timings) {
+					perf.prep.add(prep_ns);
+					perf.scene.add(tp.draw);
+					perf.compose.add(tp.compose);
+					perf.prep_other.add(prep_ns - tp.draw - tp.compose);
+				}
 				show_frame = true;
 				auto_tick();
 			}
@@ -6413,7 +6549,16 @@ int main(int argc, char **argv)
 			gt.start([&] { m.run_frame(); });
 		}
 		display_trace.log("SDL_RenderPresent begin", win);
-		if (!SDL_RenderPresent(ren))
+		const uint64_t present_begin = force_frame_timings ? SDL_GetTicksNS() : 0;
+		const bool presented = SDL_RenderPresent(ren);
+		if (force_frame_timings) {
+			perf.render_present.add(SDL_GetTicksNS() - present_begin);
+			perf.pre_present.add(present_begin - t1);
+		}
+		if (presented && show_frame_was_new) {
+			android_frame_trace picture("M1 new picture submitted");
+		}
+		if (!presented)
 			fprintf(stderr, "display: SDL_RenderPresent failed: %s\n", SDL_GetError());
 		display_trace.log("SDL_RenderPresent returned", win);
 		display_trace.presented();
@@ -6425,8 +6570,11 @@ int main(int argc, char **argv)
 		}
 		if (ahead) {
 			perf.ahead++;
+			const uint64_t wait_begin = force_frame_timings ? SDL_GetTicksNS() : 0;
 			gt.wait();
-			const uint64_t e = SDL_GetTicksNS() - ahead_t;
+			const uint64_t wait_end = SDL_GetTicksNS();
+			if (force_frame_timings) perf.game_wait.add(wait_end - wait_begin);
+			const uint64_t e = wait_end - ahead_t;
 			perf.emu += e;
 			perf.emu_max = std::max(perf.emu_max, e);
 			curtain = false;
@@ -6479,7 +6627,7 @@ int main(int argc, char **argv)
 		// The game's backup (rankings, operator settings) saved within a minute of changing, so a
 		// crash, a force quit or the Deck's power button loses at most that (every 3 s before: the
 		// arcade's bookkeeping changes it in play, so it was written that often; and at quit as ever)
-		if (quit_after < 0 && !replay_mode) {
+		if (quit_after < 0 && !replay_mode && !hud_benchmark) {
 			static uint64_t next_check = SDL_GetTicksNS() + 60000000000ull;
 			if (SDL_GetTicksNS() >= next_check) {
 				next_check = SDL_GetTicksNS() + 60000000000ull;
@@ -6494,6 +6642,10 @@ int main(int argc, char **argv)
 		}
 		if (++perf.frames == 120) {
 			if (perf.show) {
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+				timespec window_end{};
+				const bool have_window_end = clock_gettime(CLOCK_BOOTTIME, &window_end) == 0;
+#endif
 				char t[200];
 				const double secs = double(SDL_GetTicksNS() - perf.since) / 1e9;
 				snprintf(t, sizeof t, "%s  %dx  %.0f passes/s  %.0f shown/s  load %.0f%%  game %.1f ms/frame (max %.1f)  picture %.1f ms  sound dropouts %d",
@@ -6502,6 +6654,30 @@ int main(int argc, char **argv)
 						 perf.present / 120e6, perf.starved);
 				SDL_SetWindowTitle(win, t);
 				fprintf(stderr, "%s\n", t);
+				if (force_frame_timings) {
+					const double ns_per_ms_window = perf.frames * 1e6;
+					fprintf(stderr, "frame phases (avg/max ms per pass): picture prep %.2f/%.2f "
+						"(scene %.2f/%.2f, composition %.2f/%.2f, other %.2f/%.2f), pre-present %.2f/%.2f, "
+						"SDL_RenderPresent %.2f/%.2f, game-thread wait %.2f/%.2f (%d queued)\n",
+						perf.prep.total / ns_per_ms_window, perf.prep.peak / 1e6,
+						perf.scene.total / ns_per_ms_window, perf.scene.peak / 1e6,
+						perf.compose.total / ns_per_ms_window, perf.compose.peak / 1e6,
+						perf.prep_other.total / ns_per_ms_window, perf.prep_other.peak / 1e6,
+						perf.pre_present.total / ns_per_ms_window, perf.pre_present.peak / 1e6,
+						perf.render_present.total / ns_per_ms_window, perf.render_present.peak / 1e6,
+						perf.game_wait.total / ns_per_ms_window, perf.game_wait.peak / 1e6, perf.ahead);
+					fprintf(stderr, "scene phases (avg/max ms per pass): 3D path %.2f/%.2f, "
+						"other screen work %.2f/%.2f, outside screen update %.2f/%.2f\n",
+						perf.scene_3d.total / ns_per_ms_window, perf.scene_3d.peak / 1e6,
+						perf.scene_screen_other.total / ns_per_ms_window, perf.scene_screen_other.peak / 1e6,
+						perf.scene_outside_screen.total / ns_per_ms_window, perf.scene_outside_screen.peak / 1e6);
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+					if (have_window_end) {
+						const auto end_ns = static_cast<unsigned long long>(window_end.tv_sec) * 1000000000ull + window_end.tv_nsec;
+						fprintf(stderr, "timing window: boot end %llu ns, duration %.3f ms\n", end_ns, secs * 1000.0);
+					}
+#endif
+				}
 			}
 			if (trace) fprintf(trace, "# pass %lld long passes: %d with a frame, %d a picture only, %d neither; frames run during the present %d\n",
 							   (long long)frames_run, perf.long_frame, perf.long_picture, perf.long_other, perf.ahead);
@@ -6533,7 +6709,7 @@ int main(int argc, char **argv)
 	save_recording("quit");
 	audio.reset();
 	if (link.failed()) { SDL_Quit(); return 1; }
-	if (replay_mode || (quit_after >= 0 && !getenv("M1_SAVE"))) { SDL_Quit(); return 0; }   // replay and test runs leave saves and settings alone
+	if (hud_benchmark || replay_mode || (quit_after >= 0 && !getenv("M1_SAVE"))) { SDL_Quit(); return 0; }   // replay and test runs leave saves and settings alone
 	game_part.keep_arcade_settings();
 	saver.finish();   // (an autosave still being written, done before the last save: the same files)
 	save_blob(nv_path, m.nvram().data(), m.nvram().size());

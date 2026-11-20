@@ -22,7 +22,84 @@ public:
 		if (v == tile_ram[o]) return;
 		tile_ram[o] = v;
 		if (o < 0x4000) { m_entry_dirty[o] = 1; m_entries_dirty = true; }
+		else if (o < 0x4800) m_line_revision[(o - 0x4000) >> 9] = ++m_revision;
+		else if (o >= 0x5000 && o < 0x5008) m_scroll_revision[o - 0x5000] = ++m_revision;
+		else if (o >= 0x6000 && o < 0x7000) m_mask_revision[(o - 0x6000) >> 11] = ++m_revision;
 	}
+	uint64_t layer_revision(int layer) const
+	{
+		const int map = layer >> 1, pair = map & 2;
+		const uint16_t ctrl = tile_ram[0x5004 + pair];
+		uint64_t revision = std::max({m_map_revision[map], scroll_revision(map),
+			line_revision(map), m_mask_revision[map >> 1]});
+		// Split windows can source pixels from either map in the pair.
+		if (ctrl & 0x6000) revision = std::max(revision, m_map_revision[map ^ 1]);
+		return revision;
+	}
+#if defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+	struct layer1_changes {
+		int entries = 0, direct = 0, graphics = 0;
+		bool paired_map = false, scroll = false, line = false, mask = false, full_decode = false;
+	};
+	layer1_changes layer1_changes_since(uint64_t revision) const
+	{
+		layer1_changes changes;
+		changes.paired_map = (tile_ram[0x5004] & 0x6000) && m_map_revision[1] > revision;
+		changes.scroll = scroll_revision(0) > revision;
+		changes.line = line_revision(0) > revision;
+		changes.mask = m_mask_revision[0] > revision;
+		changes.full_decode = m_full_decode_revision > revision;
+		if (changes.full_decode) {
+			changes.entries = 0x1000;
+		} else if (m_map_revision[0] > revision) {
+			for (const auto &entry : m_map0_entry_revision) {
+				const bool direct = entry.direct > revision, graphics = entry.graphics > revision;
+				changes.entries += direct || graphics;
+				changes.direct += direct;
+				changes.graphics += graphics;
+			}
+		}
+		return changes;
+	}
+
+	// Conservative screen bounds: a changed map row can affect any column in these bands.
+	uint64_t layer1_dirty_bands(uint64_t revision, int band_count) const
+	{
+		uint64_t bands = 0;
+		const int vscroll = tile_ram[0x5004] & 511;
+		for (int band = 0; band < band_count; band++) {
+			const int sy = (band * 8 + vscroll) & 511;
+			for (int y : {sy >> 3, ((sy + 7) & 511) >> 3}) {
+				const auto *row = m_map0_entry_revision + y * 64;
+				if (std::any_of(row, row + 64, [revision](const auto &e) { return e.direct > revision; })) {
+					bands |= uint64_t{1} << band;
+					break;
+				}
+			}
+		}
+		return bands;
+	}
+
+	bool layer1_band_drawing_supported() const
+	{
+		return !(tile_ram[0x5004] & 0xe000);
+	}
+
+	void draw_layer1_band(bitmap_rgb32 &bitmap, int band)
+	{
+		const auto *mask = &tile_ram[0x6000];
+		const int y0 = band * 8;
+		const bool line = tile_ram[0x5000] & 0x8000;
+		const int step = line ? 1 : 8;
+		for (int y = y0; y < y0 + 8; y += step) {
+			const int x = (-tile_ram[line ? 0x4000 + y : 0x5000]) & 511;
+			const int sy = (tile_ram[0x5004] + y) & 511;
+			const int split = std::min(496, 512 - x);
+			draw_rect(0, bitmap, mask, 1, 0, 0, x, sy, 0, y, split, y + step);
+			if (split < 496) draw_rect(0, bitmap, mask, 1, 0, 0, 0, sy, split, y, 496, y + step);
+		}
+	}
+#endif
 	void char_w(offs_t o, uint16_t d, uint16_t m)
 	{
 		o &= 0x3ffff;
@@ -72,16 +149,33 @@ public:
 			for (int l = 0; l < 4; l++) { pix[l].resize(512 * 512); flags[l].resize(512 * 512); }
 			m_dirty = true;
 		}
+		unsigned decoded_maps = 0;
 		if (m_dirty) {
 			for (int e = 0; e < 0x4000; e++) decode_entry(e);
+			decoded_maps = 0xf;
 		} else if (m_entries_dirty || m_chars_dirty) {
 			if (m_chars_dirty)
 				for (int e = 0; e < 0x4000; e++)
-					if (m_char_dirty[(tile_ram[e] & tile_mask) & 0x3fff]) m_entry_dirty[e] = 1;
+					if (m_char_dirty[(tile_ram[e] & tile_mask) & 0x3fff]) m_entry_dirty[e] |= 2;
 			for (int e = 0; e < 0x4000; e++)
-				if (m_entry_dirty[e]) decode_entry(e);
+				if (m_entry_dirty[e]) {
+					decode_entry(e);
+					decoded_maps |= 1u << (e >> 12);
+				}
 		}
-		if (m_dirty || m_entries_dirty) std::fill(m_entry_dirty.begin(), m_entry_dirty.end(), 0);
+		for (int map = 0; map < 4; map++)
+			if (decoded_maps & (1u << map)) m_map_revision[map] = ++m_revision;
+#if defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+		if (m_dirty) {
+			m_full_decode_revision = m_map_revision[0];
+		} else if (decoded_maps & 1) {
+			for (int e = 0; e < 0x1000; e++) {
+				if (m_entry_dirty[e] & 1) m_map0_entry_revision[e].direct = m_map_revision[0];
+				if (m_entry_dirty[e] & 2) m_map0_entry_revision[e].graphics = m_map_revision[0];
+			}
+		}
+#endif
+		if (m_dirty || m_entries_dirty || m_chars_dirty) std::fill(m_entry_dirty.begin(), m_entry_dirty.end(), 0);
 		if (m_dirty || m_chars_dirty) std::fill(m_char_dirty.begin(), m_char_dirty.end(), 0);
 		m_dirty = m_entries_dirty = m_chars_dirty = false;
 	}
@@ -265,6 +359,21 @@ private:
 	std::vector<uint8_t> flags[4];
 	const uint32_t *m_pens = nullptr;
 	bool m_dirty = true;                        // everything to decode
+	uint64_t m_revision = 0;
+	uint64_t m_map_revision[4]{}, m_line_revision[4]{}, m_scroll_revision[8]{}, m_mask_revision[2]{};
+	uint64_t scroll_revision(int map) const
+	{
+		return std::max({m_scroll_revision[map], m_scroll_revision[4 + map], m_scroll_revision[4 + (map & 2)]});
+	}
+	uint64_t line_revision(int map) const
+	{
+		return tile_ram[0x5000 + map] & 0x8000 ? m_line_revision[map] : 0;
+	}
+#if defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+	struct entry_revision { uint64_t direct, graphics; };
+	entry_revision m_map0_entry_revision[0x1000]{};
+	uint64_t m_full_decode_revision = 0;
+#endif
 public:
 	bool all_to_decode() const { return m_dirty || pix[0].empty(); }
 private:
@@ -319,6 +428,8 @@ private:
 				   int sx, int sy, int xx1, int yy1, int xx2, int yy2)
 	{
 		tpri |= 0x10;
+		const bool opaque = fl & DRAW_OPAQUE;
+		const uint16_t *const pixels = pix[l].data();
 		int dst_x = xx1;            // MAME takes the destination before the group shift
 		mask += yy1 * 4;
 		while (xx1 >= 128) { xx1 -= 128; xx2 -= 128; mask++; }
@@ -335,13 +446,28 @@ private:
 				uint16_t m = *mask1++;
 				if (win) m = ~m;
 				int llx1 = llx >= 128 ? 128 : llx;
-				for (int x = cur_x; x < llx1; x++) {
-					if ((*srct == tpri || (fl & DRAW_OPAQUE)) && !(m & (0x8000 >> (x >> 3)))) {
-						*dst = m_pens[*src & 0x1fff];
-						if (crd) *crd = uint32_t(l) << 18 | uint32_t(src - pix[l].data());
+				while (cur_x < llx1) {
+					const int end = m ? std::min(llx1, (cur_x + 8) & ~7) : llx1;
+					const int count = end - cur_x;
+					// Each window bit covers eight destination pixels, including partial runs at wraps.
+					if (!(m & (0x8000 >> (cur_x >> 3)))) {
+						if (crd) {
+							const uint32_t coord = uint32_t(l) << 18 | uint32_t(src - pixels);
+							for (int x = 0; x < count; x++)
+								if (opaque || srct[x] == tpri) {
+									dst[x] = m_pens[src[x] & 0x1fff];
+									crd[x] = coord + x;
+								}
+						} else if (opaque) {
+							for (int x = 0; x < count; x++) dst[x] = m_pens[src[x] & 0x1fff];
+						} else {
+							for (int x = 0; x < count; x++)
+								if (srct[x] == tpri) dst[x] = m_pens[src[x] & 0x1fff];
+						}
 					}
-					src++; srct++; dst++;
-					if (crd) crd++;
+					src += count; srct += count; dst += count;
+					if (crd) crd += count;
+					cur_x = end;
 				}
 				llx -= 128;
 				cur_x = 0;

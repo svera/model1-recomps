@@ -1,5 +1,6 @@
 // A small pool of worker threads for splitting a frame's drawing by rows.
 #pragma once
+#include "android_frame_trace.h"
 #ifdef __APPLE__
 #include <pthread.h>
 #endif
@@ -21,7 +22,7 @@ public:
 	// than one band a thread, each thread takes the next band when it's done with its last, so a
 	// thread with heavy rows (the floor) doesn't leave the rest waiting.
 	// few: as few as 2 parts are worth sharing out (each part is a big job of its own)
-	void run(int n, const std::function<void(int, int)> &f, int per_thread = 1, bool few = false)
+	void run(int n, const std::function<void(int, int)> &f, int per_thread = 1, bool few = false, const char *wait_trace = nullptr)
 	{
 		const int t = threads();
 		// inside a band (a worker's, or this thread's mid-run): no pool to hand it to, so here
@@ -41,7 +42,10 @@ public:
 		m_cv.notify_all();
 		take_bands(f, n);
 		std::unique_lock<std::mutex> l(m_mu);
-		m_done.wait(l, [&] { return m_left == 0; });
+		if (m_left != 0) {
+			android_frame_trace wait(wait_trace);
+			m_done.wait(l, [&] { return m_left == 0; });
+		}
 		m_job = nullptr;
 	}
 
@@ -109,4 +113,7 @@ private:
 
 inline void parallel_rows(int n, const std::function<void(int, int)> &f, int per_thread = 1) { row_pool::get().run(n, f, per_thread); }
 // n big jobs (n may be smaller than the threads), one at a time to each thread that's free
-inline void parallel_jobs(int n, const std::function<void(int)> &f) { row_pool::get().run(n, [&](int a, int b) { for (int i = a; i < b; i++) f(i); }, 1, true); }
+inline void parallel_jobs(int n, const std::function<void(int)> &f, const char *wait_trace = nullptr)
+{
+	row_pool::get().run(n, [&](int a, int b) { for (int i = a; i < b; i++) f(i); }, 1, true, wait_trace);
+}

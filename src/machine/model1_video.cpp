@@ -3,6 +3,7 @@
 #include <mutex>
 #include "parallel.h"
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 // license:BSD-3-Clause
@@ -959,10 +960,37 @@ void model1::require_geometry_space(int points, int quads) const
 	}
 }
 
-void model1::fclip_push_quad(int level, quad_t& q)
+unsigned model1::fclip_classify(int &level, const quad_t &q) const
 {
 	view_t *view = m_view.get();
+	unsigned out = 0;
+	auto classify = [&]<auto outside> {
+		return unsigned(outside(view, q.p[0])) | (unsigned(outside(view, q.p[1])) << 1) |
+			(unsigned(outside(view, q.p[2])) << 2) | (unsigned(outside(view, q.p[3])) << 3);
+	};
+	// Most faces pass each plane intact. Classify them inline without an indirect call per vertex
+	// or a recursive call per plane; only a crossing needs the intersection routine.
+	for (; level < 4; ++level) {
+		switch (level) {
+		case 0: out = classify.operator()<fclip_isc_bottom>(); break;
+		case 1: out = classify.operator()<fclip_isc_top>(); break;
+		case 2: out = classify.operator()<fclip_isc_left>(); break;
+		case 3: out = classify.operator()<fclip_isc_right>(); break;
+		}
+		M1_LOG(LOG_TGP, "VIDEOCQ %d", level);
+		for (int i = 0; i < 4; i++)
+			M1_LOG(LOG_TGP, " (%f, %f, %f, %d)", q.p[i]->x, q.p[i]->y, q.p[i]->z, int(out >> i & 1));
+		M1_LOG(LOG_TGP, "\n");
+		if (out) break;
+	}
 
+	return out;
+}
+
+void model1::fclip_push_quad(int level, quad_t& q, unsigned out)
+{
+	view_t *view = m_view.get();
+	if (!out) out = fclip_classify(level, q);
 	if (level == 4)
 	{
 		require_geometry_space(0, 1);
@@ -975,32 +1003,14 @@ void model1::fclip_push_quad(int level, quad_t& q)
 		return;
 	}
 
-	bool is_out[4];
-	for (int i = 0; i < 4; i++)
-	{
-		is_out[i] = m_clipfn[level].m_isclipped(view, q.p[i]);
-	}
-
-	M1_LOG(LOG_TGP, "VIDEOCQ %d", level);
-	for (int i = 0; i < 4; i++)
-		M1_LOG(LOG_TGP, " (%f, %f, %f, %d)", q.p[i]->x, q.p[i]->y, q.p[i]->z, is_out[i]);
-	M1_LOG(LOG_TGP, "\n");
-
-	// No clipping
-	if(!is_out[0] && !is_out[1] && !is_out[2] && !is_out[3])
-	{
-		fclip_push_quad(level+1, q);
-		return;
-	}
-
-	// Full clipping
-	if(is_out[0] && is_out[1] && is_out[2] && is_out[3])
-		return;
+	if (out == 15) return;
+	static constexpr auto clips = std::array{ fclip_clip_bottom, fclip_clip_top, fclip_clip_left, fclip_clip_right };
+	const auto clip = clips[level];
 
 	// Find n so that point n is clipped and n-1 isn't
 	int i;
 	for (i = 0; i < 4; i++)
-		if(is_out[i] && !is_out[(i-1)&3])
+		if ((out & (1u << i)) && !(out & (1u << ((i - 1) & 3))))
 			break;
 
 	point_t* pt[4];
@@ -1009,7 +1019,7 @@ void model1::fclip_push_quad(int level, quad_t& q)
 	for (int j = 0; j < 4; j++)
 	{
 		pt[j] = q.p[(i + j) & 3];
-		is_out2[j] = is_out[(i + j) & 3];
+		is_out2[j] = (out >> ((i + j) & 3)) & 1;
 	}
 
 	// At this point, pt[0] is clipped out and pt[3] isn't.  Test for the 4 possible cases
@@ -1018,18 +1028,18 @@ void model1::fclip_push_quad(int level, quad_t& q)
 		if (is_out2[2])
 		{
 			// pt 0,1,2 clipped out, one triangle left
-			m_clipfn[level].m_clip(view, m_pointpt, pt[2], pt[3]);
+			clip(view, m_pointpt, pt[2], pt[3]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[3], pi2, pi2);
 		}
 		else
 		{
 			// pt 0,1 clipped out, one quad left
-			m_clipfn[level].m_clip(view, m_pointpt, pt[1], pt[2]);
+			clip(view, m_pointpt, pt[1], pt[2]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[2], pt[3], pi2);
 		}
@@ -1039,23 +1049,23 @@ void model1::fclip_push_quad(int level, quad_t& q)
 		if (is_out2[2])
 		{
 			// pt 0,2 clipped out, shouldn't happen, two triangles
-			m_clipfn[level].m_clip(view, m_pointpt, pt[0], pt[1]);
+			clip(view, m_pointpt, pt[0], pt[1]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[1], pt[2]);
+			clip(view, m_pointpt, pt[1], pt[2]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[1], pi2, pi2);
-			m_clipfn[level].m_clip(view, m_pointpt, pt[2], pt[3]);
+			clip(view, m_pointpt, pt[2], pt[3]);
 			pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[3], pi2, pi2);
 		}
 		else
 		{
 			// pt 0 clipped out, one decagon left, split in quad+tri
-			m_clipfn[level].m_clip(view, m_pointpt, pt[0], pt[1]);
+			clip(view, m_pointpt, pt[0], pt[1]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[1], pt[2], pt[3]);
 			fclip_push_quad_next(level, q, pt[3], pi2, pi1, pi1);
@@ -1512,6 +1522,46 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		p->eye_move = glm::length(to - from);
 		p->passes_eye = glm::length(crossing) < 16 * p->eye_move;
 	};
+	const auto transform_uncached = [&](point_t *p) {
+		pose_depths(p);
+		m_view->transform_point(p);
+		free_cam_point(p, rear);
+	};
+#if !defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+	// Scope view-space coordinates to this object invocation; keep each point's
+	// projection and clipping state in its original, separate storage.
+	struct transformed_vertex {
+		std::array<uint32_t, 3> key;
+		std::array<float, 3> xyz;
+	};
+	std::array<transformed_vertex, 64> transformed;
+	uint64_t occupied_vertices = 0;
+	const bool reuse_vertices = benchmark_vertex_reuse && !(object_polygon & 0x800000) &&
+		!effect.point && !eye_from && !m_probing && !m_free_cam && !rear;
+	const auto transform = [&](point_t *p) {
+		if (!reuse_vertices) {
+			transform_uncached(p);
+			return;
+		}
+		const std::array key{std::bit_cast<uint32_t>(p->x), std::bit_cast<uint32_t>(p->y),
+			std::bit_cast<uint32_t>(p->z)};
+		uint32_t hash = key[0] ^ std::rotl(key[1], 11) ^ std::rotl(key[2], 22);
+		hash ^= hash >> 16;
+		hash *= 0x9e3779b1u;
+		const unsigned slot = hash >> 26;
+		const uint64_t bit = uint64_t{1} << slot;
+		auto &entry = transformed[slot];
+		if ((occupied_vertices & bit) && entry.key == key) {
+			p->x = entry.xyz[0]; p->y = entry.xyz[1]; p->z = entry.xyz[2];
+		} else {
+			m_view->transform_point(p);
+			entry = {key, {p->x, p->y, p->z}};
+			occupied_vertices |= bit;
+		}
+	};
+#else
+	const auto &transform = transform_uncached;
+#endif
 	require_geometry_space(2, 0);
 	point_t *old_p0 = m_pointpt++;
 	point_t *old_p1 = m_pointpt++;
@@ -1526,30 +1576,17 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		effect.point(old_p0->x, old_p0->y, old_p0->z);
 		effect.point(old_p1->x, old_p1->y, old_p1->z);
 	}
-	pose_depths(old_p0);
-	pose_depths(old_p1);
-	m_view->transform_point(old_p0);
-	m_view->transform_point(old_p1);
-	free_cam_point(old_p0, rear);
-	free_cam_point(old_p1, rear);
+	transform(old_p0);
+	transform(old_p1);
 
-	if (old_p0->z > 0)
-	{
-		m_view->project_point(old_p0);
-	}
-	else
-	{
-		old_p0->s.x = old_p0->s.y = 0; old_p0->fx = old_p0->fy = 0;
-	}
-
-	if (old_p1->z > 0)
-	{
-		m_view->project_point(old_p1);
-	}
-	else
-	{
-		old_p1->s.x = old_p1->s.y = 0; old_p1->fx = old_p1->fy = 0;
-	}
+	const auto project = [&](point_t *p) {
+		if (p->z > 0)
+			m_view->project_point(p);
+		else {
+			p->s.x = p->s.y = 0; p->fx = p->fy = 0;
+		}
+	};
+	bool old_p0_projected = false, old_p1_projected = false;
 
 	poly_adr += 6;
 
@@ -1608,37 +1645,15 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		const glm::vec3 vn_model = vn;
 		if (effect.lightmode >= 0) lightmode = effect.lightmode;
 
-		if (type == 2)
-		{
-			p1->x = p0->x;
-			p1->y = p0->y;
-			p1->z = p0->z;
-		}
-
 		int link = (flags >> 8) & 3;
 
-		pose_depths(p0);
-		pose_depths(p1);
-		m_view->transform_point(p0);
-		m_view->transform_point(p1);
-		free_cam_point(p0, rear);
-		free_cam_point(p1, rear);
-		if (p0->z > 0)
-		{
-			m_view->project_point(p0);
-		}
-		else
-		{
-			p0->s.x = p0->s.y = 0; p0->fx = p0->fy = 0;
-		}
+		transform(p0);
 
-		if (p1->z > 0)
-		{
-			m_view->project_point(p1);
-		}
-		else
-		{
-			p1->s.x = p1->s.y = 0; p1->fx = p1->fy = 0;
+		if (type == 2) {
+			// This triangle duplicates the first vertex. Keep separate storage for later clipping.
+			*p1 = *p0;
+		} else {
+			transform(p1);
 		}
 
 #if 0
@@ -1647,13 +1662,6 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 				*(uint32_t *)(poly_data + poly_adr),
 				p0->x, p0->y, p0->z,
 				p1->x, p1->y, p1->z);
-
-			M1_LOG(LOG_TGP, "VIDEO:     %08x (%d, %d) (%d, %d) (%d, %d) (%d, %d)\n",
-				*(uint32_t *)(poly_data + poly_adr),
-				old_p0->s.x, old_p0->s.y,
-				old_p1->s.x, old_p1->s.y,
-				p0->s.x, p0->s.y,
-				p1->s.x, p1->s.y);
 		}
 #endif
 
@@ -1661,6 +1669,11 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		cquad.foreground = foreground;
 		int appearance = 0;
 		int clip_level = 0;
+		unsigned clip_out = 0;
+		bool projected = false;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		unsigned lighting_evaluations = 0;
+#endif
 
 		if (!link)
 			goto next;
@@ -1719,39 +1732,9 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		if (colours && size_t(i) < colours->size() && (*colours)[i] != UINT32_MAX)
 			cquad.col = (*colours)[i];
 		else {
-			m_view->transform_vector(vn);
-			vn = glm::normalize(vn);
-#if 0
-			float dif = mult_vector(&vn, &view->light);
-			float ln = view->lightparams[lightmode].a + view->lightparams[lightmode].d*MAX(0.0, dif);
-			cquad.col = scale_color(m_pens[0x1000 | (m_tgp_ram[tex_adr - 0x40000] & 0x3ff)], MIN(1.0, ln));
-			cquad.col = scale_color(m_pens[0x1000 | (m_tgp_ram[tex_adr - 0x40000] & 0x3ff)], MIN(1.0, ln));
-#endif
-
 			if (effect.polygon) {
 				appearance = effect.polygon(i);
 				if (appearance < 0) goto next;
-			}
-			// the shade: from the normal turned by the object's matrix and the light
-			auto lum_of = [&](glm::vec3 n, glm::vec3 light) {
-				float dif = glm::dot(n, light);
-				float spec = compute_specular(n, light, dif, lightmode);
-				float ln = m_view->lightparams[lightmode].a + m_view->lightparams[lightmode].d * std::max(0.0f, dif) + spec;
-				return int(255.0f * std::min(1.0f, ln));
-			};
-			int lumval = lum_of(vn, m_view->light);
-			// Smooth motion, an object blended between two frames: its shade too. Lit as at each frame
-			// (that frame's matrix and light) and the two colours mixed, so a turning model's shades
-			// glide instead of stepping from one frame's to the next's partway, exact at each frame.
-			int lum_from = -1, lum_to = -1;
-			if (m_shade_from && m_alpha < 1) {
-				auto turned = [&](const float *t) {
-					const glm::vec3 r1(t[0], t[3], t[6]), r2(t[1], t[4], t[7]), r3(t[2], t[5], t[8]);
-					return glm::normalize(glm::vec3(glm::dot(vn_model, r1), glm::dot(vn_model, r2), glm::dot(vn_model, r3)));
-				};
-				const glm::vec3 light_from = m_shade_light[3] > 0 ? glm::vec3(m_shade_light[0], m_shade_light[1], m_shade_light[2]) : m_view->light;
-				lum_from = lum_of(turned(m_shade_from), light_from);
-				lum_to = lum_of(turned(m_shade_to), m_view->light);
 			}
 			// bits [11:10] of the tile word select a colour mode: bit 10 marks a
 			// flat UI element (radar blips, HUD text) drawn unlit, and mode 01
@@ -1763,6 +1746,39 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			uint16_t tex_data = m_tgp_ram[tex_adr - 0x40000];
 			if (unset_pen && tex_data == 0xffff) tex_data = uint16_t(0xfc00 | unset_pen);   // (see above; still unlit)
 			if (effect.material) tex_data = effect.material(tex_data);
+			// Unlit materials use full intensity; an interpolated face only needs its two endpoint shades.
+			int lumval = 255, lum_from = -1, lum_to = -1;
+			if (!(tex_data & 0x400)) {
+#ifdef __ANDROID__
+				if (early_face_rejection && !colours && !open && !effect.colour) {
+					clip_out = fclip_classify(clip_level, cquad);
+					if (clip_out == 15) goto next;
+				}
+#endif
+				auto lum_of = [&](glm::vec3 n, glm::vec3 light) {
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+					if (benchmark_face_lighting) ++lighting_evaluations;
+#endif
+					float dif = glm::dot(n, light);
+					float spec = compute_specular(n, light, dif, lightmode);
+					float ln = m_view->lightparams[lightmode].a + m_view->lightparams[lightmode].d * std::max(0.0f, dif) + spec;
+					return int(255.0f * std::min(1.0f, ln));
+				};
+				if (m_shade_from && m_alpha < 1) {
+					auto turned = [&](const float *t) {
+						const glm::vec3 r1(t[0], t[3], t[6]), r2(t[1], t[4], t[7]), r3(t[2], t[5], t[8]);
+						return glm::normalize(glm::vec3(glm::dot(vn_model, r1), glm::dot(vn_model, r2), glm::dot(vn_model, r3)));
+					};
+					const glm::vec3 light_from = m_shade_light[3] > 0 ? glm::vec3(m_shade_light[0], m_shade_light[1], m_shade_light[2]) : m_view->light;
+					lum_from = lum_of(turned(m_shade_from), light_from);
+					if (lum_from >= 0)
+						lum_to = lum_of(turned(m_shade_to), m_view->light);
+				}
+				if (lum_from < 0) {
+					m_view->transform_vector(vn);
+					lumval = lum_of(glm::normalize(vn), m_view->light);
+				}
+			}
 			int color = m_paletteram16[0x1000 | (tex_data & 0x3ff)];
 			int r = (color >> 0x0) & 0x1f;
 			int g = (color >> 0x5) & 0x1f;
@@ -1783,10 +1799,6 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 					lum = 0x3f;
 				else if (lum < 0)
 					lum = 0;
-
-				// flat UI element: draw unlit at full intensity instead of shading it
-				if (tex_data & 0x400)
-					lum = 0x3f;
 
 				const int rr = (m_color_xlat[(r << 8) | lum | 0x0] >> 3) & 0x1f;
 				const int gg = (m_color_xlat[(g << 8) | lum | 0x2000] >> 3) & 0x1f;
@@ -1819,7 +1831,49 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		if (flags & 0x00002000)
 			cquad.col |= MOIRE;
 
-		fclip_push_quad(clip_level, cquad);
+		// Early rejection only uses view-space coordinates. A skipped face can still
+		// supply either vertex to the next face, so carry projection state with each link.
+		if (!old_p0_projected) project(old_p0);
+		if (!old_p1_projected) project(old_p1);
+		old_p0_projected = old_p1_projected = true;
+		project(p0);
+		if (type == 2) {
+			p1->xx = p0->xx; p1->yy = p0->yy;
+			p1->fx = p0->fx; p1->fy = p0->fy;
+			p1->s = p0->s;
+		} else {
+			project(p1);
+		}
+		projected = true;
+		{
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		const auto before_clip = m_quadpt;
+#endif
+		fclip_push_quad(clip_level, cquad, clip_out);
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		if (lighting_evaluations) {
+			auto &counts = *benchmark_face_lighting;
+			++counts.lit;
+			counts.evaluations += lighting_evaluations;
+			if (m_quadpt == before_clip) {
+				++counts.rejected;
+				counts.rejected_evaluations += lighting_evaluations;
+				static constexpr auto planes = std::array{fclip_isc_bottom, fclip_isc_top, fclip_isc_left, fclip_isc_right};
+				bool crossing = false;
+				for (const auto outside : planes) {
+					int n = 0;
+					for (auto *p : cquad.p) n += outside(m_view.get(), p);
+					if (n == 4) {
+						++counts.shared_plane;
+						counts.before_crossing += !crossing;
+						break;
+					}
+					crossing |= n != 0;
+				}
+			}
+		}
+#endif
+		}
 
 	next:
 		poly_adr += 10;
@@ -1828,12 +1882,15 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			case 2:
 				old_p0 = p0;
 				old_p1 = p1;
+				old_p0_projected = old_p1_projected = projected;
 				break;
 			case 1:
 				old_p1 = p0;
+				old_p1_projected = projected;
 				break;
 			case 3:
 				old_p0 = p1;
+				old_p0_projected = projected;
 				break;
 		}
 	}
@@ -2754,15 +2811,6 @@ void model1::video_start()
 	m_pointpt = &m_pointdb[0];
 	m_quadpt = &m_quaddb[0];
 	m_listctl[0] = m_listctl[1] = 0;
-
-	m_clipfn[0].m_isclipped = &model1::fclip_isc_bottom;
-	m_clipfn[0].m_clip = &model1::fclip_clip_bottom;
-	m_clipfn[1].m_isclipped = &model1::fclip_isc_top;
-	m_clipfn[1].m_clip = &model1::fclip_clip_top;
-	m_clipfn[2].m_isclipped = &model1::fclip_isc_left;
-	m_clipfn[2].m_clip = &model1::fclip_clip_left;
-	m_clipfn[3].m_isclipped = &model1::fclip_isc_right;
-	m_clipfn[3].m_clip = &model1::fclip_clip_right;
 
 }
 

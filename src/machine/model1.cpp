@@ -23,6 +23,9 @@ model1::model1(regions &&r)
 {
 	m_video = &game::get_video(m_regions.title);
 	m_profile = &game::get(m_regions.title);
+#ifdef __ANDROID__
+	early_face_rejection = m_regions.title.name == "vr";
+#endif
 	m_display_list0 = m_display_list0_ram.data();
 	m_display_list1 = m_display_list1_ram.data();
 	m_paletteram16 = m_paletteram16_ram.data();
@@ -645,8 +648,50 @@ bool model1::past_boot() const
 	return camera() != 0;
 }
 
+static inline bool transparent_tile_row(const uint32_t *p)
+{
+	constexpr uint32_t KEY = 0xff000000;
+	return !((p[0] ^ KEY) | (p[1] ^ KEY) | (p[2] ^ KEY) | (p[3] ^ KEY) |
+		(p[4] ^ KEY) | (p[5] ^ KEY) | (p[6] ^ KEY) | (p[7] ^ KEY));
+}
+
 // A layer at the arcade's resolution (and the widescreen sides), drawn once a game frame, with each
 // row's drawn span, so the scaling skips what's empty (the HUD and text layers are mostly empty).
+model1::layer_revision model1::current_layer_revision(int layer) const
+{
+	return {m_tiles.layer_revision(layer), m_tile_palette_revision, m_ram_b[0x1138]};
+}
+
+bool model1::layer_layout_changed(int layer, int flags, double slide_time) const
+{
+	const layer_cache &c = m_layer_cache[layer & 7];
+	return c.frame == ~0ull || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
+		c.px.width() != SCREEN_W + 2 * m_ext || c.slide_time != slide_time ||
+		(m_tile_slide_interpolating && m_tile_slide_layer == layer);
+}
+
+bool model1::layer_needs_redraw(int layer, int flags, double slide_time, const layer_revision &revision) const
+{
+	if (layer_layout_changed(layer, flags, slide_time)) return true;
+	// VR's layer hooks depend on tile data and game mode. Other games keep their per-tick cache.
+	if (title().name == "vr") return m_layer_revision[layer & 7] != revision;
+	return m_layer_cache[layer & 7].frame != m_frame;
+}
+
+static void scan_layer_row(const bitmap_rgb32 &px, int y, int16_t &x0, int16_t &x1)
+{
+	constexpr uint32_t KEY = 0xff000000;
+	const uint32_t *r = &px.pix(y);
+	const int tw = px.width();
+	int a = 0, b = tw;
+	while (a + 8 <= tw && transparent_tile_row(r + a)) a += 8;
+	while (a < tw && r[a] == KEY) a++;
+	if (a == tw) { x0 = x1 = 0; return; }
+	while (b - 8 >= a && transparent_tile_row(r + b - 8)) b -= 8;
+	while (b > a && r[b - 1] == KEY) b--;
+	x0 = int16_t(a); x1 = int16_t(b);
+}
+
 model1::layer_cache &model1::cached_layer(int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
@@ -655,11 +700,70 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 	std::array<float, SCREEN_H> slide_rows;
 	const bool smooth_slide = smooth_tile_slide(layer, slide_rows);
 	const double slide_time = smooth_slide ? m_draw_time : -1;
-	if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
-		c.px.width() != tw || c.slide_time != slide_time ||
-		(m_tile_slide_interpolating && m_tile_slide_layer == layer)) {
-		if (c.px.width() != tw) c.px.allocate(tw, SCREEN_H);
-		c.px.fill(KEY);
+	const layer_revision revision = current_layer_revision(layer);
+	if (layer_needs_redraw(layer, flags, slide_time, revision)) {
+		static constexpr const char *rebuild_names[] = {
+			"M1 tile rebuild 0", "M1 tile rebuild 1", "M1 tile rebuild 2", "M1 tile rebuild 3",
+			"M1 tile rebuild 4", "M1 tile rebuild 5", "M1 tile rebuild 6", "M1 tile rebuild 7"
+		};
+		android_frame_trace rebuild(rebuild_names[layer & 7]);
+		hud_plan *plan = nullptr;
+#ifdef __ANDROID__
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+		const bool tracing = ATrace_isEnabled();
+#else
+		constexpr bool tracing = false;
+#endif
+		if (layer == 1 && title().name == "vr" && (hud_partial_updates || tracing)) {
+			const auto &previous = m_layer_revision[1];
+			const auto changes = m_tiles.layer1_changes_since(previous.tiles);
+			const bool layout = layer_layout_changed(layer, flags, slide_time);
+			if (tracing) {
+				char cause[128];
+				snprintf(cause, sizeof cause, "M1 layer 1 inv n=%d direct=%d gfx=%d pair=%d scroll=%d line=%d mask=%d full=%d pal=%d mode=%d layout=%d",
+					changes.entries, changes.direct, changes.graphics, changes.paired_map, changes.scroll,
+					changes.line, changes.mask, changes.full_decode,
+					previous.palette != revision.palette, previous.mode != revision.mode, layout);
+				android_frame_trace invalidation(cause);
+			}
+			if (hud_partial_updates) {
+				plan = &m_hud_plan;
+				// VR's side hook handles only layer 4. Layer 1 must use the ordinary masked draw.
+				const bool supported = flags == 0 && !c.sides && !m_video->repeat_curtains &&
+					!(m_video->centered_scroll_layers & (1u << layer)) &&
+					m_tiles.layer1_band_drawing_supported();
+				if (!layout && supported && changes.entries && !changes.graphics &&
+					!changes.paired_map && !changes.scroll && !changes.line && !changes.mask && !changes.full_decode &&
+					previous.palette == revision.palette && previous.mode == revision.mode) {
+					const auto bands = m_tiles.layer1_dirty_bands(previous.tiles, SCREEN_H / 8);
+					if (rebuild_hud_bands(c, bands)) {
+						find_curtains(c, layer, flags);
+						c.frame = m_frame;
+						c.gen++;
+						m_layer_revision[1] = revision;
+						return c;
+					}
+				} else if (!supported && tracing) {
+					char cause[96];
+					snprintf(cause, sizeof cause, "M1 layer 1 partial unsupported vs=%04x flags=%x sides=%d curtains=%d",
+						unsigned(m_tiles.tile_r(0x5004)), unsigned(flags), c.sides, m_video->repeat_curtains);
+					android_frame_trace fallback(cause);
+				}
+			}
+		}
+#endif
+		if (c.px.width() != tw) {
+			c.px.allocate(tw, SCREEN_H);
+			c.px.fill(KEY);
+		} else if (title().name == "vr" && !(c.flags & segas24_tile::DRAW_OPAQUE) &&
+			!(flags & segas24_tile::DRAW_OPAQUE)) {
+			// Outside the previous row spans the bitmap is already transparent.
+			for (int y = 0; y < SCREEN_H; y++)
+				if (c.x0[y] < c.x1[y])
+					std::fill_n(&c.px.pix(y, c.x0[y]), c.x1[y] - c.x0[y], KEY);
+		} else {
+			c.px.fill(KEY);
+		}
 		if (!m_layers_together) m_tiles.m_ox = m_ext;     // (else set for them all)
 		const auto &slides = m_video->wide_tile_slides;
 		const auto slide = std::find_if(slides.begin(), slides.end(), [&](const auto &s) {
@@ -669,39 +773,39 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 			(m_tiles.tile_r(0x5000 + (layer >> 1)) & 0x8000) &&
 			(m_tiles.tile_r(0x5004 + ((layer >> 1) & 2)) & 0x6000) == 0x4000;
 		const bool repeating = repeat_tile_layer(layer);
-		if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance,
-			smooth_slide ? slide_rows.data() : nullptr);
-		else if (repeating || (extend_backdrops() && (flags & segas24_tile::DRAW_OPAQUE)))
-			m_tiles.draw_wide(c.px, layer, flags, m_ext);
-		else {
-			// (where each pixel came from, for find_curtains' patterns)
-			const bool pens = m_video->repeat_curtains && m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE);
-			if (pens) c.coord.assign(size_t(tw) * SCREEN_H, ~0u);
-			else c.coord.clear();
-			segas24_tile::m_coord = pens ? c.coord.data() : nullptr;
-			m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
-			segas24_tile::m_coord = nullptr;
+		{
+			android_frame_trace draw(layer == 1 ? "M1 layer 1 tile drawing" : nullptr);
+			if (sliding) m_tiles.draw_wide(c.px, layer, flags, m_ext, slide->distance,
+				smooth_slide ? slide_rows.data() : nullptr);
+			else if (repeating || (extend_backdrops() && (flags & segas24_tile::DRAW_OPAQUE)))
+				m_tiles.draw_wide(c.px, layer, flags, m_ext);
+			else {
+				// (where each pixel came from, for find_curtains' patterns)
+				const bool pens = m_video->repeat_curtains && m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE);
+				if (pens) c.coord.assign(size_t(tw) * SCREEN_H, ~0u);
+				else c.coord.clear();
+				segas24_tile::m_coord = pens ? c.coord.data() : nullptr;
+				m_tiles.draw(c.px, c.px.cliprect(), layer, 0, flags);
+				segas24_tile::m_coord = nullptr;
+			}
 		}
 		if (!m_layers_together) m_tiles.m_ox = 0;
-		pin_hud_tiles(c.px, layer);
+		pin_hud_tiles(c.px, layer, plan);
 		if (flags & segas24_tile::DRAW_OPAQUE)
 			fill_backdrop_sides(c.px, layer, flags);
 		c.sides = sliding || repeating || (m_ext && m_wide_frame && !(flags & segas24_tile::DRAW_OPAQUE) && m_gameplay.layer_sides &&
 			m_gameplay.layer_sides(layer, &c.px.pix(0), tw, SCREEN_H, m_ext));
 		clip_scrolling_sides(c.px, layer, flags);
-		c.x0.assign(SCREEN_H, 0);
-		c.x1.assign(SCREEN_H, 0);
-		for (int y = 0; y < SCREEN_H; y++) {
-			const uint32_t *r = &c.px.pix(y);
-			int a = 0, b = tw;
-			while (a < tw && r[a] == KEY) a++;
-			if (a == tw) continue;
-			while (b > a && r[b - 1] == KEY) b--;
-			c.x0[y] = int16_t(a); c.x1[y] = int16_t(b);
+		{
+			android_frame_trace scan(layer == 1 ? "M1 layer 1 span scan" : nullptr);
+			c.x0.assign(SCREEN_H, 0);
+			c.x1.assign(SCREEN_H, 0);
+			for (int y = 0; y < SCREEN_H; y++) scan_layer_row(c.px, y, c.x0[y], c.x1[y]);
 		}
 		find_curtains(c, layer, flags);
 		c.frame = m_frame; c.flags = flags; c.ext = m_ext; c.wide = m_wide_frame; c.gen++;
 		c.slide_time = slide_time;
+		m_layer_revision[layer & 7] = revision;
 	}
 	return c;
 }
@@ -917,9 +1021,29 @@ bool model1::hud_edge_pinning_active() const
 		mode == 0x15 || mode == 0x16 || mode == 0x19 || mode == 0x1a;
 }
 
-void model1::pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const
+size_t model1::hud_cell(const bitmap_rgb32 &pixels, int cx, int cy, int map_row, int scroll) const
 {
+	for (int y = cy * 8; y < (cy + 1) * 8; y++) {
+		if (transparent_tile_row(&pixels.pix(y, m_ext + cx * 8))) continue;
+		const uint32_t code = m_tiles.tile_code(m_tiles.tile_r(map_row + ((cx * 8 - scroll) & 511) / 8));
+		size_t tag = 1;
+		for (size_t i = 0; i < m_video->hud_tile_groups.size(); i++) {
+			const auto &range = m_video->hud_tile_groups[i];
+			if (code >= range.first && code <= range.last) tag = i + 2;
+		}
+		return tag;
+	}
+	return 0;
+}
+
+void model1::pin_hud_tiles(bitmap_rgb32 &pixels, int layer, hud_plan *plan) const
+{
+	if (plan) {
+		plan->cells.fill(0);
+		for (auto &row : plan->moves) row.clear();
+	}
 	if (layer != 1 || !hud_edge_pinning_active()) return;
+	android_frame_trace hud("M1 HUD pinning");
 
 	constexpr uint32_t KEY = 0xff000000;
 	constexpr int COLS = SCREEN_W / 8, ROWS = SCREEN_H / 8;
@@ -929,24 +1053,52 @@ void model1::pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const
 	std::array<bool, COLS * ROWS> occupied{};
 	std::array<size_t, COLS * ROWS> artwork{};
 	const uint16_t hscroll = m_tiles.tile_r(0x5000), vscroll = m_tiles.tile_r(0x5004);
-	for (int cy = first_row; cy < ROWS; cy++)
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const bool baseline = hud_benchmark_baseline;
+#else
+	constexpr bool baseline = false;
+#endif
+	auto check_occupied = [&](int cx, int cy) {
+		for (int row = cy * 8; row < (cy + 1) * 8; row++)
+			if (!transparent_tile_row(&pixels.pix(row, m_ext + cx * 8))) return true;
+		return false;
+	};
+	for (int cy = first_row; cy < ROWS; cy++) {
+		const int scroll = hscroll & 0x8000 ? m_tiles.tile_r(0x4000 + cy * 8) : hscroll;
+		const int y = (cy * 8 + vscroll) & 0x1ff;
+		const int map_row = (y / 8) * 64;
 		for (int cx = 0; cx < COLS; cx++) {
-			const int scroll = hscroll & 0x8000 ? m_tiles.tile_r(0x4000 + cy * 8) : hscroll;
-			const int x = (cx * 8 - scroll) & 0x1ff, y = (cy * 8 + vscroll) & 0x1ff;
-			const uint32_t code = m_tiles.tile_code(m_tiles.tile_r((y / 8) * 64 + x / 8));
+			const int cell = cy * COLS + cx;
+			if (!baseline) {
+				const size_t tag = hud_cell(pixels, cx, cy, map_row, scroll);
+				if (plan) plan->cells[cell] = tag;
+				if (!(occupied[cell] = tag != 0)) continue;
+				artwork[cell] = tag - 1;
+				continue;
+			}
+			const int x = (cx * 8 - scroll) & 0x1ff;
+			const uint32_t code = m_tiles.tile_code(m_tiles.tile_r(map_row + x / 8));
 			for (size_t i = 0; i < m_video->hud_tile_groups.size(); i++) {
 				const auto &range = m_video->hud_tile_groups[i];
-				if (code >= range.first && code <= range.last) artwork[cy * COLS + cx] = i + 1;
+				if (code >= range.first && code <= range.last) artwork[cell] = i + 1;
 			}
 		}
-	for (int y = first_row * 8; y < SCREEN_H; y++)
-		for (int x = 0; x < SCREEN_W; x++)
-			if (pixels.pix(y, m_ext + x) != KEY) occupied[(y / 8) * COLS + x / 8] = true;
-	const std::vector<uint32_t> source(pixels.data(), pixels.data() + size_t(pixels.width()) * pixels.height());
-	for (int cell = 0; cell < COLS * ROWS; cell++) {
+	}
+	if (baseline)
+		for (int cy = first_row; cy < ROWS; cy++)
+			for (int cx = 0; cx < COLS; cx++)
+				occupied[cy * COLS + cx] = check_occupied(cx, cy);
+	std::vector<uint32_t> source;
+	std::vector<int> reusable_group;
+	const int first_y = first_row * 8;
+	for (int cell = first_row * COLS; cell < COLS * ROWS; cell++) {
 		if (!occupied[cell]) continue;
-		std::vector<int> group{ cell };
+		std::vector<int> fresh_group;
+		auto &group = baseline ? fresh_group : reusable_group;
+		group.clear();
+		group.push_back(cell);
 		occupied[cell] = false;
+		const size_t artwork_group = artwork[cell];
 		int left = SCREEN_W, right = 0;
 		for (size_t i = 0; i < group.size(); i++) {
 			const int cx = group[i] % COLS, cy = group[i] / COLS;
@@ -956,27 +1108,93 @@ void model1::pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const
 			for (int y = std::max(first_row, cy - 2); y <= std::min(ROWS - 1, cy + 2); y++)
 				for (int x = std::max(0, cx - 2); x <= std::min(COLS - 1, cx + 2); x++) {
 					const int neighbor = y * COLS + x;
-					if (!occupied[neighbor] || artwork[neighbor] != artwork[cell]) continue;
+					if (!occupied[neighbor] || artwork[neighbor] != artwork_group) continue;
 					occupied[neighbor] = false;
 					group.push_back(neighbor);
 				}
 		}
 		const int offset = int(hud_edge_offset(left, right));
 		if (!offset) continue;
+		if (plan) {
+			for (int part : group) plan->moves[part / COLS].push_back({(part % COLS) * 8, offset, true});
+			for (int part : group) plan->moves[part / COLS].push_back({(part % COLS) * 8, offset, false});
+		}
+		// Freeze the source before the first move; later groups can overlap moved pixels.
+		if (source.empty()) {
+			source.reserve(size_t(SCREEN_H - first_y) * SCREEN_W);
+			for (int y = first_y; y < SCREEN_H; y++) {
+				const uint32_t *row = &pixels.pix(y, m_ext);
+				source.insert(source.end(), row, row + SCREEN_W);
+			}
+		}
 		for (int part : group)
 			for (int y = (part / COLS) * 8; y < (part / COLS + 1) * 8; y++)
 				for (int x = (part % COLS) * 8; x < (part % COLS + 1) * 8; x++) {
-					const uint32_t value = source[size_t(y) * pixels.width() + m_ext + x];
+					const uint32_t value = source[size_t(y - first_y) * SCREEN_W + x];
 					if (value != KEY) pixels.pix(y, m_ext + x) = KEY;
 				}
 		for (int part : group)
 			for (int y = (part / COLS) * 8; y < (part / COLS + 1) * 8; y++)
 				for (int x = (part % COLS) * 8; x < (part % COLS + 1) * 8; x++) {
-					const uint32_t value = source[size_t(y) * pixels.width() + m_ext + x];
+					const uint32_t value = source[size_t(y - first_y) * SCREEN_W + x];
 					if (value != KEY) pixels.pix(y, m_ext + x + offset) = value;
 				}
 	}
 }
+
+#ifdef __ANDROID__
+bool model1::rebuild_hud_bands(layer_cache &c, uint64_t bands)
+{
+	constexpr uint32_t KEY = 0xff000000;
+	constexpr int ROWS = SCREEN_H / 8;
+	const int first = !hud_edge_pinning_active() ? ROWS :
+		(m_ram_b[0x1138] == 0x03 || m_ram_b[0x1138] == 0x07 ? 43 : 0);
+	if (!bands) {
+		android_frame_trace unchanged("M1 layer 1 partial bands=0");
+		return true; // The changed map entries were all outside the visible rows.
+	}
+	auto &scratch = m_hud_band_scratch;
+	const int width = c.px.width();
+	if (scratch.width() != width) scratch.allocate(width, SCREEN_H);
+	const uint16_t hscroll = m_tiles.tile_r(0x5000), vscroll = m_tiles.tile_r(0x5004);
+	for (uint64_t pending = bands; pending; pending &= pending - 1) {
+		const int band = __builtin_ctzll(pending);
+		const int y0 = band * 8;
+		std::fill_n(&scratch.pix(y0), width * 8, KEY);
+		if (!m_layers_together) m_tiles.m_ox = m_ext;
+		m_tiles.draw_layer1_band(scratch, band);
+		if (!m_layers_together) m_tiles.m_ox = 0;
+		if (band < first) continue;
+		const int scroll = hscroll & 0x8000 ? m_tiles.tile_r(0x4000 + y0) : hscroll;
+		const int map_row = (((y0 + vscroll) & 511) / 8) * 64;
+		for (int cx = 0; cx < SCREEN_W / 8; cx++)
+			if (hud_cell(scratch, cx, band, map_row, scroll) != m_hud_plan.cells[band * (SCREEN_W / 8) + cx]) {
+				android_frame_trace fallback("M1 layer 1 partial group changed");
+				return false;
+			}
+	}
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	char marker[48];
+	snprintf(marker, sizeof marker, "M1 layer 1 partial bands=%d", __builtin_popcountll(bands));
+	android_frame_trace partial(marker);
+#endif
+	// With the same cells and artwork groups, replay the original group order on each
+	// dirty row. Read from untouched scratch pixels even where moved groups overlap.
+	for (uint64_t pending = bands; pending; pending &= pending - 1) {
+		const int band = __builtin_ctzll(pending);
+		for (int y = band * 8; y < (band + 1) * 8; y++) {
+			std::copy_n(&scratch.pix(y), width, &c.px.pix(y));
+			for (const auto &move : m_hud_plan.moves[band])
+				for (int x = move.x; x < move.x + 8; x++) {
+					const uint32_t value = scratch.pix(y, m_ext + x);
+					if (value != KEY) c.px.pix(y, m_ext + x + (move.clear ? 0 : move.offset)) = move.clear ? KEY : value;
+				}
+			scan_layer_row(c.px, y, c.x0[y], c.x1[y]);
+		}
+	}
+	return true;
+}
+#endif
 
 float model1::hud_edge_offset(float left, float right) const
 {
@@ -1006,20 +1224,19 @@ void model1::prepare_layers()
 	if (m_scale == 1 && m_ext == 0) return;          // (the arcade's picture draws them straight in)
 	static const int LAYERS[] = { 6, 2, 0, 7, 5, 3, 1 };
 	int todo[7], n = 0;
-	const int tw = SCREEN_W + 2 * m_ext;
 	for (int l : LAYERS) {
 		const int flags = l == 6 ? segas24_tile::DRAW_OPAQUE : 0;
-		const layer_cache &c = m_layer_cache[l];
 		std::array<float, SCREEN_H> slide_rows;
 		const double slide_time = smooth_tile_slide(l, slide_rows) ? m_draw_time : -1;
-		if (c.frame != m_frame || c.flags != flags || c.ext != m_ext || c.wide != m_wide_frame ||
-			c.px.width() != tw || c.slide_time != slide_time) todo[n++] = l;
+		if (layer_needs_redraw(l, flags, slide_time, current_layer_revision(l))) todo[n++] = l;
 	}
 	if (n < 2) return;
+	android_frame_trace batch("M1 tile worker batch");
 	m_work.layers += n;
 	m_tiles.m_ox = m_ext;
 	m_layers_together = true;
-	parallel_jobs(n, [&](int i) { cached_layer(todo[i], todo[i] == 6 ? segas24_tile::DRAW_OPAQUE : 0); });
+	parallel_jobs(n, [&](int i) { cached_layer(todo[i], todo[i] == 6 ? segas24_tile::DRAW_OPAQUE : 0); },
+		"M1 tile worker wait");
 	m_layers_together = false;
 	m_tiles.m_ox = 0;
 }
@@ -1250,11 +1467,15 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 
 void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	work_timer screen_time{m_work.screen_ns};
+#endif
 	view_t *view = m_view.get();
 	view->ayyc = cos(view->ayy);
 	view->ayys = sin(view->ayy);
 
 	if (m_tiles_updated != m_frame) {                // (once per game frame)
+		android_frame_trace decode("M1 tile decode");
 		const uint64_t t0 = trace_ns();
 		m_work.tiles_full += m_tiles.all_to_decode();
 		m_tiles.update(m_pens);
@@ -1363,10 +1584,15 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		}
 	}
 	m_raster_ms = 0;
-	if (g3) gpu3d_begin(bitmap);
-	if (!no_polys) tgp_render(bitmap, cliprect, RENDER_BELOW_HUD);
-	if (g3) gpu3d_end(bitmap);
-	else { m_g3.gpu = false; m_g3.ms = m_raster_ms; m_g3.gpu_ms = 0; }
+	{
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+		work_timer tgp_time{m_work.scene_3d_ns};
+#endif
+		if (g3) gpu3d_begin(bitmap);
+		if (!no_polys) tgp_render(bitmap, cliprect, RENDER_BELOW_HUD);
+		if (g3) gpu3d_end(bitmap);
+		else { m_g3.gpu = false; m_g3.ms = m_raster_ms; m_g3.gpu_ms = 0; }
+	}
 	clear_moire_marks(bitmap, cliprect);
 	if (m_edge_aa && !no_polys && m_parts && m_parts->d3_target >= 0) m_parts->d3_edge = true;
 	if (m_edge_aa && !no_polys && !(m_parts && m_parts->d3_edge)) {
@@ -1402,6 +1628,9 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	// The above-HUD pass and its stencil copy the whole frame twice: only when there is something
 	// to draw there (never in VF; it is for the other Model 1 games' radar blips).
 	if (m_above_hud_seen && !no_polys) {
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+		work_timer tgp_time{m_work.scene_3d_ns};
+#endif
 		build_overlay_mask(bitmap, cliprect);
 		tgp_render(bitmap, cliprect, RENDER_ABOVE_HUD);
 		apply_overlay_stencil(bitmap, cliprect);

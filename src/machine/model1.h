@@ -54,8 +54,31 @@ public:
 	struct work_trace {
 		int tiles_full = 0, layers = 0, sky_build = 0, sky_scale = 0, sky_scale_sync = 0, padded = 0;
 		uint64_t tiles_ns = 0, layers_ns = 0, sky_build_ns = 0, sky_scale_ns = 0, padded_ns = 0, edge_ns = 0;
+		uint64_t screen_ns = 0, scene_3d_ns = 0;
 	} m_work;
+	bool benchmark_vertex_reuse = false;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	struct face_lighting_counts {
+		uint64_t lit = 0, evaluations = 0, rejected = 0, rejected_evaluations = 0;
+		uint64_t shared_plane = 0, before_crossing = 0;
+	};
+	face_lighting_counts *benchmark_face_lighting = nullptr;
+#endif
+#ifdef __ANDROID__
+	bool hud_partial_updates = true;
+	bool early_face_rejection = false;
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	bool hud_benchmark_baseline = false;
+#endif
+#endif
 	static uint64_t trace_ns();
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	struct work_timer {
+		uint64_t &total;
+		uint64_t start = trace_ns();
+		~work_timer() { total += trace_ns() - start; }
+	};
+#endif
 
 	explicit model1(regions &&r);
 	game::id title() const { return m_regions.title; }
@@ -628,6 +651,16 @@ private:
 	uint32_t parts_below(int x, int y) const;
 	void parts_end(bitmap_rgb32 &bitmap);
 	layer_cache m_layer_cache[8];
+	struct layer_revision {
+		uint64_t tiles = 0, palette = 0;
+		uint8_t mode = 0;
+		bool operator==(const layer_revision &) const = default;
+	};
+	layer_revision m_layer_revision[8]{};
+	uint64_t m_tile_palette_revision = 0;
+	bool layer_needs_redraw(int layer, int flags, double slide_time, const layer_revision &revision) const;
+	bool layer_layout_changed(int layer, int flags, double slide_time) const;
+	layer_revision current_layer_revision(int layer) const;
 	bool m_tile_slide_interpolating = false;
 	int m_tile_slide_layer = -1;
 	std::array<float, SCREEN_H> m_tile_slide_residual{};
@@ -636,7 +669,18 @@ private:
 	bool m_layers_together = false;               // prepare_layers: drawing several at once
 	uint64_t m_tiles_updated = ~0ull;   // the game frame the tile graphics were last decoded for
 	bool hud_edge_pinning_active() const;
-	void pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const;
+	struct hud_move { int x, offset; bool clear; };
+	struct hud_plan {
+		std::array<size_t, (SCREEN_W / 8) * (SCREEN_H / 8)> cells{};
+		std::array<std::vector<hud_move>, SCREEN_H / 8> moves;
+	};
+	size_t hud_cell(const bitmap_rgb32 &pixels, int cx, int cy, int map_row, int scroll) const;
+	void pin_hud_tiles(bitmap_rgb32 &pixels, int layer, hud_plan *plan = nullptr) const;
+#ifdef __ANDROID__
+	bitmap_rgb32 m_hud_band_scratch;
+	hud_plan m_hud_plan;
+	bool rebuild_hud_bands(layer_cache &c, uint64_t bands);
+#endif
 	float hud_edge_offset(float left, float right) const;
 	float hud_view_offset(float x, float y, bool viewport = false) const;
 	void pin_hud_point(point_t *point, float offset) const;
@@ -996,16 +1040,6 @@ private:
 		bool spec_enable = false;
 	};
 
-	class clipper_t
-	{
-	public:
-		clipper_t() : m_isclipped(nullptr), m_clip(nullptr) {}
-		clipper_t(std::function<bool(view_t*, point_t*)> isclipped, std::function<void(view_t*, point_t*, point_t*, point_t*)> clip)
-			: m_isclipped(isclipped), m_clip(clip) {}
-		std::function<bool(view_t*, point_t*)> m_isclipped;
-		std::function<void(view_t*, point_t*, point_t*, point_t*)> m_clip;
-	};
-
 	std::unique_ptr<view_t> m_view;
 	std::unique_ptr<point_t[]> m_pointdb;
 	point_t *m_pointpt = nullptr;
@@ -1085,7 +1119,8 @@ private:
 	void        draw_line(bitmap_rgb32 &bitmap, view_t *view, int color, int x1, int y1, int x2, int y2) const;
 
 	void    fclip_push_quad_next(int level, quad_t& q, point_t *p1, point_t *p2, point_t *p3, point_t *p4);
-	void    fclip_push_quad(int level, quad_t& q);
+	unsigned fclip_classify(int &level, const quad_t &q) const;
+	void    fclip_push_quad(int level, quad_t& q, unsigned out = 0);
 	void require_geometry_space(int points, int quads) const;
 
 	static float    min4f(float a, float b, float c, float d);
@@ -1128,7 +1163,6 @@ private:
 		int sky_base = 0, sky_last_tx0 = 0;
 	} m_still;
 
-	clipper_t m_clipfn[4];
 	uint16_t* m_display_list_current = nullptr;
 
 	int m_overlay_stride = 0;
@@ -1145,7 +1179,12 @@ private:
 		model1 &m;
 		uint32_t pen(int i) const { return m.m_pens[i & 0x1fff]; }
 		uint32_t black_pen() const { return 0; }
-		void set_pen_color(int i, int r, int g, int b) { m.m_pens[i & 0x1fff] = (r << 16) | (g << 8) | b; }
+		void set_pen_color(int i, int r, int g, int b) {
+			i &= 0x1fff;
+			const uint32_t colour = (r << 16) | (g << 8) | b;
+			if (i < 0x1000 && m.m_pens[i] != colour) ++m.m_tile_palette_revision;
+			m.m_pens[i] = colour;
+		}
 	} m_palette_obj{*this};
 	palette_t *m_palette = &m_palette_obj;
 	struct screen_t
