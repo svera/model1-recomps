@@ -85,6 +85,60 @@ struct model1_video_test
 		assert(q.p[2]->fx == q.p[3]->fx && q.p[2]->fy == q.p[3]->fy);
 	}
 
+	static void early_face_rejection()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"swa"};
+		model1 m(std::move(regions));
+		m.m_gameplay.object = {};
+		m.m_view->ext = 0;
+		m.m_view->scale = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = {
+			24, -2, 8, 28, -2, 8,
+			0, 0, 0, -1, 24, 2, 8, 28, 2, 8,
+			0, 0, 0, -1, -2, 2, 8, 2, 2, 8,
+		};
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t first = 0x4a01, second = 0x4601;
+		std::memcpy(poly + 6, &first, sizeof first);
+		std::memcpy(poly + 16, &second, sizeof second);
+		m.m_tgp_ram[0] = 0;
+		auto render = [&] {
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			m.m_pointdb[0].fx = -123;
+			float depth = 0;
+			m.push_object(0x40000, 0x800000, 2, depth);
+			std::vector<std::tuple<float, float, float, float, float, float, int>> quads;
+			for (auto *q = m.m_quaddb.get(); q != m.m_quadpt; ++q)
+				for (auto *p : q->p)
+					quads.emplace_back(p->x, p->y, p->z, p->fx, p->fy, q->z, q->col);
+			return std::make_tuple(depth, m.m_pointdb[0].fx, quads);
+		};
+		const auto optimized = render();
+		m.early_face_rejection = false;
+		const auto baseline = render();
+		assert(std::get<1>(baseline) != -123 && std::get<1>(optimized) == -123);
+		assert(!std::get<2>(baseline).empty());
+		assert(std::get<0>(baseline) == std::get<0>(optimized));
+		assert(std::get<2>(baseline) == std::get<2>(optimized));
+
+		int callbacks = 0;
+		m.m_gameplay.object = [&](uint32_t, uint32_t, uint32_t, uint32_t, const float *) {
+			game::object_effects effect;
+			effect.colour = [&](uint32_t, int, int &, int &, int &) { ++callbacks; };
+			return effect;
+		};
+		m.early_face_rejection = true;
+		render();
+		assert(callbacks == 2);
+	}
+
 	static void object_vertex_reuse()
 	{
 		const float object[] = {
@@ -167,6 +221,32 @@ struct model1_video_test
 		m.work_ram()[0x1138] = 0x12;
 		assert(generation(1) == split + 2);
 	}
+
+#if defined(__ANDROID__) || defined(__APPLE__)
+	static void vr_partial_hud_tracking()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_tiles.update(m.m_pens);
+		auto revision = m.m_tiles.layer_revision(1);
+		m.tile_write(64 * 3, 1);
+		m.m_tiles.update(m.m_pens);
+		auto changes = m.m_tiles.layer1_changes_since(revision);
+		assert(changes.entries == 1 && changes.direct == 1 && changes.graphics == 0);
+		assert(m.m_tiles.layer1_dirty_bands(revision, model1::SCREEN_H / 8) == (uint64_t{1} << 3));
+		revision = m.m_tiles.layer_revision(1);
+		m.char_write(16, 0x1111);
+		m.m_tiles.update(m.m_pens);
+		changes = m.m_tiles.layer1_changes_since(revision);
+		assert(changes.graphics == 1 && changes.direct == 0);
+		revision = m.m_tiles.layer_revision(1);
+		m.tile_write(0x5004, 1);
+		assert(m.m_tiles.layer1_changes_since(revision).scroll);
+		m.tile_write(0x5004, 0x4000);
+		assert(!m.m_tiles.layer1_band_drawing_supported());
+	}
+#endif
 
 	static void vr_menu_backdrops(const char *dir)
 	{
@@ -4456,12 +4536,16 @@ int main(int argc, char **argv)
 	}
 	if (argc > 1 && std::string(argv[1]) == "--vr-tile-layer-reuse") {
 		model1_video_test::vr_tile_layer_reuse();
+#if defined(__ANDROID__) || defined(__APPLE__)
+		model1_video_test::vr_partial_hud_tracking();
+#endif
 		puts("VR tile layer cache tests passed");
 		return 0;
 	}
 	if (argc > 1 && std::string(argv[1]) == "--frustum-clipping") {
 		model1_video_test::frustum_clipping();
 		model1_video_test::deferred_object_projection();
+		model1_video_test::early_face_rejection();
 		model1_video_test::object_vertex_reuse();
 		puts("Frustum clipping tests passed");
 		return 0;
@@ -4482,6 +4566,7 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	model1_video_test::frustum_clipping();
+	model1_video_test::early_face_rejection();
 	model1_video_test::vr_tile_layer_reuse();
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();

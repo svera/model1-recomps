@@ -36,7 +36,7 @@ public:
 		if (ctrl & 0x6000) revision = std::max(revision, m_map_revision[map ^ 1]);
 		return revision;
 	}
-#if defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(M1_ALWAYS_FRAME_TIMINGS)
 	struct layer1_changes {
 		int entries = 0, direct = 0, graphics = 0;
 		bool paired_map = false, scroll = false, line = false, mask = false, full_decode = false;
@@ -165,7 +165,7 @@ public:
 		}
 		for (int map = 0; map < 4; map++)
 			if (decoded_maps & (1u << map)) m_map_revision[map] = ++m_revision;
-#if defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(M1_ALWAYS_FRAME_TIMINGS)
 		if (m_dirty) {
 			m_full_decode_revision = m_map_revision[0];
 		} else if (decoded_maps & 1) {
@@ -369,7 +369,7 @@ private:
 	{
 		return tile_ram[0x5000 + map] & 0x8000 ? m_line_revision[map] : 0;
 	}
-#if defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(M1_ALWAYS_FRAME_TIMINGS)
 	struct entry_revision { uint64_t direct, graphics; };
 	entry_revision m_map0_entry_revision[0x1000]{};
 	uint64_t m_full_decode_revision = 0;

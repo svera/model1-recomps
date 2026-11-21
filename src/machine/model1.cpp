@@ -2,6 +2,7 @@
 // Follows MAME's src/mame/sega/model1.cpp (BSD-3-Clause, copyright-holders: Olivier Galibert).
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <optional>
 #include <unordered_map>
 #include "model1.h"
@@ -23,9 +24,6 @@ model1::model1(regions &&r)
 {
 	m_video = &game::get_video(m_regions.title);
 	m_profile = &game::get(m_regions.title);
-#ifdef __ANDROID__
-	early_face_rejection = m_regions.title.name == "vr";
-#endif
 	m_display_list0 = m_display_list0_ram.data();
 	m_display_list1 = m_display_list1_ram.data();
 	m_paletteram16 = m_paletteram16_ram.data();
@@ -116,9 +114,43 @@ void model1::copro_reset()
 
 // ---- frame loop ----
 
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+int64_t model1::simulation_sample::now()
+{
+	timespec ts{};
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+		if (valid) perror("simulation phase clock");
+		valid = false;
+	}
+	return int64_t(ts.tv_sec) * 1000000000 + ts.tv_nsec;
+}
+#endif
+
 void model1::run_frame()
 {
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const bool trace_frame = m_regions.title.name == "vr" && ATrace_isEnabled();
+	const bool trace_simulation = trace_frame && trace_simulation_phases;
+	simulation_sample sample;
+	const uint64_t frame = m_frame, tgp_cycles = m_tgp_cycles;
+	m_simulation_sample = trace_simulation ? &sample : nullptr;
+#endif
 	do { run_scanline(); } while (m_scanline);
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	m_simulation_sample = nullptr;
+	if (trace_simulation && sample.valid) {
+		char name[128];
+		snprintf(name, sizeof name, "M1 sim wall ns f=%llu v60=%lld tgp=%lld io=%lld snd=%lld calls=%d cycles=%llu",
+			(unsigned long long)frame, (long long)(sample.v60 - sample.tgp), (long long)sample.tgp,
+			(long long)sample.io, (long long)sample.audio, sample.tgp_calls,
+			(unsigned long long)(m_tgp_cycles - tgp_cycles));
+		android_frame_trace trace(name);
+	} else if (trace_frame && !trace_simulation) {
+		char name[48];
+		snprintf(name, sizeof name, "M1 sim frame=%llu", (unsigned long long)frame);
+		android_frame_trace trace(name);
+	}
+#endif
 }
 
 void model1::run_scanline()
@@ -127,7 +159,10 @@ void model1::run_scanline()
 		std::copy_n(m_inputs, 3, m_frame_inputs.begin());
 		if (m_gameplay.frame_begin) m_gameplay.frame_begin();
 		// the picture on screen was drawn from the state this frame is about to change: keep that
-		if (m_smooth && m_shown && m_shown_frame == m_frame) keep_still();
+		if (m_smooth && m_shown && m_shown_frame == m_frame) {
+			android_frame_trace trace("M1 keep still");
+			keep_still();
+		}
 	}
 	const int line = m_scanline;
 	if (line == VBLANK_LINE) {
@@ -135,22 +170,38 @@ void model1::run_scanline()
 		if (!BIT(m_irq_mask, 1))
 			irq_raise(1);
 		// vblank starts: the display lists are scanned and swapped
+		android_frame_trace trace("M1 simulation vblank");
 		screen_vblank_model1(1);
 	}
 	m_cpu_owed += CYCLES_PER_LINE * 8.0 / m_profile->cpu_cycles_per_instruction;
 	const int cpu_cycles = int(m_cpu_owed);
 	m_cpu_owed -= cpu_cycles;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	auto *sample = m_simulation_sample;
+	const int64_t begin_cpu = sample ? sample->now() : 0;
+#endif
 	if (run_cpu)
 		run_cpu(cpu_cycles);
 	else {
 		m_maincpu.on_exec = on_instruction;
 		m_maincpu.run(cpu_cycles);
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const int64_t begin_io = sample ? sample->now() : 0;
+	if (sample) sample->v60 += begin_io - begin_cpu;
+#endif
 	timer_tick(CYCLES_PER_LINE);
 	io_board_tick(CYCLES_PER_LINE);
 	uart_tick(CYCLES_PER_LINE);
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const int64_t end_io = sample ? sample->now() : 0;
+	if (sample) sample->io += end_io - begin_io;
+#endif
 	if (m_audio)
 		m_audio->run(CYCLES_PER_LINE * 1e6 / CPU_CLOCK, m_audio_out);
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (sample && m_audio) sample->audio += sample->now() - end_io;
+#endif
 	if (on_line) on_line(line);
 	if (++m_scanline < V_TOTAL) return;
 	m_scanline = 0;
@@ -159,6 +210,7 @@ void model1::run_scanline()
 	// MAME draws the screen when vblank ends (VIDEO_UPDATE_AFTER_VBLANK): the 2D layers are
 	// as the vblank handler left them
 	if (m_draw) {
+		android_frame_trace trace("M1 simulation frame capture");
 		if (m_smooth) record_frame();     // drawn later, for the moment shown (render_smooth)
 		else screen_update(m_bitmap, m_bitmap.cliprect());
 	}
@@ -708,8 +760,8 @@ model1::layer_cache &model1::cached_layer(int layer, int flags)
 		};
 		android_frame_trace rebuild(rebuild_names[layer & 7]);
 		hud_plan *plan = nullptr;
-#ifdef __ANDROID__
-#ifdef M1_ALWAYS_FRAME_TIMINGS
+#if defined(__ANDROID__) || defined(__APPLE__)
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 		const bool tracing = ATrace_isEnabled();
 #else
 		constexpr bool tracing = false;
@@ -1142,7 +1194,7 @@ void model1::pin_hud_tiles(bitmap_rgb32 &pixels, int layer, hud_plan *plan) cons
 	}
 }
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__APPLE__)
 bool model1::rebuild_hud_bands(layer_cache &c, uint64_t bands)
 {
 	constexpr uint32_t KEY = 0xff000000;
@@ -1585,6 +1637,7 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	}
 	m_raster_ms = 0;
 	{
+		android_frame_trace trace("M1 prepare 3D");
 #ifdef M1_ALWAYS_FRAME_TIMINGS
 		work_timer tgp_time{m_work.scene_3d_ns};
 #endif
@@ -1628,6 +1681,7 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	// The above-HUD pass and its stencil copy the whole frame twice: only when there is something
 	// to draw there (never in VF; it is for the other Model 1 games' radar blips).
 	if (m_above_hud_seen && !no_polys) {
+		android_frame_trace trace("M1 prepare 3D overlay");
 #ifdef M1_ALWAYS_FRAME_TIMINGS
 		work_timer tgp_time{m_work.scene_3d_ns};
 #endif

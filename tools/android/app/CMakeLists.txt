@@ -11,16 +11,20 @@ endif()
 
 find_program(HOST_MAKE make REQUIRED)
 find_program(HOST_CC NAMES cc clang gcc REQUIRED NO_CMAKE_FIND_ROOT_PATH)
+set(M1_GAME "vr" CACHE STRING "Game to package")
+if(NOT M1_GAME MATCHES "^(vr|swa|wingwar)$")
+    message(FATAL_ERROR "Unknown Android game: ${M1_GAME}")
+endif()
 execute_process(COMMAND "${HOST_MAKE}" -s "HOSTCC=${HOST_CC}" build/musashi/m68kops.c
     WORKING_DIRECTORY "${REPO}" RESULT_VARIABLE generator_result)
 if(NOT generator_result EQUAL 0)
     message(FATAL_ERROR "Could not generate the Musashi opcode tables on the host")
 endif()
-execute_process(COMMAND "${HOST_MAKE}" -s android-sources
+execute_process(COMMAND "${HOST_MAKE}" -s "ANDROID_GAME=${M1_GAME}" android-sources
     WORKING_DIRECTORY "${REPO}" RESULT_VARIABLE source_result OUTPUT_VARIABLE source_output
     OUTPUT_STRIP_TRAILING_WHITESPACE)
 if(NOT source_result EQUAL 0)
-    message(FATAL_ERROR "Could not obtain the VR native source list")
+    message(FATAL_ERROR "Could not obtain the ${M1_GAME} native source list")
 endif()
 string(REPLACE "\n" ";" source_list "${source_output}")
 list(TRANSFORM source_list PREPEND "${REPO}/")
@@ -58,6 +62,7 @@ target_include_directories(main PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
     "${REPO}/third_party/arcade-lan/include")
 target_link_libraries(main PRIVATE SDL3::SDL3 freetype z)
 if(ANDROID)
+    target_compile_definitions(main PRIVATE __ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__)
     target_compile_definitions(main PRIVATE SLJIT_WX_EXECUTABLE_ALLOCATOR=1)
     target_link_options(main PRIVATE "-Wl,--no-undefined" "-Wl,-z,max-page-size=16384")
     target_link_libraries(main PRIVATE log android)

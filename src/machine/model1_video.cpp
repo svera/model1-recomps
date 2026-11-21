@@ -1,4 +1,5 @@
 #include "model1.h"
+#include "android_frame_trace.h"
 #include <set>
 #include <mutex>
 #include "parallel.h"
@@ -677,6 +678,7 @@ int model1::quad_t::compare(const model1::quad_t* other) const
 
 void model1::sort_quads() const
 {
+	android_frame_trace trace("M1 3D sort");
 	const int count = m_quadpt - &m_quaddb[0];
 	bool finite = true;
 	for (int i = 0; i < count; i++)
@@ -728,6 +730,9 @@ void model1::draw_quads(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
 	view_t *view = m_view.get();
 	int count = m_quadpt - &m_quaddb[0];
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) benchmark_geometry->quads += count;
+#endif
 	m_frame_quads += count;
 	if (count > 0) {                                 // the rows the 3D may draw in (the GPU's parts)
 		m_d3_y0 = std::min(m_d3_y0, std::max(view->y1, cliprect.min_y));
@@ -1004,6 +1009,9 @@ void model1::fclip_push_quad(int level, quad_t& q, unsigned out)
 	}
 
 	if (out == 15) return;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) ++benchmark_geometry->clip_crossings;
+#endif
 	static constexpr auto clips = std::array{ fclip_clip_bottom, fclip_clip_top, fclip_clip_left, fclip_clip_right };
 	const auto clip = clips[level];
 
@@ -1366,6 +1374,10 @@ void model1::free_cam_point(point_t *p, bool rear) const
 // through the wall.
 void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner, const game::model_bounds *bounds, bool rear)
 {
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	auto *counts = m_probing ? nullptr : benchmark_geometry;
+	if (counts) ++counts->objects;
+#endif
 	const uint32_t object_texture = tex_adr, object_polygon = poly_adr, object_size = size;
 	auto invalid = [&](const char *reason, uint32_t polygon) {
 		fprintf(stderr, "Model 1 renderer: %s (frame %llu, object texture %08x polygon %08x size %08x, cursor texture %08x polygon %08x)\n",
@@ -1589,6 +1601,9 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 	bool old_p0_projected = false, old_p1_projected = false;
 
 	poly_adr += 6;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const uint32_t first_face = poly_adr;
+#endif
 
 	for (int i = 0; i < size; i++)
 	{
@@ -1749,12 +1764,10 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			// Unlit materials use full intensity; an interpolated face only needs its two endpoint shades.
 			int lumval = 255, lum_from = -1, lum_to = -1;
 			if (!(tex_data & 0x400)) {
-#ifdef __ANDROID__
 				if (early_face_rejection && !colours && !open && !effect.colour) {
 					clip_out = fclip_classify(clip_level, cquad);
 					if (clip_out == 15) goto next;
 				}
-#endif
 				auto lum_of = [&](glm::vec3 n, glm::vec3 light) {
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 					if (benchmark_face_lighting) ++lighting_evaluations;
@@ -1894,6 +1907,10 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 				break;
 		}
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	// Each completed face advances the ROM cursor even when it emits no geometry.
+	if (counts) counts->faces += (poly_adr - first_face) / 10;
+#endif
 	if (open) {
 		const auto view_of = [&](glm::vec3 m) {
 			point_t p;
@@ -1953,6 +1970,9 @@ int model1::push_direct(int list_offset) {
 
 	list_offset += 18;
 
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	uint64_t direct_faces = 0;
+#endif
 	for (;;) {
 		uint32_t flags = readi(list_offset + 2);
 
@@ -1960,6 +1980,9 @@ int model1::push_direct(int list_offset) {
 		if (!type)
 			break;
 
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		++direct_faces;
+#endif
 		if (flags & 0x00001000)
 			tex_adr++;
 
@@ -2092,6 +2115,9 @@ int model1::push_direct(int list_offset) {
 			break;
 		}
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) benchmark_geometry->direct_faces += direct_faces;
+#endif
 	widen_direct(first_point, first_quad);
 	pin_hud_direct(first_point, first_quad);
 	list_offset += 4;
@@ -2403,6 +2429,7 @@ void model1::update_rear_view_origin()
 
 void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_pass pass)
 {
+	android_frame_trace trace(m_probing ? nullptr : "M1 3D display list");
 	m_render_done = 1;
 	if (m_replaying || (m_listctl[1] & 0x1f) == 0x1f)
 	{
@@ -2871,6 +2898,11 @@ void model1::screen_vblank_model1(int state)
 // if the GPU can't)
 void model1::record_quads(view_t *view, int count)
 {
+	android_frame_trace trace("M1 3D record");
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const size_t spans_before = m_rec_spans.size();
+	const auto rows_before = m_rec_rows;
+#endif
 	const uint64_t t0 = trace_ns();
 	static const bool no_depth = getenv("M1_NO_SHADOW_DEPTH") != nullptr;
 	const bool depth = s_hd_raster && s_moire_blend && !no_depth && m_video->scenery_polys_end;
@@ -2949,6 +2981,12 @@ void model1::record_quads(view_t *view, int count)
 		if (g.flags & G3_SHADOW) { m_rec_m0 = std::min(m_rec_m0, ya); m_rec_m1 = std::max(m_rec_m1, yb); }
 		m_rec_polys.push_back(g);
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) {
+		benchmark_geometry->spans += m_rec_spans.size() - spans_before;
+		benchmark_geometry->rows += m_rec_rows - rows_before;
+	}
+#endif
 	m_rec_ms += (trace_ns() - t0) / 1e6;
 }
 
@@ -2983,6 +3021,7 @@ void model1::rec_replay(bitmap_rgb32 &bitmap)
 
 void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 {
+	android_frame_trace trace("M1 3D draw submission");
 	m_rec = false;
 	const uint64_t t0 = trace_ns();
 	bool ok = true;

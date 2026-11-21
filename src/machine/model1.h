@@ -57,17 +57,22 @@ public:
 		uint64_t screen_ns = 0, scene_3d_ns = 0;
 	} m_work;
 	bool benchmark_vertex_reuse = false;
+	bool early_face_rejection = true;
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	struct face_lighting_counts {
 		uint64_t lit = 0, evaluations = 0, rejected = 0, rejected_evaluations = 0;
 		uint64_t shared_plane = 0, before_crossing = 0;
 	};
 	face_lighting_counts *benchmark_face_lighting = nullptr;
+	struct geometry_counts {
+		uint64_t objects = 0, faces = 0, direct_faces = 0, quads = 0;
+		uint64_t clip_crossings = 0, spans = 0, rows = 0;
+	};
+	geometry_counts *benchmark_geometry = nullptr;
 #endif
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__APPLE__)
 	bool hud_partial_updates = true;
-	bool early_face_rejection = false;
-#ifdef M1_ALWAYS_FRAME_TIMINGS
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	bool hud_benchmark_baseline = false;
 #endif
 #endif
@@ -85,6 +90,9 @@ public:
 	void reset();
 	// One video frame: CPU time, the vblank IRQ, the display-list scan and the render.
 	void run_frame();
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	bool trace_simulation_phases = false;
+#endif
 	static constexpr int FRAME_LINES = 424, FRAME_VBLANK = 384;
 	// One scanline, including begin/end-of-frame work at the boundaries.
 	void run_scanline();
@@ -379,6 +387,15 @@ private:
 	std::unique_ptr<m1comm> m_comm;
 	bool m_comm_external_clock = false;
 	int m_scanline = 0;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	struct simulation_sample {
+		int64_t v60 = 0, tgp = 0, io = 0, audio = 0;
+		int tgp_calls = 0;
+		bool valid = true;
+		int64_t now();
+	};
+	simulation_sample *m_simulation_sample = nullptr;
+#endif
 	std::array<uint8_t, 3> m_frame_inputs{};
 	regions m_regions;
 	std::function<void()> m_tgp_hle_reset;
@@ -676,7 +693,7 @@ private:
 	};
 	size_t hud_cell(const bitmap_rgb32 &pixels, int cx, int cy, int map_row, int scroll) const;
 	void pin_hud_tiles(bitmap_rgb32 &pixels, int layer, hud_plan *plan = nullptr) const;
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__APPLE__)
 	bitmap_rgb32 m_hud_band_scratch;
 	hud_plan m_hud_plan;
 	bool rebuild_hud_bands(layer_cache &c, uint64_t bands);

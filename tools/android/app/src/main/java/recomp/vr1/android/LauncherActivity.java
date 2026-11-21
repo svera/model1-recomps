@@ -8,6 +8,7 @@ import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -28,6 +29,8 @@ public class LauncherActivity extends Activity {
     private static final int EXPORT_LOG = 3;
     private TextView status;
     private Button gameButton, ioButton, playButton, exportButton;
+    private ScrollView setup;
+    private boolean autoStarting, showSetupOnResume, resumed, pendingGameStart;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,23 +41,49 @@ public class LauncherActivity extends Activity {
         int padding = (int) (24 * getResources().getDisplayMetrics().density);
         layout.setPadding(padding, padding, padding, padding);
         TextView title = new TextView(this);
-        title.setText("Virtua Racing Recomp — Android prototype");
+        title.setText(BuildConfig.GAME_TITLE + " Recomp — Android prototype");
         title.setTextSize(22);
         layout.addView(title);
         status = new TextView(this);
         layout.addView(status);
-        gameButton = button(layout, "Import vr.zip", () -> pick(PICK_GAME));
-        ioButton = button(layout, "Import model1io.zip", () -> pick(PICK_IO));
+        gameButton = button(layout, "Import " + BuildConfig.GAME_ARCHIVE, () -> pick(PICK_GAME));
+        ioButton = button(layout, "Import " + BuildConfig.IO_ARCHIVE, () -> pick(PICK_IO));
         playButton = button(layout, "Play", this::play);
         playButton.setFocusableInTouchMode(true);
         button(layout, "Licences", () -> showLicenses("LICENSE", "LICENSES.txt"));
         button(layout, "Android toolchain licences", () -> showLicenses("NDK-NOTICE.txt", "NDK-NOTICE.toolchain.txt"));
         exportButton = button(layout, "Export diagnostic log", this::exportLog);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.addView(layout);
-        setContentView(scroll);
+        setup = new ScrollView(this);
+        setup.setFillViewport(true);
+        setup.addView(layout);
+        setContentView(setup);
         updateStatus();
+        if (BuildConfig.AUTO_START_GAME && savedInstanceState == null && romsReady()) {
+            autoStarting = true;
+            setup.setVisibility(View.INVISIBLE);
+            play();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        resumed = true;
+        if (showSetupOnResume) {
+            showSetupOnResume = false;
+            setup.setVisibility(View.VISIBLE);
+            updateStatus();
+        }
+        if (pendingGameStart) {
+            pendingGameStart = false;
+            startGame();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        resumed = false;
+        super.onPause();
     }
 
     private Button button(LinearLayout layout, String text, Runnable action) {
@@ -69,11 +98,15 @@ public class LauncherActivity extends Activity {
         return new File(new File(getFilesDir(), "roms"), name);
     }
 
+    private boolean romsReady() {
+        return rom(BuildConfig.GAME_ARCHIVE).isFile() && rom(BuildConfig.IO_ARCHIVE).isFile();
+    }
+
     private void updateStatus() {
         status.setText("Connect an external controller. Import your own MAME ROM archives.\n\n"
-                + "vr.zip: " + (rom("vr.zip").isFile() ? "imported" : "missing") + "\n"
-                + "model1io.zip: " + (rom("model1io.zip").isFile() ? "imported" : "missing"));
-        boolean ready = rom("vr.zip").isFile() && rom("model1io.zip").isFile();
+                + BuildConfig.GAME_ARCHIVE + ": " + (rom(BuildConfig.GAME_ARCHIVE).isFile() ? "imported" : "missing") + "\n"
+                + BuildConfig.IO_ARCHIVE + ": " + (rom(BuildConfig.IO_ARCHIVE).isFile() ? "imported" : "missing"));
+        boolean ready = romsReady();
         playButton.setEnabled(ready);
         if (ready) playButton.requestFocus();
     }
@@ -97,7 +130,7 @@ public class LauncherActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("text/plain");
-        intent.putExtra(Intent.EXTRA_TITLE, "virtua-racing-log.txt");
+        intent.putExtra(Intent.EXTRA_TITLE, BuildConfig.LOG_NAME);
         try {
             startActivityForResult(intent, EXPORT_LOG);
         } catch (ActivityNotFoundException e) {
@@ -125,7 +158,7 @@ public class LauncherActivity extends Activity {
                     .setMessage("Diagnostic log exported.").setPositiveButton("OK", null).show());
             return;
         }
-        String name = request == PICK_GAME ? "vr.zip" : "model1io.zip";
+        String name = request == PICK_GAME ? BuildConfig.GAME_ARCHIVE : BuildConfig.IO_ARCHIVE;
         runWork(() -> {
             try (InputStream input = getContentResolver().openInputStream(uri)) {
                 if (input == null) throw new IOException("Could not open the selected document.");
@@ -136,7 +169,16 @@ public class LauncherActivity extends Activity {
 
     private void play() {
         runWork(() -> copyAssets(getAssets(), "assets", new File(getFilesDir(), "assets")),
-                "Preparing game assets...", () -> startActivity(new Intent(this, GameActivity.class)));
+                "Preparing game assets...", () -> {
+                    if (autoStarting && !resumed) pendingGameStart = true;
+                    else startGame();
+                });
+    }
+
+    private void startGame() {
+        showSetupOnResume = autoStarting;
+        autoStarting = false;
+        startActivity(new Intent(this, GameActivity.class));
     }
 
     private interface Work {
@@ -161,6 +203,10 @@ public class LauncherActivity extends Activity {
                 });
             } catch (IOException | SecurityException e) {
                 runOnUiThread(() -> {
+                    if (autoStarting) {
+                        autoStarting = false;
+                        setup.setVisibility(View.VISIBLE);
+                    }
                     gameButton.setEnabled(true);
                     ioButton.setEnabled(true);
                     exportButton.setEnabled(true);
@@ -168,11 +214,11 @@ public class LauncherActivity extends Activity {
                     showError(e.getMessage() == null ? e.toString() : e.getMessage());
                 });
             }
-        }, "vr-prepare").start();
+        }, "game-prepare").start();
     }
 
     private void showError(String message) {
-        new AlertDialog.Builder(this).setTitle("Virtua Racing").setMessage(message)
+        new AlertDialog.Builder(this).setTitle(BuildConfig.GAME_TITLE).setMessage(message)
                 .setPositiveButton("OK", null).show();
     }
 
@@ -223,7 +269,7 @@ public class LauncherActivity extends Activity {
             if (!temporary.renameTo(destination)) throw new IOException("Cannot replace " + destination);
         } finally {
             if (temporary.exists() && !temporary.delete()) {
-                android.util.Log.w("VirtuaRacing", "Cannot remove " + temporary);
+                android.util.Log.w("Model1Launcher", "Cannot remove " + temporary);
             }
         }
     }

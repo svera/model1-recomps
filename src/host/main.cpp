@@ -75,6 +75,13 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #ifdef __APPLE__
 #include <pthread.h>
 #endif
+#ifdef __ANDROID__
+#include <android/performance_hint.h>
+#endif
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 // Picture shapes F6 / View+RB cycle through; zero follows the window.
 static constexpr float ASPECTS[] = { 0.0f, 4.0f / 3, 16.0f / 10, 16.0f / 9, 64.0f / 27, 32.0f / 9 };
@@ -847,7 +854,7 @@ bool first_launch(const romset::definition &set, const std::string &data, const 
 #ifdef __ANDROID__
 	const std::string android_note = problem + "Import both " + set.zip + " and " +
 		(set.use_advanced_ioboard ? "model1io2.zip" : "model1io.zip") +
-		" from the Virtua Racing launcher, then try again.";
+		" from the launcher, then try again.";
 	message_box(SDL_MESSAGEBOX_ERROR, set.display_name, android_note);
 	return false;
 #else
@@ -3897,19 +3904,48 @@ int main(int argc, char **argv)
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	bool benchmark_lighting = false;
 	bool benchmark_early_clip = false;
+	bool benchmark_sim_timing = false;
+	bool benchmark_worker_4_7 = false;
+	bool benchmark_render_hint = false;
+	bool benchmark_sustained = false;
 	model1::face_lighting_counts face_lighting;
 #endif
 	int hud_benchmark_fps = 120;
-	constexpr int hud_benchmark_begin = 3850, hud_benchmark_end = 4850;
+	constexpr int hud_benchmark_begin = 3850;
+	int hud_benchmark_end = 4850;
+#ifdef __APPLE__
+	bool mac_benchmark_hud = false, mac_benchmark_clip = false, mac_benchmark_swa = false;
+	if (const char *mode = getenv("M1_VR_BENCHMARK")) {
+		if (host_game().name != "vr" || (strcmp(mode, "baseline") && strcmp(mode, "hud") &&
+			strcmp(mode, "clip") && strcmp(mode, "both"))) {
+			fprintf(stderr, "M1_VR_BENCHMARK requires VR and baseline, hud, clip, or both\n");
+			return 1;
+		}
+		mac_benchmark_hud = !strcmp(mode, "hud") || !strcmp(mode, "both");
+		mac_benchmark_clip = !strcmp(mode, "clip") || !strcmp(mode, "both");
+		hud_benchmark = game::make_auto_play(game::id{"vr"}, "", 0, false);
+		fprintf(stderr, "Mac VR benchmark: %s\n", mode);
+	}
+	if (const char *mode = getenv("M1_SWA_CLIP_BENCHMARK")) {
+		if (host_game().name != "swa" || hud_benchmark || (strcmp(mode, "off") && strcmp(mode, "on"))) {
+			fprintf(stderr, "M1_SWA_CLIP_BENCHMARK requires SWA and off or on\n");
+			return 1;
+		}
+		mac_benchmark_swa = true;
+		mac_benchmark_clip = !strcmp(mode, "on");
+		hud_benchmark = game::make_auto_play(game::id{"swa"}, "", 0, false);
+		fprintf(stderr, "Mac SWA clip benchmark: %s\n", mode);
+	}
+#endif
 #ifdef __ANDROID__
 	if (!SDL_GetAndroidInternalStoragePath()) {
 		SDL_Init(SDL_INIT_VIDEO);
-		message_box(SDL_MESSAGEBOX_ERROR, "Virtua Racing", "Cannot access the app's private storage.");
+		message_box(SDL_MESSAGEBOX_ERROR, host_title(), "Cannot access the app's private storage.");
 		return 1;
 	}
 #ifdef M1_ALWAYS_FRAME_TIMINGS
 	const std::string hud_option = std::string(SDL_GetAndroidInternalStoragePath()) + "/hud-benchmark";
-	if (FILE *f = fopen(hud_option.c_str(), "r")) {
+	if (FILE *f = host_game().name == "vr" ? fopen(hud_option.c_str(), "r") : nullptr) {
 		char mode[16]{}, fps[8]{}, extra[2]{};
 		const int fields = fscanf(f, "%15s %7s %1s", mode, fps, extra);
 		fclose(f);
@@ -3921,14 +3957,20 @@ int main(int argc, char **argv)
 			hud_benchmark_baseline = !strcmp(mode, "baseline");
 			benchmark_vertex_reuse = !strcmp(mode, "vertices");
 			benchmark_lighting = !strcmp(mode, "lighting");
-			benchmark_early_clip = !strcmp(mode, "early-clip");
+			benchmark_sim_timing = !strcmp(mode, "sim-timing");
+			const bool sustained_hint = !strcmp(mode, "sustained-hint");
+			benchmark_sustained = sustained_hint || !strcmp(mode, "sustained-base");
+			benchmark_render_hint = sustained_hint || !strcmp(mode, "render-hint");
+			benchmark_worker_4_7 = (!benchmark_sustained && benchmark_render_hint) || !strcmp(mode, "worker-4-7");
+			benchmark_early_clip = benchmark_sustained || benchmark_sim_timing || benchmark_worker_4_7 || !strcmp(mode, "early-clip");
 			hud_benchmark_partial = benchmark_vertex_reuse || benchmark_lighting || benchmark_early_clip || !strcmp(mode, "partial");
 			if (fields < 1 || fields > 2 || (!hud_benchmark_baseline && !hud_benchmark_partial && strcmp(mode, "updated")) ||
 				(fields == 2 && strcmp(fps, "60") && strcmp(fps, "120"))) {
-				fprintf(stderr, "HUD diagnostics: expected partial-play or early-clip-play, or baseline, updated, partial, vertices, lighting, or early-clip optionally followed by 60 or 120\n");
+				fprintf(stderr, "HUD diagnostics: expected partial-play or early-clip-play, or baseline, updated, partial, vertices, lighting, early-clip, sim-timing, worker-4-7, render-hint, sustained-base, or sustained-hint optionally followed by 60 or 120\n");
 				return 1;
 			}
 			if (!strcmp(fps, "60")) hud_benchmark_fps = 60;
+			if (benchmark_sustained) hud_benchmark_end = hud_benchmark_begin + 10000;
 			// The machine can reset its picture-check counter during the run.
 			if (setenv("M1_G3_NO_VERIFY", "1", 1) != 0) {
 				perror("HUD benchmark M1_G3_NO_VERIFY");
@@ -4233,15 +4275,24 @@ int main(int argc, char **argv)
 	const int scale = cfg.scale;
 	model1 m(std::move(game));
 	m.benchmark_vertex_reuse = benchmark_vertex_reuse;
+#ifdef __APPLE__
+	if (hud_benchmark) {
+		if (!mac_benchmark_swa) m.hud_partial_updates = mac_benchmark_hud;
+		m.early_face_rejection = mac_benchmark_clip;
+	}
+#endif
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	m.hud_benchmark_baseline = hud_benchmark_baseline;
+	m.trace_simulation_phases = benchmark_sim_timing;
 	if (hud_benchmark) {
 		m.hud_partial_updates = hud_benchmark_partial;
 		m.early_face_rejection = benchmark_early_clip;
 	}
 	if (hud_benchmark) fprintf(stderr, "HUD benchmark: %s at %d FPS\n",
 		hud_benchmark_baseline ? "baseline" : benchmark_vertex_reuse ? "vertices" :
-			benchmark_lighting ? "lighting" : benchmark_early_clip ? "early-clip" :
+			benchmark_lighting ? "lighting" : benchmark_sim_timing ? "sim-timing" :
+			benchmark_sustained ? (benchmark_render_hint ? "sustained-hint" : "sustained-base") :
+			benchmark_render_hint ? "render-hint" : benchmark_worker_4_7 ? "worker-4-7" : benchmark_early_clip ? "early-clip" :
 			hud_benchmark_partial ? "partial" : "updated", hud_benchmark_fps);
 	else if (hud_benchmark_partial) fprintf(stderr, "HUD diagnostics: partial updates enabled for manual play\n");
 #else
@@ -4252,7 +4303,7 @@ int main(int argc, char **argv)
 	if (!hud_benchmark && m.title().name == "vr")
 		fprintf(stderr, "VR HUD: partial layer updates enabled\n");
 	if (!hud_benchmark && m.early_face_rejection)
-		fprintf(stderr, "VR renderer: early face rejection enabled\n");
+		fprintf(stderr, "Renderer: early face rejection enabled\n");
 #endif
 	if (link_player) m.enable_link([&](const m1comm::memory &out, m1comm::memory &in) { return link.exchange(out, in); });
 	m.enable_sound();
@@ -5699,9 +5750,36 @@ int main(int argc, char **argv)
 		std::thread th;
 		void start(std::function<void()> f) { { std::lock_guard<std::mutex> l(mu); job = std::move(f); busy = true; } cv.notify_all(); }
 		void wait() { std::unique_lock<std::mutex> l(mu); cv.wait(l, [&] { return !busy; }); }
-		game_thread() : th([this] {
+		explicit game_thread([[maybe_unused]] bool worker_4_7 = false) : th([this, worker_4_7] {
 #ifdef __APPLE__
 			pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);   // (not the efficiency cores)
+#endif
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+			if (worker_4_7) {
+				cpu_set_t allowed, target;
+				CPU_ZERO(&target);
+				if (sched_getaffinity(0, sizeof allowed, &allowed) != 0) {
+					perror("HUD benchmark worker affinity read");
+				} else {
+					for (int cpu = 4; cpu <= 7; ++cpu)
+						if (CPU_ISSET(cpu, &allowed)) CPU_SET(cpu, &target);
+					if (CPU_COUNT(&target) == 0) {
+						fprintf(stderr, "HUD benchmark worker affinity: no allowed CPUs in 4-7\n");
+					} else if (sched_setaffinity(0, sizeof target, &target) != 0) {
+						perror("HUD benchmark worker affinity set");
+					} else if (sched_getaffinity(0, sizeof allowed, &allowed) != 0) {
+						perror("HUD benchmark worker affinity verify");
+					} else if (!CPU_EQUAL(&allowed, &target)) {
+						fprintf(stderr, "HUD benchmark worker affinity: effective mask did not match request\n");
+					} else {
+						fprintf(stderr, "HUD benchmark worker affinity verified: CPUs 4-7 mask=0x%x\n",
+							unsigned(CPU_ISSET(4, &allowed) << 4 | CPU_ISSET(5, &allowed) << 5 |
+								CPU_ISSET(6, &allowed) << 6 | CPU_ISSET(7, &allowed) << 7));
+					}
+				}
+			}
+#else
+			(void)worker_4_7;
 #endif
 			std::unique_lock<std::mutex> l(mu);
 			for (;;) {
@@ -5718,7 +5796,11 @@ int main(int argc, char **argv)
 		~game_thread() { { std::lock_guard<std::mutex> l(mu); quit = true; } cv.notify_all(); th.join(); }
 	};
 	static const bool no_game_thread = getenv("M1_NO_GAME_THREAD") != nullptr;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	game_thread gt(benchmark_worker_4_7);
+#else
 	game_thread gt;
+#endif
 	bool carried_curtain = false;      // (a curtain from the frame run during the last present)
 	bool carried_on_gpu = false;       // (... and put together by the GPU)
 	double screen_hz_now = 0;          // (the screen's Hz, looked up each second)
@@ -5900,9 +5982,76 @@ int main(int argc, char **argv)
 	}
 	audio_wake_clock wake_clock;
 	int hud_boundary = hud_benchmark_begin;
+#ifdef __ANDROID__
+	std::unique_ptr<APerformanceHintSession, decltype(&APerformanceHint_closeSession)>
+		render_hint(nullptr, &APerformanceHint_closeSession);
+	unsigned render_hint_reports = 0;
+	int render_hint_fps = 0;
+	bool benchmark_hint_required = false;
+#if defined(M1_ALWAYS_FRAME_TIMINGS)
+	benchmark_hint_required = benchmark_render_hint;
+#endif
+	const char *hint_name = m.title().name == "vr" ? "VR" : host_title();
+	{
+		if (__builtin_available(android 33, *)) {
+			auto *manager = APerformanceHint_getManager();
+			const int32_t tid = gettid();
+			const int target_fps = hud_benchmark ? hud_benchmark_fps : cfg.fps;
+			if (manager)
+				render_hint.reset(APerformanceHint_createSession(manager, &tid, 1, 1000000000LL / target_fps));
+			if (render_hint) {
+				render_hint_fps = target_fps;
+				if (benchmark_hint_required)
+					fprintf(stderr, "HUD benchmark render hint: tid=%d target=%lld ns\n", tid,
+						(long long)(1000000000LL / target_fps));
+				else
+					fprintf(stderr, "%s performance hint: enabled for render thread %d at %d FPS\n",
+						hint_name, tid, target_fps);
+			}
+		}
+		if (!render_hint) {
+			if (benchmark_hint_required) {
+				fprintf(stderr, "HUD benchmark render hint: couldn't create session (requires Android 13 and device support)\n");
+				return 1;
+			}
+			fprintf(stderr, "%s performance hint: unavailable on this Android version or device; continuing without it\n", hint_name);
+		}
+	}
+#endif
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	bool sustained_racing = false;
+#endif
 	while (running) {
 		if (link.failed()) break;
+#ifdef __APPLE__
+		if (hud_benchmark && game_run >= hud_boundary) {
+			if (mac_benchmark_swa)
+				fprintf(stderr, "Mac SWA benchmark boundary: frame %lld trace_ms %.3f sequence %02x time %04x\n",
+					(long long)game_run, double(SDL_GetTicksNS() - trace_t0) / 1e6,
+					unsigned(m.nvram()[0xf008]), unsigned(m.nvram()[0xf334] | m.nvram()[0xf335] << 8));
+			else
+				fprintf(stderr, "Mac VR benchmark boundary: frame %lld trace_ms %.3f mode %02x\n",
+					(long long)game_run, double(SDL_GetTicksNS() - trace_t0) / 1e6, unsigned(m.work_ram()[0x1138]));
+			if (hud_boundary == hud_benchmark_end) break;
+			hud_boundary = hud_benchmark_end;
+		}
+#endif
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		if (benchmark_sustained && game_run >= hud_benchmark_begin && game_run < hud_benchmark_end) {
+			// VR's dispatcher state 0x14 is the active race, not the grid or results.
+			const bool racing = m.work_ram()[0x1138] == 0x14;
+			if (racing != sustained_racing) {
+				timespec stamp{};
+				if (clock_gettime(CLOCK_BOOTTIME, &stamp) != 0) {
+					perror("HUD benchmark race boot clock");
+					break;
+				}
+				fprintf(stderr, "HUD benchmark race: %s frame %lld boot %llu\n",
+					racing ? "begin" : "end", (long long)game_run,
+					(unsigned long long)stamp.tv_sec * 1000000000ull + stamp.tv_nsec);
+				sustained_racing = racing;
+			}
+		}
 		if (hud_benchmark && game_run >= hud_boundary) {
 			timespec stamp{};
 			if (clock_gettime(CLOCK_BOOTTIME, &stamp) != 0) {
@@ -5913,6 +6062,7 @@ int main(int argc, char **argv)
 				(long long)game_run, unsigned(m.game_mode()), m.camera(),
 				(unsigned long long)stamp.tv_sec * 1000000000ull + stamp.tv_nsec);
 			if (hud_boundary == hud_benchmark_end) {
+				if (render_hint) fprintf(stderr, "HUD benchmark render hint: %u successful reports\n", render_hint_reports);
 				if (benchmark_lighting) {
 					m.benchmark_face_lighting = nullptr;
 					fprintf(stderr, "Face lighting: lit=%llu evaluations=%llu rejected=%llu rejected_evaluations=%llu shared_plane=%llu before_crossing=%llu\n",
@@ -5925,7 +6075,7 @@ int main(int argc, char **argv)
 			if (benchmark_lighting) m.benchmark_face_lighting = &face_lighting;
 			hud_boundary = hud_benchmark_end;
 		}
-#else
+#elif !defined(__APPLE__)
 		(void)hud_boundary;
 #endif
 		if (!started_at) { started_at = SDL_GetTicksNS(); log_state("the start"); }
@@ -6262,10 +6412,13 @@ int main(int argc, char **argv)
 			else if (sound_full) due = 0;   // (the clock stops at the next frame, below)
 			const uint64_t t0 = SDL_GetTicksNS();
 			display_trace.log("simulation begin", win);
-			for (int i = 0; i < due; i++) {
-				if (!frame_inputs()) break;
-				m.run_frame();
-				if (!after_frame(ff)) break;
+			if (due) {
+				android_frame_trace simulation("M1 synchronous simulation");
+				for (int i = 0; i < due; i++) {
+					if (!frame_inputs()) break;
+					m.run_frame();
+					if (!after_frame(ff)) break;
+				}
 			}
 			display_trace.log("simulation returned; picture preparation begin", win);
 			frame_clock = std::min(frame_clock, double(game_run) + 0.999);   // (frames not run: the menu opened, a restart)
@@ -6287,6 +6440,7 @@ int main(int argc, char **argv)
 			if (on_gpu()) {
 				model1::gpu_image pending;
 				if (m.sky_pending(pending)) {
+					android_frame_trace preload("M1 sky preload");
 					const uint64_t tq = SDL_GetTicksNS();
 					gc.preload(pending);
 					tp.upload += SDL_GetTicksNS() - tq;
@@ -6321,15 +6475,37 @@ int main(int argc, char **argv)
 				tp.now = t;
 				tp.kind = 'N';
 				if (on_gpu()) {
-					g3_prepare();
-					const int r = m.render_parts(t, parts);
+					const int r = [&] {
+						android_frame_trace scene("M1 prepare scene");
+						g3_prepare();
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+						if (benchmark_worker_4_7 && ATrace_isEnabled()) {
+							model1::geometry_counts counts;
+							m.benchmark_geometry = &counts;
+							const int result = m.render_parts(t, parts);
+							m.benchmark_geometry = nullptr;
+							char name[128];
+							snprintf(name, sizeof name, "M1 geometry t=%.6f o=%llu f=%llu d=%llu q=%llu clip=%llu spans=%llu rows=%llu",
+								t, (unsigned long long)counts.objects, (unsigned long long)counts.faces,
+								(unsigned long long)counts.direct_faces, (unsigned long long)counts.quads,
+								(unsigned long long)counts.clip_crossings, (unsigned long long)counts.spans,
+								(unsigned long long)counts.rows);
+							android_frame_trace geometry(name);
+							return result;
+						}
+#endif
+						return m.render_parts(t, parts);
+					}();
 					const uint64_t tc = SDL_GetTicksNS();
 					tp.draw = tc - tr;
 					scene_timing();
 					if (r == 0) tp.kind = 'C';
 					else if (r == 2) tp.kind = 'W';
-					const bool composed = r == 1 && gc.draw(parts, m.frame_w(), m.frame_h(), m.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
-										  (aa_now() == 1 || gc.resolve(aa_now(), shown_w(), shown_h()));
+					const bool composed = r == 1 && [&] {
+						android_frame_trace compose("M1 prepare composition");
+						return gc.draw(parts, m.frame_w(), m.frame_h(), m.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
+							(aa_now() == 1 || gc.resolve(aa_now(), shown_w(), shown_h()));
+					}();
 					if (r == 1) tp.compose = SDL_GetTicksNS() - tc;
 					if (composed) {
 						show_target = in_texture = true;
@@ -6403,6 +6579,33 @@ int main(int argc, char **argv)
 					scene_timing();
 				}
 				const uint64_t prep_ns = SDL_GetTicksNS() - tr;
+#ifdef __ANDROID__
+				if (__builtin_available(android 33, *)) {
+					if (render_hint) {
+						int error = 0;
+						if (cfg.fps != render_hint_fps) {
+							error = APerformanceHint_updateTargetWorkDuration(render_hint.get(),
+								1000000000LL / cfg.fps);
+							if (!error) {
+								render_hint_fps = cfg.fps;
+								fprintf(stderr, "%s performance hint: target updated to %d FPS\n", hint_name, render_hint_fps);
+							}
+						}
+						if (!error)
+							error = APerformanceHint_reportActualWorkDuration(render_hint.get(), prep_ns);
+						if (error) {
+							if (benchmark_hint_required) {
+								fprintf(stderr, "HUD benchmark render hint: report failed (%d)\n", error);
+								return 1;
+							}
+							fprintf(stderr, "%s performance hint: update/report failed (%d); disabling session\n", hint_name, error);
+							render_hint.reset();
+						} else {
+							++render_hint_reports;
+						}
+					}
+				}
+#endif
 				perf.present += prep_ns;
 				perf.work += prep_ns;
 				if (force_frame_timings) {
@@ -6546,11 +6749,17 @@ int main(int argc, char **argv)
 			frame_inputs()) {
 			ahead = true;
 			ahead_t = SDL_GetTicksNS();
-			gt.start([&] { m.run_frame(); });
+			gt.start([&] {
+				android_frame_trace simulation("M1 ahead simulation");
+				m.run_frame();
+			});
 		}
 		display_trace.log("SDL_RenderPresent begin", win);
 		const uint64_t present_begin = force_frame_timings ? SDL_GetTicksNS() : 0;
-		const bool presented = SDL_RenderPresent(ren);
+		const bool presented = [&] {
+			android_frame_trace present(show_frame_was_new ? "M1 present new picture" : "M1 present without new picture");
+			return SDL_RenderPresent(ren);
+		}();
 		if (force_frame_timings) {
 			perf.render_present.add(SDL_GetTicksNS() - present_begin);
 			perf.pre_present.add(present_begin - t1);
@@ -6571,7 +6780,10 @@ int main(int argc, char **argv)
 		if (ahead) {
 			perf.ahead++;
 			const uint64_t wait_begin = force_frame_timings ? SDL_GetTicksNS() : 0;
-			gt.wait();
+			{
+				android_frame_trace wait("M1 game-thread handoff");
+				gt.wait();
+			}
 			const uint64_t wait_end = SDL_GetTicksNS();
 			if (force_frame_timings) perf.game_wait.add(wait_end - wait_begin);
 			const uint64_t e = wait_end - ahead_t;
@@ -6605,14 +6817,20 @@ int main(int argc, char **argv)
 		}
 		// Without vsync (forced off, or a minimised window) present returns at once: don't spin a core.
 		{ static uint64_t pass = SDL_GetTicksNS(); const uint64_t t = SDL_GetTicksNS();
-		  if (!hidden && t - pass < 2000000) SDL_DelayNS(2000000 - (t - pass));
+		  if (!hidden && t - pass < 2000000) {
+			  android_frame_trace pacing("M1 minimum pass delay");
+			  SDL_DelayNS(2000000 - (t - pass));
+		  }
 		  pass = SDL_GetTicksNS(); }
 		if (hidden) {                // tests: a hidden window may not wait for the screen; pace as 120 Hz (M1_HZ=n: n Hz)
 			static uint64_t next = SDL_GetTicksNS();
 			static const uint64_t period = uint64_t(1e9 / (getenv("M1_HZ") ? atof(getenv("M1_HZ")) : 120.0));
 			next += period;
 			const uint64_t t = SDL_GetTicksNS();
-			if (next > t) SDL_DelayNS(next - t); else next = t;
+			if (next > t) {
+				android_frame_trace pacing("M1 hidden pacing delay");
+				SDL_DelayNS(next - t);
+			} else next = t;
 		}
 		if (focus_checks > 0 && !hidden) {
 			const bool ours = SDL_GetKeyboardFocus() == win;

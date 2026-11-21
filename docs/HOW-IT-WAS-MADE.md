@@ -2450,7 +2450,7 @@ was then scaled to the 2424x1080 window. Reducing the internal scale from 2x
 helped, but at 1x most of the measured frame time was in scene preparation,
 not the call to present the picture.
 
-Build the opt-in APK with `tools/android/build.sh assembleDiagnostics`. Its
+Build the opt-in APK with `tools/android/build.sh assembleVrDiagnostics`. Its
 `frame phases` line reports average and peak wall times per pass for picture
 preparation, composition, work before presenting, `SDL_RenderPresent`, and
 game-thread waits. The `scene phases` line separates the 3D path, other
@@ -2621,9 +2621,9 @@ membership. Median layer 1 rebuild wall time was 0.50 ms. The app submitted
 and a p95 of 27.67 ms. This was not a matched A/B. Separately, the player
 reported that the HUD looked good during this manual session.
 
-Partial layer 1 updates are now the default for Virtua Racing on Android,
-without a marker or a diagnostics build. Other platforms and layers keep
-their existing paths. A full rebuild still handles changes to group
+Partial layer 1 updates are now the default for Virtua Racing on Android
+and macOS, without a marker or a diagnostics build. Other platforms and
+layers keep their existing paths. A full rebuild still handles changes to group
 membership or global layer state. The diagnostics benchmark retains
 `updated 120` as the full-rebuild control and `partial 120` as the
 partial-update trial.
@@ -2705,10 +2705,565 @@ submission gap was 25.41 ms, and 18 of 1,300 gaps exceeded 30 ms (1.38%).
 This was a live sample, not a matched A/B. Separately, the player
 reported no visible anomalies during the manual widescreen race.
 
-Early face rejection is now the default for Virtua Racing on Android,
-without a marker or a diagnostics build. Other games and platforms keep
-their existing paths. The diagnostics benchmark retains `partial 120` as
+Early face rejection became the default for Virtua Racing on Android and
+macOS, without a marker or a diagnostics build. It was later generalized to
+other games and platforms as described below. The diagnostics benchmark retains `partial 120` as
 the early-rejection-off control and `early-clip 120` as the on trial.
+
+With both optimizations on, three fixed-input Pixel 9a traces (1x, AA
+off, Vulkan, 120 FPS target) covered 52.09 s across the measured
+3850-4850 frame intervals. The app submitted 70.30 new pictures/s, with
+61 of 3,659 submission gaps over 30 ms (1.67%) and a 24.79 ms p95.
+For each within-run gap, the trace contained one complete picture
+preparation slice. The phase medians below are separate and do not
+necessarily add up to the median gap.
+
+| Median time | Gaps at most 30 ms | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Previous submission to preparation start | 4.47 ms | 18.81 ms |
+| Picture preparation | 8.10 ms | 14.00 ms |
+| Tile-worker wait within preparation | 0.00 ms | 2.54 ms |
+| Preparation end to next submission | 0.87 ms | 1.29 ms |
+| Render thread sleeping before preparation | 3.28 ms | 14.50 ms |
+
+The largest difference was before preparation. The render thread was
+mostly asleep in that extra time, not runnable and waiting for a core.
+Preparation also took longer, including more CPU time and tile-worker
+wait. The trace did not identify what the thread was waiting for before
+preparation, and SurfaceFlinger did not expose a matching game-surface
+timeline in these intervals. These are app submissions, not display
+scanout. The next measurement should distinguish intentional pacing,
+game-thread handoff, and renderer or GPU synchronization before changing
+the pacing logic.
+
+Two follow-up scripted traces added markers for present, pacing sleeps,
+synchronous simulation, and the ahead-frame simulation and its handoff.
+With both optimizations on, 41 of 2,296 submission gaps exceeded 30 ms
+(1.79%); the p95 was 25.32 ms. Waiting for the ahead frame was the longest
+marked pre-preparation phase in 38 of those 41 gaps. Median handoff time
+was 14.54 ms in the long gaps versus 2.79 ms across all other gaps, including
+those with no handoff. No long gap included an intervening present without
+a new picture, and explicit pacing sleeps contributed a median of zero.
+
+Among gaps with a matched handoff and worker slice, the ahead simulation
+took a median of 14.95 ms wall time and 14.53 ms on CPU in the long gaps,
+versus 5.58 ms wall and 5.49 ms on CPU in the other gaps. The worker began
+about 0.71 ms before the handoff wait in both groups. The render thread was
+waiting for a more expensive game frame, not primarily for the worker to
+be scheduled. Picture preparation also rose from 8.99 to 14.04 ms in the
+long gaps. The next profile should break down simulation CPU time in those
+slow frames before changing pacing or thread scheduling.
+
+### What the simulation worker does in slow frames
+
+Two more fixed-input Pixel 9a traces put diagnostics-only markers around
+the still-state copy, vblank display-list work, and end-of-frame capture.
+There were 43 gaps over 30 ms out of 2,377 picture-submission gaps. For the
+42 long gaps and 1,300 other gaps with a matched handoff and worker frame,
+median simulation CPU time was 15.08 ms versus 5.58 ms. Intersecting each
+marker with the worker's running intervals gave this breakdown:
+
+| Worker phase (median CPU time) | Gaps at most 30 ms | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Still-state copy | 0.21 ms | 0.40 ms |
+| Vblank display-list work | 0.009 ms | 0.012 ms |
+| End-of-frame capture | 0.21 ms | 0.24 ms |
+| Outside those three phases | 5.11 ms | 14.27 ms |
+
+The extra time was overwhelmingly outside the three marked phases, in the
+part of the frame that includes scanline CPU execution and device stepping.
+The first two traces did not yield app call stacks. A third run, targeting
+the already-running game PID, yielded 13 worker samples across nine
+matched long gaps and 437 across 432 other sampled frames. Four of the
+13 long-gap samples included the MB86233 geometry processor's execution
+loop. The samples also included main CPU memory access, audio, and I/O
+work. Many stacks were incomplete, and the long-gap sample is too small
+to identify which subsystem explains the extra CPU time.
+
+#### Separating V60, TGP, sound, and I/O
+
+The first per-phase timers read the thread CPU clock around every TGP sync.
+There are thousands of syncs per frame; the timed builds submitted only
+35.93–36.40 new pictures/s, so those captures were discarded for attribution.
+The replacement uses monotonic elapsed time, emits one summary per frame,
+and is active only for Virtua Racing in an Android diagnostics trace. It
+still perturbs the run: 59.39–61.15 new pictures/s versus 67.59–69.30 in
+the preceding two captures. This is a cross-run comparison, not a
+controlled measurement of timer overhead.
+
+All 62 gaps over 30 ms in the two replacement captures (out of 2,092
+submission gaps) had a matched ahead frame, as did 1,120 shorter gaps.
+The median worker time off CPU was 0.04 ms in the long gaps and below
+0.01 ms in the shorter ones, so off-CPU time does not explain the typical
+increase in these elapsed phase timings:
+
+| Median time per matched worker frame | Gaps at most 30 ms | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Worker on CPU (scheduler) | 6.38 ms | 10.01 ms |
+| V60 path excluding nested TGP sync (elapsed) | 2.56 ms | 4.26 ms |
+| TGP sync (elapsed) | 1.65 ms | 2.09 ms |
+| Sound stepping (elapsed) | 1.43 ms | 2.15 ms |
+| Timer, UART and I/O stepping (elapsed) | 0.25 ms | 0.37 ms |
+
+The V60 path showed the largest increase in both runs. But among 387
+emulated frame numbers with a matched handoff in both runs, just one
+landed in a long gap both times, while 28 did so in only one run. All 387
+pairs had identical emulated TGP cycle counts. Across the 28 pairs that
+changed gap group, median elapsed time rose by 2.18 ms in the V60 path,
+0.74 ms in sound, and 0.52 ms in TGP sync. The TGP did not execute more
+emulated cycles in those pairs; this is not evidence that extra geometry
+work caused the stutter. Capture CPU placement and frequencies in the
+same handoff windows without the per-phase timers to check for a shared
+host-side slowdown before selecting an optimization.
+
+#### CPU placement and frequency during handoff stalls
+
+The per-phase timers are now opt-in (`sim-timing 120`). The lighter
+`early-clip 120` trace records the emulated frame number, allowing the
+same worker frame to be compared across captures. Two runs that traced
+every CPU frequency change dropped to 28.63 and 29.18 new pictures/s.
+Do not use those runs to characterize ordinary stutter: the same APK
+managed 64.05 with scheduler events alone and 63.40 when polling frequency
+every 10 ms. The poll estimates the reported frequency over a slice; it
+can miss short transitions.
+
+| Worker metric | Scheduler only, short / long | 10 ms polling, short / long |
+| --- | ---: | ---: |
+| Matched gaps (long means over 30 ms) | 598 / 20 | 554 / 37 |
+| Median on-CPU time | 5.63 / 13.26 ms | 5.70 / 13.23 ms |
+| Share of worker CPU time on efficiency cores | 1.8% / 61.8% | 4.6% / 67.8% |
+| Median frequency weighted by worker running time | not recorded | 1.65 / 1.17 GHz |
+
+Of 400 emulated frames matched across both lighter runs, one was in a
+long gap both times and 22 were in a long gap only once. In 16 of those
+22 pairs the worker spent a greater share of its CPU time on efficiency
+cores in the long-gap run. Its median on-CPU time rose by 8.67 ms across
+those pairs. The renderer also slowed: in the polled run it generally
+stayed on the mid cluster, but its reported median frequency during
+picture preparation fell from 1.65 to 1.36 GHz in long gaps.
+
+Core placement and lower reported frequency are associated with the
+stalls, but not every long gap moved the worker to an efficiency core,
+and the traces do not establish causality. A controlled next experiment
+is to compare default scheduling against keeping only the simulation
+worker off the efficiency cores on this Pixel, with scheduler-only
+tracing. Compare the long-gap rate, picture throughput, and preparation
+time so that a faster handoff is not mistaken for an overall gain if the
+worker ends up competing with the renderer.
+
+#### Keeping the simulation worker off the efficiency cores
+
+The Android diagnostics-only `worker-4-7 120` benchmark uses the same
+race and renderer settings as `early-clip 120` but restricts the ahead
+simulation worker to available CPUs 4–7. On the Pixel 9a, these are the
+mid and prime cores. Both treatment runs logged an effective mask of
+`0xf0`; scheduler traces confirmed zero worker time on CPUs 0–3. The
+renderer, tile workers, and ordinary gameplay scheduling were unchanged
+by the setting.
+
+Four scheduler-only captures ran in control, treatment, treatment,
+control order, each over emulated frames 3850–4850:
+
+| Metric | Default scheduling | Worker restricted to CPUs 4–7 |
+| --- | ---: | ---: |
+| New pictures submitted per second | 65.53 | 65.77 |
+| Submission gaps over 30 ms | 55/2,274 (2.42%) | 20/2,283 (0.88%) |
+| Submission gap p95 | 26.67 ms | 25.02 ms |
+| Median picture preparation | 8.80 ms | 8.99 ms |
+| Median matched handoff in remaining long gaps | 12.32 ms | 6.33 ms |
+| Median picture preparation in remaining matched long gaps | 15.92 ms | 16.97 ms |
+
+Both treatment runs had fewer long gaps (0.87–0.88%) than either
+control (1.12–3.76%), though the controls varied considerably. This is
+evidence that worker placement contributes to the stalls on this Pixel,
+not evidence of a throughput gain. The residual long gaps had shorter
+handoffs but still had expensive picture preparation. Keep the CPU mask
+diagnostics-only: the numbering is device-specific, and these short
+captures do not establish sustained thermal or battery impact.
+
+#### What still makes picture preparation slow
+
+Two more scripted traces kept the worker restriction and added
+diagnostics-only markers for the 3D path, scene preparation, and SDL
+composition. All 13 gaps over 30 ms (out of 2,381 submission gaps)
+included a tile-worker batch. To separate the cost of having a batch
+from the cost of a slow batch, compare the long gaps with both all
+shorter gaps and the shorter gaps that also had a batch:
+
+| Median time | Short gaps (2,368) | Short gaps with a batch (1,033) | Long gaps (13) |
+| --- | ---: | ---: | ---: |
+| Picture preparation, elapsed | 8.39 ms | 11.12 ms | 16.98 ms |
+| Render thread on CPU during preparation | 7.08 ms | 8.22 ms | 12.18 ms |
+| 3D path, render thread on CPU | 4.76 ms | 5.15 ms | 7.60 ms |
+| Tile-worker wait, elapsed | 0.00 ms | 1.78 ms | 2.79 ms |
+| SDL composition, elapsed | 0.46 ms | 0.61 ms | 1.10 ms |
+
+The 3D path was the largest measured increase in render-thread CPU
+time. It includes CPU geometry and GPU command preparation; it is not
+a measurement of GPU execution. Median render-thread runnable delay
+across preparation was only 0.17 ms in the long gaps. Tile waits also
+grew, but layer 1 finished last in only one of the 13 long-gap batches.
+Across the two earlier restricted-worker captures, layers 0 and 5
+finished last in all 20 long-gap batches. There is no evidence here
+that HUD layer 1 is the main remaining bottleneck.
+
+The next profile should split the 3D path into object processing,
+quad sorting/recording, and draw submission in the same gap groups,
+before choosing another renderer change. The long-gap sample remains
+small, so the phase timings prioritize investigation rather than
+establishing a single cause.
+
+#### Splitting the 3D preparation cost
+
+Two further `worker-4-7 120` captures added markers for display-list
+processing, quad sorting and recording, and draw submission. All 18 of
+2,279 submission gaps over 30 ms included a tile-worker batch. The table
+compares those gaps with the 1,031 shorter gaps that also had a batch.
+Each value is median render-thread CPU time; nested sorting and recording
+are subtracted from the display-list phase to avoid double counting.
+
+| 3D phase | Short gaps with a batch | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Total 3D preparation | 5.35 ms | 7.70 ms |
+| Display-list processing, excluding sorting and recording | 2.88 ms | 4.04 ms |
+| Quad recording | 1.70 ms | 2.45 ms |
+| Quad sorting | 0.26 ms | 0.40 ms |
+| Draw submission | 0.52 ms | 0.70 ms |
+
+Display-list processing, which includes object transforms, lighting,
+and clipping, grew the most in both captures. Recording was the
+second-largest increase. Draw submission measures CPU-side work, not
+GPU execution. The timings do not tell us whether slow pictures contain
+more geometry or whether the same work takes longer. The next measurement
+should count objects, visited faces, and emitted quads per picture to
+separate those cases before changing the renderer.
+
+#### Counting geometry per picture
+
+Two more `worker-4-7 120` captures counted object requests, completed
+face visits, and quads sent to the draw path. These counters ran only
+in the traced Android benchmark and excluded probe passes. All 17 gaps
+over 30 ms (out of 2,326) had a tile-worker batch; the comparison group
+was the 1,029 shorter gaps that also had a batch.
+
+| Median per picture | Short gaps with a batch | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Object requests | 352 | 348 |
+| Object face visits | 30,293 | 30,150 |
+| Quads sent to the draw path | 6,711 | 7,709 |
+| Display-list CPU time, excluding sorting and recording | 2.82 ms | 3.88 ms |
+| Display-list CPU time divided by face visits | 93 ns | 128 ns |
+| Quad recording CPU time | 1.74 ms | 2.66 ms |
+| Quad recording CPU time divided by emitted quads | 275 ns | 351 ns |
+
+No direct faces were processed in the matched interval. The long-gap
+pictures did not visit more object faces, but emitted about 15% more
+quads. The higher cost per face and per quad means counts alone do not
+explain the slowdown. Matching 12 long-gap pictures to shorter ones
+from the same emulated frame in the other run gave median paired
+differences of zero object face visits and three emitted quads, but
+0.82 ms more list processing and 0.72 ms more recording in the long
+gaps. The interpolation fractions could differ. Only one of the 12
+same-frame pairs matched every count; matching by counts instead of
+frame number found two pairs. Neither comparison proves identical work.
+
+#### Render-thread placement in the slow pictures
+
+Intersecting the 3D preparation slices with scheduler running intervals
+showed that **both pictures in all 12 same-frame pairs ran their entire
+3D phase on the mid cluster (CPUs 4–6)**. The median paired increase of
+2.04 ms of 3D CPU time was entirely on that cluster. All 17 long-gap
+pictures ran their 3D phase on the mid cluster. Unlike the simulation
+worker, the renderer was not doing this work on efficiency cores.
+
+The geometry-count traces did not record frequencies. In the earlier
+10 ms polling trace, restricting the comparison to pictures that had
+a tile batch and ran all preparation CPU time on CPUs 4–6 still showed
+a lower estimated median frequency in long gaps: 1.34 GHz across 36
+long gaps versus 1.58 GHz across 409 shorter gaps. This is a separate
+capture and cannot attribute the extra time in the 12 matched pairs.
+Collect the geometry counts and coarse frequency polling together, with
+clipping and span-work counters, to distinguish a lower clock rate from
+more expensive work per face or quad.
+
+#### Measuring geometry work and CPU frequency together
+
+Two `worker-4-7 120` captures added counts for partial frustum-plane
+crossings and generated spans, with CPU frequency polled every 10 ms.
+There were 19 gaps over 30 ms out of 2,239. The table compares the
+18 long and 961 shorter gaps that had a tile batch and ran all their
+3D CPU time on CPUs 4–6.
+
+| Median per picture | Short gaps | Gaps over 30 ms |
+| --- | ---: | ---: |
+| 3D CPU time | 5.50 ms | 7.77 ms |
+| Reported frequency, weighted by 3D CPU time | 1.55 GHz | 1.25 GHz |
+| Object faces visited | 30,293 | 30,459 |
+| Partial frustum-plane crossings | 303 | 303 |
+| Generated spans | 39,742 | 42,505 |
+| Estimated quad-recording cycles per generated span | 73.5 | 73.2 |
+
+Across 10 pairs from the same emulated frame in opposite runs, the
+median long-minus-short difference was +1.65 ms of 3D CPU time and
+-0.40 GHz of reported frequency. Eight of the ten long-gap pictures
+had a lower frequency estimate. Median paired changes in work were
+zero object faces, two partial crossings, and about 140 spans. Span
+counts varied between runs; the pooled increase did not repeat in
+both. Estimated cycles use reported frequency times scheduled CPU
+time, not hardware cycle counters. Polling can miss transitions,
+interpolation can differ between paired pictures, and the sample is
+small. The evidence favors lower clocks over extra clipping or span
+work as an explanation for these stalls; it does not prove that clock
+changes caused them. A controlled test of an Android performance hint
+is a better next experiment than another clipping or span rewrite.
+
+#### Trying an Android render-thread performance hint
+
+The diagnostics-only `render-hint 120` benchmark keeps the same worker
+affinity as `worker-4-7 120` and adds an Android Performance Hint session
+for the render thread alone. It uses an 8.33 ms target and reports
+elapsed picture preparation, including tile waits but excluding present.
+The session is optional in the diagnostics build (Android 13 or later
+and device support are required), and the regular APK has no hint calls.
+
+Four Pixel 9a trials ran in control, hint, hint, control order. Both
+hint sessions reported successfully, and the logged thread IDs matched
+the render thread in Perfetto. Each measured window covered emulated
+frames 3850–4850 with 10 ms frequency polling.
+
+| Metric | No hint | Render-thread hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 66.25 | 83.91 |
+| Submission gaps over 30 ms | 11/2,299 (0.48%) | 2/2,906 (0.07%) |
+| Submission gap p95 | 24.95 ms | 21.64 ms |
+| Median picture preparation | 8.99 ms | 5.66 ms |
+| Median 3D CPU time | 4.95 ms | 2.91 ms |
+| Median reported frequency during 3D CPU work | 1.80 GHz | 2.29 GHz |
+
+Both hint runs exceeded 83 new pictures/s, while neither control reached
+67. The long-gap counts are small, but the throughput and preparation
+improvements repeated. Higher reported frequency accompanied the gain;
+the polling does not isolate frequency from other scheduler changes.
+The result applies with the worker restriction in place. These short
+runs do not establish sustained throughput, thermals, or battery cost.
+Before enabling the hint for ordinary play, repeat the comparison over
+longer sessions with default worker scheduling and monitor thermals and
+power where the device exposes reliable readings.
+
+#### Repeating the hint test with default worker scheduling
+
+The diagnostics-only `sustained-base 120` and `sustained-hint 120` modes
+leave the simulation worker on Android's default scheduler. The second
+mode adds the same 8.33 ms render-thread hint. Four Pixel 9a trials ran
+in control, hint, hint, control order. Each script ran from boot to
+emulated frame 13850. Race-state markers identified matching active
+windows (frames 3850–7820 and 9058–13220), totaling about 141 seconds
+per trial. Menus, results, and attract footage were excluded, and gaps
+were counted only within a race. Perfetto captured app markers without
+scheduler or frequency polling. Both hint sessions reported
+successfully on the traced render thread. A spot check in the second
+trial of each arm confirmed the simulation worker could run on CPUs 0–7.
+
+| Metric across both active race windows | No hint | Render-thread hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 63.69 | 84.24 |
+| Submission gaps over 30 ms | 509/18,004 (2.83%) | 78/23,783 (0.33%) |
+| Submission gap p95 | 27.42 ms | 22.07 ms |
+| Median picture preparation | 9.04 ms | 5.66 ms |
+
+Both hint runs (81.91 and 86.57 pictures/s) beat both controls (62.94
+and 64.45). The gain persisted in the final half of the second race:
+87.27 vs. 66.94 pictures/s and 5.45 vs. 8.64 ms median preparation.
+Submissions measure app output, not panel scanout.
+
+The phone remained externally powered. Android thermal status stayed at
+0 in all samples. Starting battery temperatures varied from 28.7 to
+33.2 °C across runs; peak reported skin temperature was 31.0 and
+33.6 °C in the controls, and 34.3 and 34.8 °C with the hint. The small
+number of runs, unequal starting temperatures, and short cooldowns
+prevent a clean estimate of the hint's thermal cost. The battery current
+sensor does not isolate app power while charging, so this test does not
+establish a battery-life cost. At this stage the hint remained
+diagnostics-only pending an explicit decision about the trade-off.
+
+A USB-staged battery pilot captured both scripted control races, but did
+not produce a valid battery baseline. Android's battery history did not
+record an unplug event during the race windows. Perfetto's charge counter
+stayed fixed and current samples hovered around zero. A lost ADB
+connection alone does not prove the phone is off external power. Before
+comparing hint and control on battery, verify the power-source state
+during the measured windows and confirm that the charge counter tracks
+discharge.
+
+A follow-up USB-only preflight verified both checks without launching
+the game. Android battery history recorded the transition to
+`discharging` and the later USB reconnection. During 74 seconds of
+unplugged Perfetto samples, the charge counter dropped from 4,002.5 to
+4,000.0 mAh and all 75 current readings were negative. This validates
+the capture method, not the hint's battery cost.
+
+#### Measuring battery use in unplugged race runs
+
+The four-run control, hint, hint, control comparison was repeated with
+the phone unplugged during both measured race windows. Each trial used
+the same 120 FPS fixed-input script, default worker scheduling, and two
+matched race windows totaling about 141 seconds. Android battery history
+recorded unplugging before the first race and reconnection after the
+second in every trial; Perfetto captured charge and current at one-second
+intervals. Both hint sessions reported successfully to the render thread.
+
+| Metric across the two race windows | No hint | Render-thread hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 65.45 | 86.00 |
+| Submission gaps over 30 ms | 395/18,505 (2.13%) | 71/24,290 (0.29%) |
+| Median picture preparation, per-run range | 8.68–9.16 ms | 5.30–5.76 ms |
+| Charge-counter decrease per active minute | 9.01 mAh | 13.30 mAh |
+| Mean battery current while racing | 537 mA discharge | 818 mA discharge |
+
+Both hint runs outperformed both controls (82.32–91.05 vs.
+64.41–66.51 pictures/s). At the matched 28.8 °C starting battery
+temperature of the second pair, the hint run drew about 56% more charge
+per active minute than its control. Across all four runs the charge
+rate was about 48% higher with the hint; mean current was about 52%
+higher. The charge-counter resolution is 2.5 mAh, and the number of
+trials is small. These readings measure whole-device drain during the
+script, not power attributable to the hint alone.
+
+Battery temperatures measured at setup and USB reconnection were
+27.5–28.8 °C and 28.9–29.9 °C in the controls, and 28.8–28.9 °C and
+31.1–31.3 °C with the hint. Thermal status was 0 at the connected
+checks; temperature and thermal status were not sampled continuously
+while unplugged. This experiment establishes a repeatable performance
+gain alongside a material increase in whole-device drain, but not a
+long-session thermal limit or battery-life estimate. The hint therefore
+remains diagnostics-only pending an explicit decision about that
+performance-versus-battery trade-off.
+
+#### Capping the hinted run at 60 FPS
+
+To check whether limiting output to 60 FPS would reduce the hint's
+power cost, two more unplugged trials used the same sustained race
+script with both the app cap and Performance Hint target set to 60 FPS
+(16.67 ms). The render-thread hint remained enabled and worker
+scheduling remained at its default. Android battery history verified
+discharge throughout both race windows.
+
+| Metric across the two race windows | 120 FPS cap and hint | 60 FPS cap and hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 86.00 | 60.2 |
+| Submission gaps over 30 ms | 0.29% | 2.25% |
+| Median picture preparation, per-run range | 5.30–5.76 ms | 8.01–8.15 ms |
+| Charge-counter decrease per active minute | 13.30 mAh | 10.08 mAh |
+| Mean battery current while racing | 818 mA discharge | 626 mA discharge |
+
+The 60 FPS configuration used about 24% less charge per active minute
+than the 120 FPS hinted runs, but it gave up about 30% of submitted
+pictures per second and its rate of gaps over 30 ms was similar to the
+no-hint 120 FPS control (2.25% vs. 2.13%). It did not fully erase the
+power difference from that control: the measured rates were 10.08 vs.
+9.01 mAh/min. This comparison changes both the app cap and the hint
+target, and has only two trials per setting; it does not isolate the
+effect of either setting or quantify app-only power. The 60 FPS cap
+reduces, but does not remove, the battery trade-off. Battery temperature
+was 27.1 and 26.6 °C at setup and 29.6 and 28.6 °C at USB reconnection;
+thermal status was 0 at the connected checks but was not sampled
+continuously while unplugged. The regular APK's defaults were unchanged
+at the time of this comparison.
+
+#### Enabling the hint for Android VR
+
+After these measurements, the user asked to always use the hint. The
+regular Android build now attempts a Performance Hint session for VR's
+render thread on Android 13 or later, using the player's selected 30,
+60, or 120 FPS target and updating the session if that setting changes.
+Each picture's preparation duration is reported. The same Android hint is
+now attempted by all four game packages; other operating systems are
+unaffected. Its performance and battery effects for the other games have
+not been measured. If the OS or device cannot create a session,
+the game logs that it is continuing without the hint; a reporting error
+is logged and disables that session.
+
+## VR renderer optimizations on macOS
+
+The Android partial HUD update and early face rejection paths also run for
+VR on Apple builds, with the same full-rebuild fallback and face exclusions.
+The Android Performance Hint remains Android-specific.
+
+On an AC-powered MacBook Pro with an Apple M5 Max and 48 GB RAM, eight
+fixed-input trials used a hidden window, Metal 3D and GPU composition,
+1x, AA off, 16:9, and a 120 FPS target on a 120 Hz screen. Each measured
+game frames 3850–4850, about 17.38 seconds and 2,085–2,086 new pictures.
+The order was baseline, HUD, clip, both, both, clip, HUD, baseline.
+
+| Configuration | Preparation p50, runs 1 / 2 | Preparation p95, runs 1 / 2 |
+| --- | ---: | ---: |
+| Neither | 2.034 / 1.681 ms | 2.732 / 2.577 ms |
+| Partial HUD only | 1.956 / 2.027 ms | 2.542 / 2.665 ms |
+| Early rejection only | 1.932 / 1.821 ms | 2.704 / 2.579 ms |
+| Both | 1.599 / 1.867 ms | 2.212 / 2.553 ms |
+
+All trials reached 119.98–120.00 new pictures/s, with no pass-start
+gaps over 30 ms; per-run gap p95 was 8.425–8.453 ms. Preparation here
+is the trace's draw plus composition time. The preparation times varied
+between repeats, so these runs do not establish a consistent speedup
+or an FPS improvement on this already capped machine. These are app-side
+pass-start timings, not display scanout or exact submission timings.
+
+In a separate instrumented `both` run, the dispatcher was in active race
+mode `0x14` at both boundaries, and 499 successful partial updates with
+visible dirty bands occurred between them. The counter instrumentation
+was not part of the timing trials. The GPU reported no errors and no
+CPU/GPU picture checks were performed. These measurements do not validate
+appearance; manual macOS widescreen gameplay validation remains pending.
+
+For repeatable nonvisual measurements, `M1_VR_BENCHMARK` selects
+`baseline`, `hud`, `clip`, or `both` on the macOS VR host. With an
+isolated working directory and `M1_DATA` directory, `M1_ROMS` pointing to the ROM directory,
+`M1_HIDDEN=1`, `M1_G3_NO_VERIFY=1`, and `M1_TRACE` naming a trace file,
+run `vr-native --scale 1 --aspect 16:9 --arcade`. The benchmark forces
+the fixed inputs and settings above, logs its frame boundaries and game
+mode, and does not save ordinary game settings or state.
+
+### Early face rejection across games
+
+The early classification is now enabled in the shared renderer for all
+games and platforms. It retains the exclusions for cached face colours,
+open-edge processing, and colour callbacks, and preserves the original
+clipper's handling of crossing faces. A nonvisual regression test checks
+an off-screen face followed by linked visible geometry, depth and projected
+coordinates, and the colour-callback exclusion.
+
+On the same MacBook Pro, four Star Wars Arcade fixed-input runs compared
+early rejection off/on/on/off during game frames 3850–4850. Each used a
+fresh isolated data directory, hidden window, Metal 3D and GPU composition,
+1x, AA off, 16:9, and a 120 FPS target on a 120 Hz screen. Both
+boundaries were in sequence `0x0d`, with the same game timer values in
+every run.
+
+| Early rejection | New pictures/s | Preparation p50 | Preparation p95 |
+| --- | ---: | ---: | ---: |
+| Off, first | 120.00 | 5.059 ms | 6.216 ms |
+| On, first | 120.00 | 5.070 ms | 6.291 ms |
+| On, second | 119.98 | 5.094 ms | 6.218 ms |
+| Off, second | 120.00 | 5.093 ms | 6.202 ms |
+
+The windows contained 2,086–2,104 new pictures over 17.38–17.54 seconds.
+No pass-start gap exceeded 30 ms; per-run gap p95 was 8.376–8.425 ms.
+Preparation is draw plus composition, and pass-start gaps are not exact
+submission or scanout timing. These capped runs show no measurable
+performance improvement. In a separate instrumented on-run, about 5.50
+million of 11.91 million eligible face classifications in the interval
+were rejected early; the instrumentation was absent from the timing runs.
+No rendered-pixel comparisons were performed, and manual visual checks for
+the other games and measurements on other platforms remain pending.
+
+For the SWA comparison, start in an isolated working directory with
+`M1_DATA` pointing there and `M1_ROMS` pointing to the ROM directory; set
+`M1_HIDDEN=1`, `M1_G3_NO_VERIFY=1`, `M1_TRACE` to a trace file, and
+`M1_SWA_CLIP_BENCHMARK` to `off` or `on`. Run
+`swa-native --scale 1 --aspect 16:9 --arcade`. Like the VR benchmark,
+this uses fixed inputs, logs measurement boundaries and leaves ordinary
+saves and settings alone.
 
 ## The TGP's rounding
 

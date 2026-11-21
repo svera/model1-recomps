@@ -173,11 +173,12 @@ $(BIN)/model1run: $(MODEL1RUN_OBJS) $(REC_NONE) $(MUSASHI_OBJ) $(Z80_OBJ) $(CORO
 # RmlUi (MIT): the in-game menu. Its core and the SDL backend, built with FreeType.
 RML_SRC = $(wildcard third_party/rmlui/Source/Core/*.cpp third_party/rmlui/Source/Core/*/*.cpp) \
 	third_party/rmlui/Backends/RmlUi_Platform_SDL.cpp third_party/rmlui/Backends/RmlUi_Renderer_SDL.cpp
-# Android's CMake build uses the same sources as the VR native host.
+# Android's CMake build selects one game's native host.
+ANDROID_GAME ?= vr
 .PHONY: android-sources
 android-sources:
-	@printf '%s\n' src/host/main.cpp src/host/menu.cpp src/games/vr/host.cpp $(ROMSET) \
-		src/games/vr/romset.cpp src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) \
+	@printf '%s\n' src/host/main.cpp src/host/menu.cpp src/games/$(ANDROID_GAME)/host.cpp $(ROMSET) \
+		src/games/$(ANDROID_GAME)/romset.cpp src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) \
 		$(RT) $(NATIVE) $(RML_SRC) src/rt/rec_table_none.cpp src/rt/coro_arm64.S \
 		src/gpu/gpu3d_sdlgpu.cpp third_party/sljit/sljitLir.c third_party/z80/z80.c \
 		third_party/musashi/m68kcpu.c build/musashi/m68kops.c third_party/musashi/m68kdasm.c \

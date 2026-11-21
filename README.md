@@ -426,13 +426,14 @@ make test-wingwar-profile
 
 ### Android prototype
 
-An experimental Android build is being developed for **Virtua Racing**, ARM64
-(`arm64-v8a`) and an external controller. It is not yet a supported release:
+Experimental Android builds are available for **Virtua Racing**,
+**Star Wars Arcade**, and **Wing War**, on ARM64 (`arm64-v8a`)
+with an external controller. They are not yet supported releases:
 device compatibility, JIT, graphics, audio and lifecycle behavior still need
 validation. It has no on-screen game controls and currently starts a single cabinet.
 The launcher and game request landscape orientation, allowing either landscape rotation.
 
-To build a debug APK, install JDK 17 or 21, the Android SDK platform 35, NDK
+To build the debug APKs, install JDK 17 or 21, the Android SDK platform 35, NDK
 28.2.13676358 and CMake 3.22.1. Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) to
 the SDK directory, then run:
 
@@ -441,12 +442,27 @@ tools/android/build.sh
 ```
 
 The script fetches the same verified SDL and FreeType sources as the desktop
-packaging scripts and uses SDL's Gradle wrapper. The APK is written to
-`tools/android/app/build/outputs/apk/debug/app-debug.apk`. Install it on an ARM64
-Android device, connect a controller, and use the launcher to import your own
-`vr.zip` and `model1io.zip` separately. The archives and saves remain in the
-app's private storage; uninstalling the app removes them. Press Start to play
-and View/Select to open the menu.
+packaging scripts and uses SDL's Gradle wrapper. The APKs and required
+user-supplied MAME archives are:
+
+| Game | Debug APK under `tools/android/app/build/outputs/apk/` | Archives |
+| --- | --- | --- |
+| Virtua Racing | `vr/debug/app-vr-debug.apk` | `vr.zip`, `model1io.zip` |
+| Star Wars Arcade | `swa/debug/app-swa-debug.apk` | `swa.zip`, `model1io.zip` |
+| Wing War | `wingwar/debug/app-wingwar-debug.apk` | `wingwar.zip`, `model1io2.zip` |
+
+Each game is a separate app. Install its APK on an ARM64 Android device,
+connect a controller, and use its launcher to import the two archives separately.
+The archives and saves remain in that app's private storage; uninstalling the
+app removes them. Debug and diagnostics builds always show the launcher. In release
+builds, once both archives are imported, subsequent launches start the game
+automatically; leaving the game returns to the launcher to replace archives, view
+licences or export the log. Press Start to play and View/Select to open the game menu.
+On Android 13 or later, each game attempts a render-thread Performance Hint
+session when supported; the log reports whether it was enabled. It can increase
+power use, and gameplay continues without it if unavailable.
+The launcher icons use adaptive shapes and support themed icons on Android 13
+or later when the launcher enables them.
 
 For GPU performance diagnostics, select **Export diagnostic log** in the launcher
 after playing. It exports the most recent session's `log.txt`, including device,

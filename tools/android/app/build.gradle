@@ -4,8 +4,13 @@ plugins {
 
 def repo = file('../../..')
 def sdl = new File(repo, 'build/deps/SDL3-3.4.18')
-def generatedAssets = new File(repo, 'build/android/assets')
-def generatedResources = new File(repo, 'build/android/res')
+def generatedAssets = new File(repo, 'build/android/common-assets')
+def generatedGameAssets = new File(repo, 'build/android/game-assets')
+def games = [
+    vr:      [title: 'Virtua Racing', applicationId: 'recomp.vr1.android', io: 'model1io.zip', log: 'virtua-racing-log.txt'],
+    swa:     [title: 'Star Wars Arcade', applicationId: 'recomp.swa.android', io: 'model1io.zip', log: 'swa-log.txt'],
+    wingwar: [title: 'Wing War', applicationId: 'recomp.wingwar.android', io: 'model1io2.zip', log: 'wingwar-log.txt'],
+]
 
 tasks.register('prepareLicenses', Exec) {
     workingDir repo
@@ -19,14 +24,14 @@ tasks.register('prepareGameAssets', Sync) {
     from new File(repo, 'build/LICENSES.txt')
     into('assets/ui') { from new File(repo, 'assets/ui') }
     into('assets/fonts') { from new File(repo, 'assets/fonts') }
-    into('assets/games/vr') { from new File(repo, 'assets/games/vr/vr_map.txt') }
-    into('assets/games/vr/icon') { from new File(repo, 'assets/games/vr/icon/icon.png') }
 }
 
-tasks.register('prepareLauncherIcon', Sync) {
-    into new File(generatedResources, 'mipmap-nodpi')
-    from(new File(repo, 'assets/games/vr/icon/icon.png')) {
-        rename { 'launcher_icon.png' }
+def gameAssets = []
+games.each { id, game ->
+    gameAssets << tasks.register("prepare${id.capitalize()}Assets", Sync) {
+        into new File(generatedGameAssets, id)
+        into("assets/games/${id}") { from new File(repo, "assets/games/${id}/${id}_map.txt") }
+        into("assets/games/${id}/icon") { from new File(repo, "assets/games/${id}/icon/icon.png") }
     }
 }
 
@@ -36,11 +41,11 @@ android {
     ndkVersion '28.2.13676358'
 
     defaultConfig {
-        applicationId 'recomp.vr1.android'
         minSdk 26
         targetSdk 35
         versionCode 1
         versionName '0.1-dev'
+        buildConfigField 'boolean', 'AUTO_START_GAME', 'false'
         ndk {
             abiFilters 'arm64-v8a'
         }
@@ -51,7 +56,28 @@ android {
             }
         }
     }
+    flavorDimensions 'game'
+    productFlavors {
+        games.each { id, game ->
+            create(id) {
+                dimension 'game'
+                applicationId game.applicationId
+                manifestPlaceholders = [appLabel: "${game.title} Recomp"]
+                buildConfigField 'String', 'GAME_TITLE', "\"${game.title}\""
+                buildConfigField 'String', 'GAME_ARCHIVE', "\"${id}.zip\""
+                buildConfigField 'String', 'IO_ARCHIVE', "\"${game.io}\""
+                buildConfigField 'String', 'LOG_NAME', "\"${game.log}\""
+                externalNativeBuild {
+                    cmake { arguments "-DM1_GAME=${id}" }
+                }
+            }
+        }
+    }
+    buildFeatures { buildConfig true }
     buildTypes {
+        release {
+            buildConfigField 'boolean', 'AUTO_START_GAME', 'true'
+        }
         diagnostics {
             initWith debug
             versionNameSuffix '-diagnostics'
@@ -71,7 +97,9 @@ android {
     sourceSets {
         main.java.srcDir new File(sdl, 'android-project/app/src/main/java')
         main.assets.srcDir generatedAssets
-        main.res.srcDir generatedResources
+        games.each { id, game ->
+            maybeCreate(id).assets.srcDir new File(generatedGameAssets, id)
+        }
     }
 }
 
@@ -83,11 +111,10 @@ tasks.named('prepareGameAssets') {
 }
 
 tasks.configureEach {
-    if (name.startsWith('merge') && name.endsWith('Assets')) {
+    if ((name.startsWith('merge') && name.endsWith('Assets'))
+            || name.startsWith('lint')
+            || (name.startsWith('generate') && name.contains('Lint') && name.endsWith('Model'))) {
         dependsOn tasks.named('prepareGameAssets')
-    }
-    if ((name.startsWith('merge') || name.startsWith('generate')) && name.endsWith('Resources')
-            || name.startsWith('map') && name.endsWith('SourceSetPaths')) {
-        dependsOn tasks.named('prepareLauncherIcon')
+        dependsOn gameAssets
     }
 }
