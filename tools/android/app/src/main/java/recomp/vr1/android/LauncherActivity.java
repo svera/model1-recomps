@@ -103,7 +103,7 @@ public class LauncherActivity extends Activity {
     }
 
     private void updateStatus() {
-        status.setText("Connect an external controller. Import your own MAME ROM archives.\n\n"
+        status.setText("Use touch controls or connect a controller. Import your own MAME ROM archives.\n\n"
                 + BuildConfig.GAME_ARCHIVE + ": " + (rom(BuildConfig.GAME_ARCHIVE).isFile() ? "imported" : "missing") + "\n"
                 + BuildConfig.IO_ARCHIVE + ": " + (rom(BuildConfig.IO_ARCHIVE).isFile() ? "imported" : "missing"));
         boolean ready = romsReady();

@@ -77,6 +77,7 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #endif
 #ifdef __ANDROID__
 #include <android/performance_hint.h>
+#include "touch_controller.h"
 #endif
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 #include <sched.h>
@@ -4449,6 +4450,9 @@ int main(int argc, char **argv)
 		}
 	}
 #endif
+#ifdef __ANDROID__
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
 	if (!SDL_Init(SDL_INIT_VIDEO)) return fail("Couldn't start the video");
 	if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) fprintf(stderr, "no gamepads: %s\n", SDL_GetError());
 	if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) fprintf(stderr, "no sound: %s\n", SDL_GetError());
@@ -5104,11 +5108,20 @@ int main(int argc, char **argv)
 	SDL_Gamepad *pads[2] = { nullptr, nullptr };
 	pad_state pstate[2];
 	bool pads_swapped = link_player == 2; // second cabinet defaults to the second of two connected pads
+#ifdef __ANDROID__
+	SDL_JoystickID touch_pad_id = android_touch_update();
+	bool touch_menu_open = false;
+	std::optional<bool> touch_pc_mode;
+#endif
 	auto guid_of = gamepad_guid;
 	// each player's pad: the one chosen (by its GUID) if it is there, else the next free one
 	// ("auto"), or none
 	auto open_pads = [&] {
+#ifdef __ANDROID__
+		const bool changed = refresh_gamepads(pads, cfg.ctl, touch_pad_id ? false : pads_swapped, {touch_pad_id, 0});
+#else
 		const bool changed = refresh_gamepads(pads, cfg.ctl, pads_swapped);
+#endif
 		if (changed) pstate[0] = pstate[1] = pad_state{};
 		return changed;
 	};
@@ -5817,7 +5830,21 @@ int main(int argc, char **argv)
 			game_part.before_frame();
 			return true;
 		}
-		switch (read_inputs(m, pads, pstate, cfg.ctl, controls, game_part, g_service)) {
+#ifdef __ANDROID__
+		const player_controls *input_controls = cfg.ctl;
+		std::optional<std::array<player_controls, 2>> touch_controls;
+		if (touch_pad_id && pads[0] && SDL_GetGamepadID(pads[0]) == touch_pad_id) {
+			touch_controls.emplace(std::array<player_controls, 2>{cfg.ctl[0], cfg.ctl[1]});
+			const player_controls defaults = player_controls::defaults(0, controls);
+			std::copy(std::begin(defaults.pad), std::end(defaults.pad), std::begin((*touch_controls)[0].pad));
+			(*touch_controls)[0].pad[C_COIN] = SDL_GAMEPAD_BUTTON_DPAD_UP;
+			(*touch_controls)[0].analog_axis = defaults.analog_axis;
+			input_controls = touch_controls->data();
+		}
+#else
+		const player_controls *input_controls = cfg.ctl;
+#endif
+		switch (read_inputs(m, pads, pstate, input_controls, controls, game_part, g_service)) {
 		case hotkey::menu: open_menu(); break;
 		case hotkey::scale: player_scale_to(cfg.scale % 4 + 1); break;
 		case hotkey::aspect: set_shape((aspect_i + 1) % N_ASPECTS); break;
@@ -6146,6 +6173,16 @@ int main(int argc, char **argv)
 		SDL_Event e;
 		const bool menu_was_open = menu.is_open();
 		bool pads_changed = false;
+#ifdef __ANDROID__
+		const SDL_JoystickID next_touch_pad = android_touch_update();
+		pads_changed = next_touch_pad != touch_pad_id;
+		touch_pad_id = next_touch_pad;
+		if (!touch_pc_mode || *touch_pc_mode != g_pc_mode || touch_menu_open != menu.is_open()) {
+			touch_menu_open = menu.is_open();
+			touch_pc_mode = g_pc_mode;
+			android_touch_ui_state(touch_menu_open, *touch_pc_mode);
+		}
+#endif
 		while (SDL_PollEvent(&e)) {
 			log_display_event(e, win, ren, display_trace);
 			if (e.type == SDL_EVENT_QUIT) running = false;
@@ -6926,6 +6963,9 @@ int main(int argc, char **argv)
 	gc.release();                          // (its textures go before the renderer)
 	save_recording("quit");
 	audio.reset();
+#ifdef __ANDROID__
+	android_touch_shutdown();
+#endif
 	if (link.failed()) { SDL_Quit(); return 1; }
 	if (hud_benchmark || replay_mode || (quit_after >= 0 && !getenv("M1_SAVE"))) { SDL_Quit(); return 0; }   // replay and test runs leave saves and settings alone
 	game_part.keep_arcade_settings();

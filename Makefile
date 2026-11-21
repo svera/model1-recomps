@@ -122,6 +122,7 @@ $(OBJ)/%.o: %.cpp
 $(OBJ)/tools/model1run.o $(OBJ)/tools/model1script.o: CXXFLAGS += $(SDL_CFLAGS)
 $(OBJ)/tools/games/%/tool.o: CXXFLAGS += $(SDL_CFLAGS)
 $(OBJ)/tests/host_gamepads_test.o $(OBJ)/tests/host_audio_test.o $(OBJ)/tests/host_fullscreen_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(OBJ)/tests/android_touch_controller_test.o $(OBJ)/tools/android/app/src/main/cpp/touch_controller.o: CXXFLAGS += $(SDL_CFLAGS)
 $(BIN)/host_fullscreen_test: $(OBJ)/tests/host_fullscreen_test.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
@@ -164,6 +165,13 @@ test-host-lan: $(BIN)/host_lan_test
 .PHONY: test-host-lan
 
 .PHONY: test-host-gamepads
+
+$(BIN)/android_touch_controller_test: $(OBJ)/tests/android_touch_controller_test.o $(OBJ)/tools/android/app/src/main/cpp/touch_controller.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
+test-android-touch: $(BIN)/android_touch_controller_test
+	$(BIN)/android_touch_controller_test
+.PHONY: test-android-touch
 
 MODEL1RUN_OBJS = $(call objs,tools/model1run.cpp $(TOOL_GAME) src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) $(RT))
 $(BIN)/model1run: $(MODEL1RUN_OBJS) $(REC_NONE) $(MUSASHI_OBJ) $(Z80_OBJ) $(CORO_OBJ)
