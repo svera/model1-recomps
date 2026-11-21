@@ -7,3 +7,5 @@ refs/
 *.sav
 .DS_Store
 /.github/copilot-instructions.md
+/tools/android/.gradle/
+/tools/android/app/.cxx/

@@ -12,10 +12,10 @@
 		<div id="rows"></div>
 		<div id="note"></div>
 		<div id="hint">
-			<span class="key">Arrows</span> / <span class="key">D-pad</span> choose
-			&nbsp;&nbsp;<span class="key">Left Right</span> change
-			&nbsp;&nbsp;<span class="key">Enter</span> / <span class="key">A</span> select
-			&nbsp;&nbsp;<span class="key">Esc</span> / <span class="key">B</span> back
+			<span class="binding"><span class="key">Arrows</span> / <span class="key">D-pad</span> choose</span>
+			<span class="binding"><span class="key">Left Right</span> change</span>
+			<span class="binding"><span class="key">Enter</span> / <span class="key">A</span> select</span>
+			<span class="binding"><span class="key">Esc</span> / <span class="key">B</span> back</span>
 		</div>
 		<div id="ver"></div>
 	</div>
