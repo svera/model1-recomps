@@ -214,7 +214,8 @@ void game_menu::build()
 	std::string rml;
 	for (size_t i = 0; i < p.items.size(); i++) {
 		const menu_item &it = p.items[i];
-		rml += "<div class=\"row" + std::string(it.info ? " info" : "") + (it.heading ? " heading" : "") + (it.sub ? " sub" : "") + (int(i) == m_sel ? " selected" : "") +
+		rml += "<div class=\"row" + std::string(it.info ? " info" : "") + (it.heading ? " heading" : "") + (it.sub ? " sub" : "") +
+			   (it.value ? " with-value" : "") + (int(i) == m_sel ? " selected" : "") +
 			   "\" id=\"r" + std::to_string(i) + "\"><span class=\"label\">" + escape(it.label) + "</span>";
 		if (it.value) {
 			rml += "<span class=\"value\">";
@@ -236,14 +237,10 @@ void game_menu::build()
 // Long pages scroll inside #rows: keep the selected row in view.
 void game_menu::scroll_to_selected()
 {
-	Rml::Element *rows = m->doc->GetElementById("rows"), *e = m->doc->GetElementById("r" + std::to_string(m_sel));
-	if (!rows || !e) return;
-	m->doc->UpdateDocument();                      // the rows' layout, for their positions
-	const float top = e->GetOffsetTop(), h = e->GetOffsetHeight(), view = rows->GetClientHeight();
-	float st = rows->GetScrollTop();
-	if (top < st) st = top;
-	else if (top + h > st + view) st = top + h - view;
-	rows->SetScrollTop(st);
+	if (auto *e = m->doc->GetElementById("r" + std::to_string(m_sel))) {
+		m->doc->UpdateDocument();
+		e->ScrollIntoView({Rml::ScrollAlignment::Nearest});
+	}
 }
 
 void game_menu::capture(std::string prompt, std::function<bool(const SDL_Event &)> on_event, std::function<void()> on_cancel)
@@ -471,9 +468,13 @@ void game_menu::render()
 	SDL_SetRenderLogicalPresentation(m->ren, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
 	int w = 0, h = 0;
 	SDL_GetCurrentRenderOutputSize(m->ren, &w, &h);
-	m->ctx->SetDimensions(Rml::Vector2i(w, h));
-	m->ctx->SetDensityIndependentPixelRatio(float(h) / 720.0f);
+	const Rml::Vector2i size(w, h);
+	const float dp_ratio = float(h) / 720.0f;
+	const bool resized = m->ctx->GetDimensions() != size || m->ctx->GetDensityIndependentPixelRatio() != dp_ratio;
+	m->ctx->SetDimensions(size);
+	m->ctx->SetDensityIndependentPixelRatio(dp_ratio);
 	m->ctx->Update();
+	if (m_open && resized) scroll_to_selected();
 	m->gfx->BeginOverlay();
 	m->ctx->Render();
 	m->gfx->EndFrame();

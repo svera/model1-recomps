@@ -254,6 +254,42 @@ static void split_screen_checks()
 	}
 }
 
+static void menu_scroll_checks(SDL_Window *window, game_menu &menu, Rml::ElementDocument *doc)
+{
+	menu_page page{"Bindings", "Select an action to change its binding.", {}};
+	for (int i = 0; i < 14; ++i)
+		page.items.push_back({"Action " + std::to_string(i + 1), "", [] { return "Right trigger"; }});
+	menu.open(std::move(page));
+	menu.render();
+	auto *rows = doc->GetElementById("rows");
+	auto *last = doc->GetElementById("r13");
+	assert(rows && last);
+
+	SDL_Event key{};
+	key.type = SDL_EVENT_KEY_DOWN;
+	key.key.scancode = SDL_SCANCODE_UP;
+	assert(menu.handle_event(key));   // wrapping from the first row reveals the last
+	auto check_last_visible = [&] {
+		assert(rows->GetScrollTop() > 0 && last->IsClassSet("selected"));
+		const float top = last->GetAbsoluteOffset(Rml::BoxArea::Border).y - rows->GetAbsoluteOffset(Rml::BoxArea::Content).y;
+		assert(top >= -1 && top + last->GetOffsetHeight() <= rows->GetClientHeight() + 1);
+	};
+	check_last_visible();
+	int w = 0, h = 0;
+	assert(SDL_GetWindowSize(window, &w, &h));
+	assert(SDL_SetWindowSize(window, 360, 720));
+	assert(SDL_SyncWindow(window));
+	menu.render();
+	check_last_visible();
+
+	key.key.scancode = SDL_SCANCODE_DOWN;
+	assert(menu.handle_event(key));
+	assert(rows->GetScrollTop() == 0);
+	menu.close();
+	assert(SDL_SetWindowSize(window, w, h));
+	assert(SDL_SyncWindow(window));
+}
+
 static void menu_checks(SDL_Window *window, SDL_Renderer *renderer)
 {
 	game_menu menu;
@@ -262,10 +298,12 @@ static void menu_checks(SDL_Window *window, SDL_Renderer *renderer)
 	assert(menu.init(window, renderer, "assets"));
 	auto *ctx = Rml::GetContext("menu");
 	assert(ctx && ctx->GetNumDocuments() == 2);
+	auto *doc = ctx->GetDocument(0);
 	auto *overlay = ctx->GetDocument(1);
 	auto *toast = overlay->GetElementById("toast");
 	auto *fps = overlay->GetElementById("fps");
 	assert(toast && fps);
+	menu_scroll_checks(window, menu, doc);
 
 	menu.toast("GPU < CPU & driver", 0.2);
 	SDL_Delay(250);
