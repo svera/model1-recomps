@@ -2,6 +2,7 @@
 // otherwise read the MAME set itself: src/machine/model1_romset.h).
 #pragma once
 #include "../machine/model1.h"
+#include "../games/vr/romset.h"
 #include <string>
 
 inline std::vector<uint8_t> load_file(const std::string &path, game::id title)
@@ -24,6 +25,7 @@ inline model1::regions load_regions(const std::string &dir, game::id title)
 	model1::regions r;
 	r.title = title;
 	r.maincpu = load_file(dir + "/maincpu.bin", title);
+	if (title.name == "vr" && game::vr::is_extended_program(r.maincpu)) r.save_subdirectory = "extended";
 	r.copro_tables = load_file(dir + "/copro_tables.bin", title);
 	r.polygons = load_file(dir + "/polygons.bin", title);
 	r.sndcpu = load_file(dir + "/sndcpu.bin", title);

@@ -25,6 +25,8 @@ struct rom
 	uint32_t offset;
 	kind k;
 	const char *alias = nullptr;   // the name some sets give it
+	size_t size = 0;               // required for a variant ROM whose contents can vary
+	bool variable = false;         // identify by name and size; still verify the zip's own CRC
 };
 
 struct region_def { size_t size = 0; uint8_t fill = 0; };   // size 0: the game has no such region
@@ -45,6 +47,9 @@ struct definition
 	const supplement *tgp_program = nullptr;   // when it is not in the classic set (and so not in roms)
 	bool use_ioboard = true;    // the shared Model 1 I/O board firmware; false for a different board
 	bool use_advanced_ioboard = false;
+	const definition *alternate = nullptr;
+	const char *save_subdirectory = nullptr;
+	bool (*validate)(const model1::regions &, std::string &) = nullptr;
 };
 
 // in a game's romset.cpp: static const romset::registration REGISTERED{ ROMSET };

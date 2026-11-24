@@ -44,6 +44,15 @@ $(BIN)/vr_tgp_track_test: tests/games/vr/tgp_track_test.cpp src/games/vr/tgp.h
 test-vr-tgp-track: $(BIN)/vr_tgp_track_test
 	$(BIN)/vr_tgp_track_test
 
+$(BIN)/vr_extended_test: $(OBJ)/tests/games/vr/extended_test.o $(OBJ)/src/games/vr/romset.o $(call objs,$(ROMSET)) $(GAMES_LINK) $(call objs,$(RT) $(NATIVE)) $(REC_NONE) $(SLJIT_OBJ) $(CORO_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+test-vr-extended: $(BIN)/vr_extended_test $(BIN)/romset_test
+	@test -n "$(VR_EXTENDED_ROMS)" || { echo "Set VR_EXTENDED_ROMS to the extended ROM folder" >&2; exit 1; }
+	python3 tests/games/vr/extended_romset_test.py "$(VR_EXTENDED_ROMS)" $(BIN)/romset_test
+	$(BIN)/vr_extended_test "$(VR_EXTENDED_ROMS)/vr.zip" "$(VR_EXTENDED_ROMS)/model1io.zip"
+.PHONY: test-vr-extended
+
 $(BIN)/vr_link_test: $(OBJ)/tests/games/vr/link_test.o $(GAMES_LINK) $(call objs,$(RT) $(NATIVE)) $(REC_NONE) $(SLJIT_OBJ) $(CORO_OBJ)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)

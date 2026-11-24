@@ -1,5 +1,6 @@
 #include "romset.h"
 #include "profile.h"
+#include <cstring>
 
 namespace game::vr {
 
@@ -49,11 +50,56 @@ constexpr std::array<region_def, N_REGIONS> regions()
 	return r;
 }
 
+// v0.3's boot ROM identifies the patched program. Course data varies with the builder's
+// tuning options, so its ROMs are checked by name, size and zip CRC instead of a fixed CRC.
+const auto EXTENDED_ROMS = [] {
+	auto roms = std::to_array(ROMS);
+	roms[2].crc = EXTENDED_BOOT_4;
+	roms[3].crc = EXTENDED_BOOT_5;
+	for (size_t i = 0; i < roms.size(); i++) {
+		if ((roms[i].region == MAINCPU && i != 2 && i != 3) ||
+			roms[i].region == POLYGONS || roms[i].region == COPRO_DATA) {
+			roms[i].variable = true;
+			roms[i].size = roms[i].region == POLYGONS ? 0x200000 : 0x80000;
+		}
+	}
+	return roms;
+}();
+
+bool validate_extended(const model1::regions &regions, std::string &error)
+{
+	constexpr size_t load = 0x278d70 + 10 * 24;
+	constexpr const char *names[] = {
+		"BIG FOREST", "BAY BRIDGE", "ACROPOLIS", "ALPINE", "AMAZON FALLS",
+		"DIABLO CANYON", "METROPOLIS", "PACIFIC COAST", "SURFERS OVAL", "SURFERS ROAD"
+	};
+	if (regions.maincpu.size() < load + 10 * 64) {
+		error = "Virtua Racing Extended: missing course directory.";
+		return false;
+	}
+	for (size_t i = 0; i < std::size(names); i++) {
+		const auto *record = regions.maincpu.data() + load + i * 64;
+		const size_t length = std::strlen(names[i]);
+		if (record[0] < 1 || record[0] > 3 || record[1] > 9 || record[2] > 2 ||
+			std::memcmp(record + 28, names[i], length) || record[28 + length] != 0) {
+			error = "Virtua Racing Extended: invalid course directory.";
+			return false;
+		}
+	}
+	return true;
+}
+
+const romset::definition EXTENDED = {
+	ID, "vr.zip", "vr", "Virtua Racing Extended v0.3", regions(), EXTENDED_ROMS,
+	EXTENDED_BOOT_4, nullptr, true, false, nullptr, "extended", validate_extended
+};
+
 } // namespace
 
 const romset::definition ROMSET = {
 	ID, "vr.zip", "vr", "Virtua Racing", regions(), ROMS,
 	0x6d69e695,   // epr-14878a.4, the main program
+	nullptr, true, false, &EXTENDED
 };
 
 static const romset::registration REGISTERED{ ROMSET };
