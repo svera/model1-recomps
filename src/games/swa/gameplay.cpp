@@ -67,6 +67,7 @@
 // ones would fill the sky with columns) but one within 2,048 of that edge is also drawn where it
 // moves to, fading in, so that the move shows no change.
 #include "gameplay.h"
+#include "../../machine/android_frame_trace.h"
 #include "../../machine/model1.h"
 #include <algorithm>
 #include <bit>
@@ -358,18 +359,20 @@ bool cockpit_shown(const model1 &machine)
 }
 }
 
-bool continue_sides(uint32_t *pixels, int width, int height, int ext)
+static constexpr int COCKPIT_SCREEN = 496, COCKPIT_REACH = 12;
+
+static unsigned continue_sides_impl(uint32_t *pixels, int width, int height, int ext)
 {
 	constexpr uint32_t NOTHING = 0xff000000;
-	constexpr int SCREEN = 496, REACH = 12, MAX_SHIFT = 18, WINDOW = 2;
-	if (ext <= 0 || width != SCREEN + 2 * ext || height <= 0) return false;
-	bool any = false;
+	constexpr int MAX_SHIFT = 18, WINDOW = 2;
+	if (ext <= 0 || width != COCKPIT_SCREEN + 2 * ext || height <= 0) return 0;
+	unsigned sides = 0;
 	std::vector<float> slope(static_cast<size_t>(height)), y_at(static_cast<size_t>(height));
 	std::vector<uint32_t> edge(static_cast<size_t>(height));
 	std::vector<std::array<float, 4>> coverage(static_cast<size_t>(height));
 	for (int dir : { -1, +1 }) {
 		// column j in from this side's edge (0: the edge)
-		const int x_edge = dir < 0 ? ext : ext + SCREEN - 1;
+		const int x_edge = dir < 0 ? ext : ext + COCKPIT_SCREEN - 1;
 		auto at = [&](int j, int y) { return pixels[size_t(y) * width + x_edge - dir * j]; };
 		for (int y = 0; y < height; y++) edge[y] = at(0, y);
 		// Each row's slope where a line crosses the edge: the vertical shift REACH columns in that
@@ -387,12 +390,12 @@ bool continue_sides(uint32_t *pixels, int width, int height, int ext)
 				for (int k = -WINDOW; k <= WINDOW; k++) {
 					const int a = y + k, b = a + t;
 					if (a < 0 || a >= height) continue;
-					cost += b < 0 || b >= height || at(REACH, b) != edge[a];
+					cost += b < 0 || b >= height || at(COCKPIT_REACH, b) != edge[a];
 				}
 				if (cost < best) best = cost, sum = t, ties = 1;
 				else if (cost == best) sum += t, ties++;
 			}
-			if (best <= 1 && ties <= 2) known.emplace_back(y, float(sum) / float(ties * REACH));
+			if (best <= 1 && ties <= 2) known.emplace_back(y, float(sum) / float(ties * COCKPIT_REACH));
 		}
 		if (known.empty()) continue;
 		for (size_t i = 0, k = 0; i < size_t(height); i++) {
@@ -435,9 +438,69 @@ bool continue_sides(uint32_t *pixels, int width, int height, int ext)
 				pixels[size_t(y) * width + x] = pixel;
 			}
 		}
-		any = true;
+		sides |= dir < 0 ? 1u : 2u;
 	}
-	return any;
+	return sides;
+}
+
+bool continue_sides(uint32_t *pixels, int width, int height, int ext)
+{
+	return continue_sides_impl(pixels, width, height, ext) != 0;
+}
+
+bool cockpit_sides_cache::draw(uint32_t *pixels, int width, int h, int e)
+{
+	if (e <= 0 || width != COCKPIT_SCREEN + 2 * e || h <= 0)
+		return continue_sides(pixels, width, h, e);
+	// Most recently used first; compare the exact input columns, not a hash.
+	auto found = entries.begin();
+	for (; found != entries.end(); ++found) {
+		if (found->ext != e || found->height != h) continue;
+		bool same = true;
+		for (int y = 0; same && y < h; y++) {
+			const uint32_t *row = pixels + size_t(y) * width;
+			const size_t i = size_t(y) * 4;
+			same = found->edges[i] == row[e] && found->edges[i + 1] == row[e + COCKPIT_REACH] &&
+				found->edges[i + 2] == row[e + COCKPIT_SCREEN - 1] &&
+				found->edges[i + 3] == row[e + COCKPIT_SCREEN - 1 - COCKPIT_REACH];
+		}
+		if (same) break;
+	}
+	if (found == entries.end()) {
+		android_frame_trace trace("M1 cockpit sides build");
+		std::rotate(entries.begin(), entries.end() - 1, entries.end());
+		auto &entry = entries.front();
+		entry.ext = e;
+		entry.height = h;
+		entry.edges.resize(size_t(h) * 4);
+		for (int y = 0; y < h; y++) {
+			const uint32_t *row = pixels + size_t(y) * width;
+			const size_t i = size_t(y) * 4;
+			entry.edges[i] = row[e];
+			entry.edges[i + 1] = row[e + COCKPIT_REACH];
+			entry.edges[i + 2] = row[e + COCKPIT_SCREEN - 1];
+			entry.edges[i + 3] = row[e + COCKPIT_SCREEN - 1 - COCKPIT_REACH];
+		}
+		entry.sides = continue_sides_impl(pixels, width, h, e);
+		entry.left.resize((entry.sides & 1) ? size_t(h) * e : 0);
+		entry.right.resize((entry.sides & 2) ? size_t(h) * e : 0);
+		for (int y = 0; y < h; y++) {
+			const uint32_t *row = pixels + size_t(y) * width;
+			if (entry.sides & 1) std::copy_n(row, e, entry.left.data() + size_t(y) * e);
+			if (entry.sides & 2) std::copy_n(row + e + COCKPIT_SCREEN, e, entry.right.data() + size_t(y) * e);
+		}
+		++builds;
+	} else {
+		android_frame_trace trace("M1 cockpit sides reuse");
+		std::rotate(entries.begin(), found, found + 1);
+		const auto &entry = entries.front();
+		for (int y = 0; y < h; y++) {
+			uint32_t *row = pixels + size_t(y) * width;
+			if (entry.sides & 1) std::copy_n(entry.left.data() + size_t(y) * e, e, row);
+			if (entry.sides & 2) std::copy_n(entry.right.data() + size_t(y) * e, e, row + e + COCKPIT_SCREEN);
+		}
+	}
+	return entries.front().sides != 0;
 }
 
 namespace {
@@ -1347,7 +1410,11 @@ gameplay_callbacks create_gameplay(model1 &machine)
 				 ram[0x8000 + MUSIC_CREDITS_FLAG] != 0);
 	};
 	callbacks.layer_sides = [&machine, state](int layer, uint32_t *pixels, int width, int height, int ext) {
-		return layer == COCKPIT_LAYER && state->wide_cockpit && cockpit_shown(machine) && continue_sides(pixels, width, height, ext);
+		return layer == COCKPIT_LAYER && state->wide_cockpit && cockpit_shown(machine) &&
+			state->cockpit_sides.draw(pixels, width, height, ext);
+	};
+	callbacks.layer_sides_revision = [state](int layer) {
+		return uint64_t(layer == COCKPIT_LAYER && state->wide_cockpit);
 	};
 	callbacks.reset = [state] {
 		state->view_word = -1;

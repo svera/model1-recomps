@@ -19,6 +19,47 @@ uint64_t model1::trace_ns()
 	return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+void model1::capture_arcade_frame()
+{
+	if (!m_arcade_skip_mode) {
+		draw_arcade_frame();
+		return;
+	}
+	const int objects = list_objects();
+	if (m_arcade_draw_next) draw_arcade_frame();
+	m_last_quads = objects;
+}
+
+void model1::draw_arcade_frame()
+{
+	m_last_parts = nullptr;
+	m_frame_parts = m_unshown = false;
+	if (!m_arcade_parts_mode || !m_parts_mode || !gpu3d_on() || !m_g3_target ||
+		(m_scale == 1 && m_ext == 0)) {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		return;
+	}
+	gpu_parts &p = m_own_parts;
+	p.ops.clear();
+	p.d3_changed.clear();
+	p.d3_all = false;
+	p.d3_target = -1;
+	p.d3_edge = false;
+	for (auto &i : p.img) i.px = nullptr;
+	m_parts = &p;
+	m_parts_whole = false;
+	screen_update(m_bitmap, m_bitmap.cliprect());
+	m_parts = nullptr;
+	if (m_parts_whole) {
+		m_redrawing = true;
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		m_redrawing = false;
+		return;
+	}
+	m_last_parts = &p;
+	m_frame_parts = m_unshown = true;
+}
+
 int model1::render_parts(double now, gpu_parts &p, bool shown)
 {
 	p.ops.clear();

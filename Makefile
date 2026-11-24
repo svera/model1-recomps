@@ -76,13 +76,13 @@ build/musashi/m68kops.c: $(BIN)/m68kmake third_party/musashi/m68k_in.c
 	@mkdir -p build/musashi
 	$(BIN)/m68kmake build/musashi third_party/musashi/m68k_in.c >/dev/null
 MUSASHI_CFLAGS = -O2 -w -Ithird_party/musashi -Ibuild/musashi
-$(OBJ)/musashi/m68kops.o: build/musashi/m68kops.c
+$(OBJ)/musashi/m68kops.o: build/musashi/m68kops.c third_party/musashi/m68kconf.h
 	@mkdir -p $(dir $@)
 	$(CC) $(MUSASHI_CFLAGS) -c $< -o $@
-$(OBJ)/musashi/m68kcpu.o: third_party/musashi/m68kcpu.c build/musashi/m68kops.c
+$(OBJ)/musashi/m68kcpu.o: third_party/musashi/m68kcpu.c build/musashi/m68kops.c third_party/musashi/m68kconf.h
 	@mkdir -p $(dir $@)
 	$(CC) $(MUSASHI_CFLAGS) -c $< -o $@
-$(OBJ)/musashi/m68kdasm.o: third_party/musashi/m68kdasm.c build/musashi/m68kops.c
+$(OBJ)/musashi/m68kdasm.o: third_party/musashi/m68kdasm.c build/musashi/m68kops.c third_party/musashi/m68kconf.h
 	@mkdir -p $(dir $@)
 	$(CC) $(MUSASHI_CFLAGS) -c $< -o $@
 $(OBJ)/musashi/softfloat.o: third_party/musashi/softfloat/softfloat.c
@@ -248,6 +248,13 @@ $(BIN)/model1io_adc_test: tests/model1io_adc_test.cpp $(OBJ)/src/machine/model1i
 test-model1io-adc: $(BIN)/model1io_adc_test
 	$(BIN)/model1io_adc_test
 
+# the sound board's busy loops, skipped and not
+$(BIN)/m1audio_idle_skip_test: $(call objs,tests/m1audio_idle_skip_test.cpp $(SOUND)) $(MUSASHI_OBJ) $(Z80_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+test-m1audio-idle-skip: $(BIN)/m1audio_idle_skip_test
+	$(BIN)/m1audio_idle_skip_test
+
 $(BIN)/page_allocator_test: tests/page_allocator_test.cpp src/machine/mame_lite.h
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $< -o $@
@@ -400,4 +407,4 @@ clean:
 	rm -rf build/obj build/bin
 
 -include $(shell find $(OBJ) -name '*.d' 2>/dev/null)
-.PHONY: all clean native regions rec test-romset test-romset-tool test-model1io-adc test-mb86233
+.PHONY: all clean native regions rec test-romset test-romset-tool test-model1io-adc test-m1audio-idle-skip test-mb86233

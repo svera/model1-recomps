@@ -215,8 +215,13 @@
  * instruction.
  */
 #ifndef M68K_INSTRUCTION_HOOK
-#define M68K_INSTRUCTION_HOOK       M68K_OPT_OFF
-#define M68K_INSTRUCTION_CALLBACK(pc) your_instruction_hook_function(pc)
+/* model1-recomps: the sound board's busy loops (m1audio.cpp) are watched at their heads */
+#define M68K_INSTRUCTION_HOOK       M68K_OPT_SPECIFY_HANDLER
+#define M68K_WATCH_LIMIT 0x40000
+extern unsigned char m68k_watch[M68K_WATCH_LIMIT / 2];
+void m68k_watch_hit(unsigned int pc);
+#define M68K_INSTRUCTION_CALLBACK(pc) do { const unsigned int pc_ = (pc); \
+	if (pc_ < M68K_WATCH_LIMIT && m68k_watch[pc_ >> 1]) m68k_watch_hit(pc_); } while (0)
 #endif
 
 
@@ -232,6 +237,15 @@
  */
 #ifndef M68K_EMULATE_ADDRESS_ERROR
 #define M68K_EMULATE_ADDRESS_ERROR  M68K_OPT_OFF
+#endif
+
+
+/* If ON, m68k_pulse_bus_error() takes a bus error exception. That costs a setjmp() on every
+ * m68k_execute() (which saves the signal mask, a system call, on macOS and Android) and a copy
+ * of the 16 registers before every instruction. Nothing here raises bus errors.
+ */
+#ifndef M68K_EMULATE_BUS_ERROR
+#define M68K_EMULATE_BUS_ERROR      M68K_OPT_OFF
 #endif
 
 

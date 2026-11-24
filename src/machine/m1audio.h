@@ -41,6 +41,12 @@ public:
 	void write16(uint32_t a, uint16_t v);
 	int irq_ack(int level);
 
+	// The sound program's busy loops are skipped with their exact cycles (see watch_hit): on by
+	// default, M1_NO_SOUND_IDLE_SKIP=1 or this turns it off. The board's output is the same either way.
+	void set_idle_skip(bool on) { m_idle_skip = on; }
+	uint64_t idle_cycles_skipped() const { return m_skipped_total; }
+	void watch_hit(uint32_t pc);
+
 private:
 	struct ym_glue;
 	std::vector<uint8_t> &m_rom, &m_pcm1_rom, &m_pcm2_rom;
@@ -66,4 +72,33 @@ private:
 	struct src_buf { std::vector<float> l, r; double pos = 0; } m_pcm_buf, m_ym_buf, m_dsb_buf;
 	static constexpr int DSB_LEAD = 2;
 	std::vector<int16_t> m_tmp[4];   // the two MultiPCMs' samples for a slice (left, right each)
+
+	// busy loops found in the sound program, watched at their first instruction
+	struct idle_loop
+	{
+		enum kind_t { SCAN, SPIN } kind = SCAN;
+		uint32_t pc = 0;
+		// SCAN: btst #bit,(offset,A4); beq next; ...; next: adda.l #stride,A4; dbra D4,pc
+		uint8_t bit = 0;
+		int16_t offset = 0;
+		uint32_t stride = 0;
+		int period = 0;                    // cycles a pass takes, once seen (0: not yet)
+		// the last visit: its slice, the cycles run in it then, and the state
+		uint64_t slice = 0, changes = 0;
+		int at = 0;
+		bool empty = false;
+		uint32_t regs[17] = {};
+	};
+	std::vector<idle_loop> m_loops;
+	bool m_idle_skip = true;
+	uint64_t m_slice = 0;                  // m68k_execute calls so far
+	uint64_t m_changes = 0;                // the 68000's writes, and its reads that change something
+	int m_skipped = 0;                     // cycles skipped in this slice
+	uint64_t m_skipped_total = 0;
+	void find_idle_loops();
+	void watch_loops();
+	bool slot_empty(uint32_t address, int bit) const
+	{
+		return address >= 0xf00000 && address < 0xf10000 && !((m_ram[address - 0xf00000] >> bit) & 1);
+	}
 };

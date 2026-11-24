@@ -212,7 +212,7 @@ void model1::run_scanline()
 	if (m_draw) {
 		android_frame_trace trace("M1 simulation frame capture");
 		if (m_smooth) record_frame();     // drawn later, for the moment shown (render_smooth)
-		else screen_update(m_bitmap, m_bitmap.cliprect());
+		else capture_arcade_frame();
 	}
 	m_frame++;
 }
@@ -707,11 +707,12 @@ static inline bool transparent_tile_row(const uint32_t *p)
 		(p[4] ^ KEY) | (p[5] ^ KEY) | (p[6] ^ KEY) | (p[7] ^ KEY));
 }
 
-// A layer at the arcade's resolution (and the widescreen sides), drawn once a game frame, with each
-// row's drawn span, so the scaling skips what's empty (the HUD and text layers are mostly empty).
+// A layer at the arcade's resolution (and the widescreen sides), with each row's drawn span,
+// so the scaling skips what's empty (the HUD and text layers are mostly empty).
 model1::layer_revision model1::current_layer_revision(int layer) const
 {
-	return {m_tiles.layer_revision(layer), m_tile_palette_revision, m_ram_b[0x1138]};
+	return {m_tiles.layer_revision(layer), m_tile_palette_revision, m_ram_b[0x1138],
+		m_gameplay.layer_sides_revision ? m_gameplay.layer_sides_revision(layer) : 0};
 }
 
 bool model1::layer_layout_changed(int layer, int flags, double slide_time) const
@@ -725,8 +726,16 @@ bool model1::layer_layout_changed(int layer, int flags, double slide_time) const
 bool model1::layer_needs_redraw(int layer, int flags, double slide_time, const layer_revision &revision) const
 {
 	if (layer_layout_changed(layer, flags, slide_time)) return true;
-	// VR's layer hooks depend on tile data and game mode. Other games keep their per-tick cache.
-	if (title().name == "vr") return m_layer_revision[layer & 7] != revision;
+	// Wing War's repeating starfield check uses another layer's map; leave those
+	// layers and narrow screens on the per-frame path until their inputs are tracked.
+	const bool wingwar_reuse = title().name == "wingwar" && m_wide_frame && layer != 4 && layer != 5;
+	if (title().name == "vr" || (title().name == "swa" && m_gameplay.layer_sides_revision) || wingwar_reuse) {
+		layer_revision previous = m_layer_revision[layer & 7];
+		// SWA's disabled layer 6 contains no palette-dependent pixels or side treatment.
+		if (title().name == "swa" && layer == 6 && (m_tiles.tile_r(0x5007) & 0x8000))
+			previous.palette = revision.palette;
+		return previous != revision;
+	}
 	return m_layer_cache[layer & 7].frame != m_frame;
 }
 
@@ -1309,6 +1318,37 @@ void model1::clip_scrolling_sides(bitmap_rgb32 &pixels, int layer, int flags)
 		}
 }
 
+std::optional<uint32_t> model1::backdrop_colour(const bitmap_rgb32 &pixels, int x0, int x1, uint32_t colour)
+{
+	const int total = (x1 - x0) * SCREEN_H;
+	const int required = total - total / 100;
+	auto meets_threshold = [&](uint32_t candidate) {
+		int matches = 0, misses = 0;
+		for (int y = 0; y < SCREEN_H; y++) {
+			const uint32_t *row = &pixels.pix(y);
+			for (int x = x0; x < x1; x++) {
+				if (row[x] == candidate) {
+					if (++matches >= required) return true;
+				} else if (++misses > total - required) return false;
+			}
+		}
+		return false;
+	};
+	if (colour != KEY) return meets_threshold(colour) ? std::optional<uint32_t>(colour) : std::nullopt;
+	uint32_t candidate = pixels.pix(0, x0);
+	if (meets_threshold(candidate)) return candidate;
+	// A qualifying colour is a strict majority, even if the first pixel was an outlier.
+	int balance = 0;
+	for (int y = 0; y < SCREEN_H; y++) {
+		const uint32_t *row = &pixels.pix(y);
+		for (int x = x0; x < x1; x++) {
+			if (!balance) candidate = row[x];
+			balance += row[x] == candidate ? 1 : -1;
+		}
+	}
+	return meets_threshold(candidate) ? std::optional<uint32_t>(candidate) : std::nullopt;
+}
+
 void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 {
 	constexpr uint32_t KEY = 0xff000000;
@@ -1320,23 +1360,15 @@ void model1::fill_backdrop_sides(bitmap_rgb32 &pixels, int layer, int flags)
 		return;
 	}
 	if (!m_ext || !m_wide_frame || stretch_backdrops()) return;
-	auto background = [&](const bitmap_rgb32 &b, int x0, int x1, uint32_t colour) {
-		std::unordered_map<uint32_t, int> counts;
-		for (int y = 0; y < SCREEN_H; y++)
-			for (int x = x0; x < x1; x++) counts[b.pix(y, x)]++;
-		auto top = std::max_element(counts.begin(), counts.end(), [](auto a, auto b) { return a.second < b.second; });
-		const int share = colour == KEY ? top->second : counts[colour];
-		return share * 100 >= (x1 - x0) * SCREEN_H * 99 ? std::optional<uint32_t>(colour == KEY ? top->first : colour) : std::nullopt;
-	};
 	if (layer >= 0)
-		if (const auto sky = background(pixels, m_ext, m_ext + SCREEN_W, KEY); sky && *sky != KEY) {
+		if (const auto sky = backdrop_colour(pixels, m_ext, m_ext + SCREEN_W, KEY); sky && *sky != KEY) {
 			if (m_wrap_tmp.width() != pixels.width()) m_wrap_tmp.allocate(pixels.width(), SCREEN_H);
 			m_wrap_tmp.fill(KEY);
 			const int ox = m_tiles.m_ox;
 			m_tiles.m_ox = m_ext;
 			m_tiles.draw_wide(m_wrap_tmp, layer, flags, m_ext);
 			m_tiles.m_ox = ox;
-			if (background(m_wrap_tmp, 0, m_ext, *sky) && background(m_wrap_tmp, m_ext + SCREEN_W, pixels.width(), *sky)) {
+			if (backdrop_colour(m_wrap_tmp, 0, m_ext, *sky) && backdrop_colour(m_wrap_tmp, m_ext + SCREEN_W, pixels.width(), *sky)) {
 				for (int y = 0; y < SCREEN_H; y++) {
 					std::copy_n(&m_wrap_tmp.pix(y, 0), m_ext, &pixels.pix(y, 0));
 					std::copy_n(&m_wrap_tmp.pix(y, m_ext + SCREEN_W), pixels.width() - m_ext - SCREEN_W, &pixels.pix(y, m_ext + SCREEN_W));
@@ -1517,6 +1549,21 @@ void model1::draw_tiles(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lay
 
 // ---- screen: MAME's screen_update_model1 ----
 
+bool model1::let_machine_go()
+{
+	if (!machine_free || !m_parts || m_parts_whole || m_redrawing || m_tile_slide_interpolating) return false;
+	m_last_quads = m_frame_quads;
+	if (m_picture_tail) {
+		auto tail = std::move(m_picture_tail);
+		m_picture_tail = nullptr;
+		tail();
+	}
+	auto go = std::move(machine_free);
+	machine_free = nullptr;
+	go();
+	return true;
+}
+
 void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
 #ifdef M1_ALWAYS_FRAME_TIMINGS
@@ -1573,45 +1620,62 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		last = backdrop;
 	}
 	m_screen_now = m_wide_frame ? nullptr : known;
-	{
+	const auto layers = [&] {
 		const uint64_t t0 = trace_ns();
 		prepare_layers();
 		m_work.layers_ns += trace_ns() - t0;
-	}
-	draw_tiles(bitmap, cliprect, 6, segas24_tile::DRAW_OPAQUE);
-	draw_tiles(bitmap, cliprect, 4, segas24_tile::DRAW_OPAQUE);
-	if (m_screen_now && m_parts) {
-		// its painted sides, as an image of their own over the backdrop (KEY between them)
-		if (m_sides.width() != bitmap.width() || m_sides.height() != bitmap.height()) {
-			m_sides.allocate(bitmap.width(), bitmap.height());
-			m_sides.fill(0xff000000);
-			m_sides_art = nullptr;
-		}
-		draw_screen_sides(m_sides);
-		m_parts->img[TEX_SIDES] = { &m_sides.pix(0), m_sides.width(), m_sides.height(), size_t(m_sides.width()), m_sides_gen };
-		gpu_op o; o.tex = TEX_SIDES; o.sw = o.dw = float(m_sides.width()); o.sh = o.dh = float(m_sides.height());
-		m_parts->ops.push_back(o);
-	} else if (m_screen_now) draw_screen_sides(bitmap);
-	if (m_parts) {
-		if (!m_free_cam) {
-			parts_composite(m_mid, m_mid_key, m_mid_gen, { 2, 0 });
-			m_parts->img[TEX_MID] = { &m_mid.pix(0), m_mid.width(), m_mid.height(), size_t(m_mid.width()), m_mid_gen };
-			gpu_op mid; mid.tex = TEX_MID; mid.sw = float(m_mid.width()); mid.sh = SCREEN_H; mid.dw = float(m_mid.width() * m_scale); mid.dh = float(SCREEN_H * m_scale);
-			m_parts->ops.push_back(mid);
-		}
-		gpu_op o;
-		o.tex = TEX_3D; o.sw = o.dw = float(bitmap.width()); o.sh = o.dh = float(bitmap.height());
-		m_parts->ops.push_back(o);                   // (drawn below, before the host puts it on)
-		if (m_screen_now) {                          // the painted sides again, over the 3D (see below)
-			gpu_op s; s.tex = TEX_SIDES; s.sw = s.dw = float(m_sides.width()); s.sh = s.dh = float(m_sides.height());
-			m_parts->ops.push_back(s);
-		}
-	} else {
-		draw_tiles(bitmap, cliprect, 2, 0);
-		draw_tiles(bitmap, cliprect, 0, 0);
-	}
-
+	};
 	static const bool no_polys = getenv("M1_NO_POLYS") != nullptr;   // debug: the 2D layers alone
+	const bool g3 = gpu3d_on() && !no_polys;   // the 3D on the GPU (gpu3d_end), else the CPU's
+	const auto layers_below = [&] {
+		draw_tiles(bitmap, cliprect, 6, segas24_tile::DRAW_OPAQUE);
+		draw_tiles(bitmap, cliprect, 4, segas24_tile::DRAW_OPAQUE);
+		if (m_screen_now && m_parts) {
+			// its painted sides, as an image of their own over the backdrop (KEY between them)
+			if (m_sides.width() != bitmap.width() || m_sides.height() != bitmap.height()) {
+				m_sides.allocate(bitmap.width(), bitmap.height());
+				m_sides.fill(0xff000000);
+				m_sides_art = nullptr;
+			}
+			draw_screen_sides(m_sides);
+			m_parts->img[TEX_SIDES] = { &m_sides.pix(0), m_sides.width(), m_sides.height(), size_t(m_sides.width()), m_sides_gen };
+			gpu_op o; o.tex = TEX_SIDES; o.sw = o.dw = float(m_sides.width()); o.sh = o.dh = float(m_sides.height());
+			m_parts->ops.push_back(o);
+		} else if (m_screen_now) draw_screen_sides(bitmap);
+		if (m_parts) {
+			if (!m_free_cam) {
+				parts_composite(m_mid, m_mid_key, m_mid_gen, { 2, 0 });
+				m_parts->img[TEX_MID] = { &m_mid.pix(0), m_mid.width(), m_mid.height(), size_t(m_mid.width()), m_mid_gen };
+				gpu_op mid; mid.tex = TEX_MID; mid.sw = float(m_mid.width()); mid.sh = SCREEN_H; mid.dw = float(m_mid.width() * m_scale); mid.dh = float(SCREEN_H * m_scale);
+				m_parts->ops.push_back(mid);
+			}
+			gpu_op o;
+			o.tex = TEX_3D; o.sw = o.dw = float(bitmap.width()); o.sh = o.dh = float(bitmap.height());
+			m_parts->ops.push_back(o);                   // (drawn below, before the host puts it on)
+			if (m_screen_now) {                          // the painted sides again, over the 3D (see below)
+				gpu_op s; s.tex = TEX_SIDES; s.sw = s.dw = float(m_sides.width()); s.sh = s.dh = float(m_sides.height());
+				m_parts->ops.push_back(s);
+			}
+		} else {
+			draw_tiles(bitmap, cliprect, 2, 0);
+			draw_tiles(bitmap, cliprect, 0, 0);
+		}
+	};
+	// In parts, with the 3D recorded for the GPU, the 2D layers (drawn again where changed, their
+	// images and the parts' list up to the 3D) and the HUD's are made on another thread while the 3D
+	// is walked: the walk reads only the game's memory, and adds to the parts nothing before gpu3d_end.
+	static const bool no_overlap = getenv("M1_NO_LAYER_OVERLAP") != nullptr;
+	// (only beside a walk long enough to hide them: without, handing them over costs more than it saves)
+	const bool overlap = m_parts && g3 && !no_overlap && m_walk_ns >= 1500000;
+	if (overlap)
+		m_layers_job.start([&] {
+			android_frame_trace trace("M1 2D beside the 3D");
+			layers();
+			layers_below();
+			if (!m_free_cam) parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });   // (taken as made, below)
+		});
+	else { layers(); layers_below(); }
+
 	m_above_hud_seen = false;
 	m_frame_quads = 0;
 	// (Low antialiasing, a picture drawn whole: what's under the 3D marked, to tell the 3D's pixels by)
@@ -1619,7 +1683,6 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		parallel_rows(bitmap.height(), [&](int a, int b) {
 			for (int y = a; y < b; y++) { uint32_t *p = &bitmap.pix(y); for (int x = 0; x < bitmap.width(); x++) p[x] |= UNDER_3D; }
 		});
-	const bool g3 = gpu3d_on() && !no_polys;   // the 3D on the GPU (gpu3d_end), else the CPU's
 	// A picture's painted sides stay over the 3D: what it draws beyond the arcade's 4:3 was off the
 	// cabinet's screen (a boss's empty select portrait, in Cheats' Akira's place, leaves its sky
 	// there). Put together on the GPU, the sides go on again above the 3D (above); else kept here.
@@ -1636,13 +1699,30 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		}
 	}
 	m_raster_ms = 0;
+	m_picture_frame = m_frame;
+	bool released = false;            // the game's next frame may be running: its state isn't read again
+	bool black_sides = false;
 	{
 		android_frame_trace trace("M1 prepare 3D");
 #ifdef M1_ALWAYS_FRAME_TIMINGS
 		work_timer tgp_time{m_work.scene_3d_ns};
 #endif
 		if (g3) gpu3d_begin(bitmap);
+		const uint64_t walk0 = trace_ns();
 		if (!no_polys) tgp_render(bitmap, cliprect, RENDER_BELOW_HUD);
+		m_walk_ns = trace_ns() - walk0;
+		if (overlap) m_layers_job.wait("M1 2D wait");
+		// In parts the HUD's image is made here, before the game's next frame may start (below):
+		// the layers are made from the tile RAM it writes. (Its place in the parts' list is the same.)
+		if (m_parts && !m_free_cam) {
+			parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });
+			m_parts->img[TEX_TOP] = { &m_top.pix(0), m_top.width(), m_top.height(), size_t(m_top.width()), m_top_gen };
+			gpu_op o; o.tex = TEX_TOP; o.sw = float(m_top.width()); o.sh = SCREEN_H; o.dw = float(m_top.width() * m_scale); o.dh = float(SCREEN_H * m_scale);
+			m_parts->ops.push_back(o);
+		}
+		black_sides = m_ext && !m_wide_frame && !m_screen_now && !extend_backdrops();
+		// nothing over the HUD: the rest reads only the picture's own
+		if (!m_above_hud_seen) released = let_machine_go();
 		if (g3) gpu3d_end(bitmap);
 		else { m_g3.gpu = false; m_g3.ms = m_raster_ms; m_g3.gpu_ms = 0; }
 	}
@@ -1664,13 +1744,7 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	}
 
 	if (m_parts) {
-		if (!m_free_cam) {
-			parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });
-			m_parts->img[TEX_TOP] = { &m_top.pix(0), m_top.width(), m_top.height(), size_t(m_top.width()), m_top_gen };
-			gpu_op o; o.tex = TEX_TOP; o.sw = float(m_top.width()); o.sh = SCREEN_H; o.dw = float(m_top.width() * m_scale); o.dh = float(SCREEN_H * m_scale);
-			m_parts->ops.push_back(o);
-		}
-		if (m_above_hud_seen) m_parts_whole = true;   // (another Model 1 game's: not VF's)
+		if (m_above_hud_seen && title().name != "swa") m_parts_whole = true;
 	} else {
 		draw_tiles(bitmap, cliprect, 7, 0);
 		draw_tiles(bitmap, cliprect, 5, 0);
@@ -1685,14 +1759,32 @@ void model1::screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 #ifdef M1_ALWAYS_FRAME_TIMINGS
 		work_timer tgp_time{m_work.scene_3d_ns};
 #endif
-		build_overlay_mask(bitmap, cliprect);
-		tgp_render(bitmap, cliprect, RENDER_ABOVE_HUD);
-		apply_overlay_stencil(bitmap, cliprect);
+		if (m_parts && title().name == "swa") {
+			if (m_overlay.width() != bitmap.width() || m_overlay.height() != bitmap.height())
+				m_overlay.allocate(bitmap.width(), bitmap.height());
+			{
+				android_frame_trace clear("M1 overlay clear");
+				m_overlay.fill(KEY);
+			}
+			m_overlay_bounds = rectangle(0, -1, 0, -1);
+			m_overlay_separate = true;
+			{
+				android_frame_trace draw("M1 overlay draw");
+				tgp_render(m_overlay, cliprect, RENDER_ABOVE_HUD);
+			}
+			m_overlay_separate = false;
+			if (!m_parts_whole) add_overlay_parts(cliprect);
+			if (!released) released = let_machine_go();
+		} else {
+			build_overlay_mask(bitmap, cliprect);
+			tgp_render(bitmap, cliprect, RENDER_ABOVE_HUD);
+			apply_overlay_stencil(bitmap, cliprect);
+		}
 	}
 	clear_moire_marks(bitmap, cliprect);
-	m_last_quads = m_frame_quads;
-	if (m_parts && !(m_ext && !m_wide_frame && !m_screen_now && !extend_backdrops())) parts_end(bitmap);
-	if (m_ext && !m_wide_frame && !m_screen_now && !extend_backdrops()) {   // 4:3 screens without a picture's sides: black
+	if (!released) m_last_quads = m_frame_quads;
+	if (m_parts && !black_sides) parts_end(bitmap);
+	if (black_sides) {   // 4:3 screens without a picture's sides: black
 		const int l = m_ext * m_scale, r = (m_ext + SCREEN_W) * m_scale;
 		if (m_parts) {
 			gpu_op o;

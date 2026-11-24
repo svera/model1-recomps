@@ -4699,6 +4699,9 @@ int main(int argc, char **argv)
 	// pictures back to the CPU anyway, M1_G3_NO_VERIFY=1 none checked.)
 	std::unique_ptr<gpu3d> g3;
 	bool g3_shared = false;       // (SDL_GPU: on the renderer's own device, drawing into its textures)
+#if defined(__ANDROID__) && M1_GPU3D_SDL
+	SDL_GPUDevice *g3_shared_device = nullptr;
+#endif
 	bool g3_next_start = false;   // (SDL_GPU: none made, the setting CPU as the game started)
 	bool g3_crashed = false;      // (SDL_GPU: none made, the last start closed while starting it; a choice in the menu tries again)
 #if M1_GPU3D_METAL
@@ -4724,7 +4727,13 @@ int main(int argc, char **argv)
 			leave_marker(marker);
 			{
 				const char *rn = SDL_GetRendererName(ren);
-				if (gpu_2d && rn && !strcmp(rn, "gpu") && !getenv("M1_G3_OWN_DEVICE")) g3_shared = (g3 = gpu3d_create_sdlgpu_on(SDL_GetGPURendererDevice(ren))) != nullptr;
+				if (gpu_2d && rn && !strcmp(rn, "gpu") && !getenv("M1_G3_OWN_DEVICE")) {
+					auto *device = SDL_GetGPURendererDevice(ren);
+					g3_shared = (g3 = gpu3d_create_sdlgpu_on(device)) != nullptr;
+#if defined(__ANDROID__)
+					if (g3_shared) g3_shared_device = device;
+#endif
+				}
 			}
 			if (!g3 && vk_first) g3 = gpu3d_create_sdlgpu("vulkan");
 			if (!g3) g3 = gpu3d_create_sdlgpu();
@@ -4911,6 +4920,9 @@ int main(int argc, char **argv)
 	SDL_Texture *g3_tex[model1::G3_TARGETS] = {};
 	uint64_t g3_wrapped = 0;
 	int g3_tw = 0, g3_th = 0;
+#if defined(__ANDROID__) && M1_GPU3D_SDL
+	bool g3_resume_rewrap = false;
+#endif
 	auto g3_unwrap = [&] {
 		gc.set_3d_targets(g3_tex, 0);
 		for (SDL_Texture *&t : g3_tex) if (t) { SDL_DestroyTexture(t); t = nullptr; }
@@ -4938,9 +4950,18 @@ int main(int argc, char **argv)
 			fprintf(stderr, "the 3D on the GPU: no %dx%d textures on the renderer for it (%s): its pictures come back to the CPU from now on\n", w, h, SDL_GetError());
 			g3_unwrap();
 			m.set_gpu3d_target(false);
+#if defined(__ANDROID__) && M1_GPU3D_SDL
+			g3_resume_rewrap = false;
+#endif
 			return;
 		}
 		g3_wrapped = g3->targets_made(); g3_tw = w; g3_th = h;
+#if defined(__ANDROID__) && M1_GPU3D_SDL
+		if (g3_resume_rewrap) {
+			fprintf(stderr, "the 3D on the GPU: shared renderer textures restored after reset\n");
+			g3_resume_rewrap = false;
+		}
+#endif
 	};
 	bool show_target = false;           // the picture on show is the GPU's (else tex)
 	const int gpu_check = getenv("M1_GPU_CHECK") ? atoi(getenv("M1_GPU_CHECK")) : 0;   // testing: every nth checked
@@ -5136,7 +5157,7 @@ int main(int argc, char **argv)
 	};
 	struct perf_stats {
 		bool show = false;
-		int frames = 0, starved = 0, held = 0, long_frame = 0, long_picture = 0, long_other = 0, ahead = 0;
+		int frames = 0, starved = 0, held = 0, long_frame = 0, long_picture = 0, long_other = 0, ahead = 0, early = 0;
 		uint64_t emu = 0, emu_max = 0, present = 0, work = 0, shown = 0, since = SDL_GetTicksNS();
 		phase_time prep, scene, compose, prep_other, pre_present, render_present, game_wait;
 		phase_time scene_3d, scene_screen_other, scene_outside_screen;
@@ -5163,11 +5184,16 @@ int main(int argc, char **argv)
 		float hz = 0;
 		if (const SDL_DisplayMode *dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(win))) hz = dm->refresh_rate;
 		const char *rn = SDL_GetRendererName(ren);
+		const char *pictures = !m.smooth() || !game::get_video(host_game()).smooth_frames ?
+			"whole-frame pictures" : "interpolated pictures";
+#ifdef __ANDROID__
+		if (!m.smooth())
+			pictures = "arcade pictures (GPU parts when available)";
+#endif
 		fprintf(stderr, "render state (%s): %dx (drawn at %dx), antialiasing %s, %s, the 3D: %s, the 2D on the %s (%s), %d FPS, %s, vsync %d, screen %.2f Hz, window %d x %d\n",
 				why, cfg.scale, m.render_scale(), cfg.aa == 0 ? "Low" : aa_now() > 1 ? (aa_now() == 2 ? "2x" : "3x") : "off",
 				aspect_i ? ASPECT_NAMES[aspect_i] : "fit", renderer_name().c_str(), on_gpu() ? "GPU" : "CPU",
-				rn ? rn : "?", cfg.fps, !m.smooth() || !game::get_video(host_game()).smooth_frames ? "whole-frame pictures" : "interpolated pictures",
-				vsync, hz, pw, ph);
+				rn ? rn : "?", cfg.fps, pictures, vsync, hz, pw, ph);
 	};
 
 	// ---- the menu (Esc, or View on a pad) ----
@@ -5821,13 +5847,14 @@ int main(int argc, char **argv)
 	// A game frame's inputs (false: a hotkey opened the menu, no frame runs) and what follows one: the
 	// scene changes' hold, its sound
 	bool replay_manual_first = replay_mode;
-	auto frame_inputs = [&]() -> bool {
+	// (in two: what the host reads, on its thread; what the frame's start does with them, before_frame
+	// on the game's thread when the frame runs there mid-picture)
+	auto read_frame_inputs = [&]() -> bool {
 		if (hud_benchmark) {
 			const auto in = hud_benchmark->frame(int(game_run + 1), m);
 			for (size_t port = 0; port < in.pressed.size(); ++port) m.m_inputs[port] = uint8_t(~in.pressed[port]);
 			for (size_t channel = 0; channel < in.analog.size(); ++channel)
 				if (in.analog[channel] >= 0) m.set_analog_input(int(channel), uint8_t(in.analog[channel]));
-			game_part.before_frame();
 			return true;
 		}
 #ifdef __ANDROID__
@@ -5861,17 +5888,27 @@ int main(int argc, char **argv)
 				m.m_analog_inputs[0], m.m_analog_inputs[1], m.m_analog_inputs[2], m.m_analog_inputs[4], m.m_analog_inputs[5]);
 			replay_manual_first = false;
 		}
+		return true;
+	};
+	auto apply_frame_inputs = [&] {
 		game_part.before_frame();
-		if (recording) {
+		if (!hud_benchmark && recording) {
 			if (record.frames.size() < input_replay::MAX_FRAMES) record.frames.push_back(input_replay::capture(m));
 			else { save_recording("frame limit reached"); recording = false; }
 		}
+	};
+	auto frame_inputs = [&]() -> bool {
+		if (!read_frame_inputs()) return false;
+		apply_frame_inputs();
 		return true;
 	};
 	bool curtain_on_gpu = false;       // a curtain shown during a hold, put together by the GPU
 	auto after_frame = [&](bool ff) -> bool {
 				game_part.after_frame();
 				game_run++;
+#ifdef __ANDROID__
+				if (!m.smooth()) auto_tick();
+#endif
 				// leaving the service menu: the PC build restarts at once, past the boot screen
 				if (g_service.left_test_menu) { g_service.left_test_menu = false; if (g_pc_mode) { reset_game(); m.m_audio_out.clear(); return false; } }
 				// With smooth motion a frame is only drawn when shown: while a scene change is held,
@@ -5923,6 +5960,31 @@ int main(int argc, char **argv)
 				}
 				m.m_audio_out.clear();
 				return true;
+	};
+	// The next frame, if it'll be due by the next refresh, run on the game's thread: from the
+	// picture's middle (early: as soon as what's left of the picture no longer reads the game's state,
+	// model1::machine_free), else during the present's wait. M1_NO_EARLY_FRAME=1: only the latter.
+	static const bool no_early_frame = getenv("M1_NO_EARLY_FRAME") != nullptr;
+	static const bool capturing = getenv("M1_CAPTURE") != nullptr;
+	uint64_t ahead_ns = 0;                 // (the frame's own time, on its thread)
+	auto ahead_due = [&] {
+		return !no_game_thread && running && m.smooth() && !paused && !menu.is_open() && !sync.holding() &&
+			!SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_TAB] && frame_clock - double(game_run) >= 0.5 &&
+			!(audio && SDL_GetAudioStreamQueued(audio.get()) > frame_bytes * int(FRAME_HZ * 0.3));   // (the game waiting for the sound: none ahead either)
+	};
+	auto start_ahead = [&](bool early) {
+		gt.start([&, early] {
+			android_frame_trace simulation(early ? "M1 early simulation" : "M1 ahead simulation");
+			const uint64_t t = SDL_GetTicksNS();
+			if (early) {
+				// (a frame with no 3D is drawn after, on this thread: the picture is still being made)
+				m.set_defer_capture(true);
+				apply_frame_inputs();
+			}
+			m.run_frame();
+			m.set_defer_capture(false);
+			ahead_ns = SDL_GetTicksNS() - t;
+		});
 	};
 	// Fullscreen: F11, Alt+Enter, or F (F only while no player has it as a control; the menu takes
 	// keys first, so a seed typed there isn't one)
@@ -6044,6 +6106,38 @@ int main(int argc, char **argv)
 			fprintf(stderr, "%s performance hint: unavailable on this Android version or device; continuing without it\n", hint_name);
 		}
 	}
+	// The render thread kept to the fastest cores (a Pixel 9a's X4): left to the scheduler, it spent
+	// a quarter of its time on the slower cores and drew 7% slower. Where every core is as fast, as
+	// it was. Testing (a file "no-pin-render" in the app's storage): off.
+	bool pin_render = true;
+#if defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (FILE *f = fopen((std::string(SDL_GetAndroidInternalStoragePath()) + "/no-pin-render").c_str(), "r")) {
+		fclose(f);
+		pin_render = false;
+		fprintf(stderr, "Render thread: not pinned (no-pin-render)\n");
+	}
+#endif
+	if (cpu_set_t allowed; pin_render && sched_getaffinity(0, sizeof allowed, &allowed) == 0) {
+		long fastest = 0;
+		std::vector<long> freq(CPU_SETSIZE, 0);
+		for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+			if (!CPU_ISSET(cpu, &allowed)) continue;
+			if (FILE *fq = fopen(("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/cpuinfo_max_freq").c_str(), "r")) {
+				if (fscanf(fq, "%ld", &freq[cpu]) == 1) fastest = std::max(fastest, freq[cpu]);
+				fclose(fq);
+			}
+		}
+		cpu_set_t target;
+		CPU_ZERO(&target);
+		for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
+			if (fastest && freq[cpu] == fastest) CPU_SET(cpu, &target);
+		if (CPU_COUNT(&target) && CPU_COUNT(&target) < CPU_COUNT(&allowed)) {
+			if (sched_setaffinity(0, sizeof target, &target) == 0)
+				fprintf(stderr, "Render thread pinned to the %d fastest core(s) (%ld kHz)\n", CPU_COUNT(&target), fastest);
+			else
+				perror("Render thread pin");
+		}
+	}
 #endif
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	bool sustained_racing = false;
@@ -6111,6 +6205,9 @@ int main(int argc, char **argv)
 		carried_curtain = false;
 		bool cut_hold = false;             // this pass's picture stays on purpose (a camera cut's hold)
 		bool picture_due = false;
+		bool inputs_early = false;         // the next frame's inputs read before the picture, to start it mid-picture
+		bool ahead_early = false;          // ... and started there
+		int hide_early = -1;               // (game_part.hide_frame() as the frame started)
 		curtain_on_gpu = carried_on_gpu;
 		carried_on_gpu = false;
 		const uint64_t pass_t = SDL_GetTicksNS();
@@ -6195,10 +6292,25 @@ int main(int argc, char **argv)
 				gc.reset();
 				if (e.type == SDL_EVENT_RENDER_DEVICE_RESET) {
 					crt_paint.lost();
-					if (g3_tex[0]) {   // (the 3D's textures went with the device: back to the CPU from now on)
-						fprintf(stderr, "the 3D on the GPU: the renderer's device was reset: its pictures come back to the CPU from now on\n");
+					if (g3_tex[0]) {
+#if defined(__ANDROID__) && M1_GPU3D_SDL
+						auto *device = SDL_GetGPURendererDevice(ren);
+						const char *driver = device ? SDL_GetGPUDeviceDriver(device) : nullptr;
+						// Android's EGL context reset does not reset SDL_GPU's Vulkan device.
+						const bool rewrap = g3_shared && device == g3_shared_device && driver && !strcmp(driver, "vulkan");
+#else
+						const bool rewrap = false;
+#endif
 						g3_unwrap();
-						m.set_gpu3d_target(false);
+						if (rewrap) {
+#if defined(__ANDROID__) && M1_GPU3D_SDL
+							g3_resume_rewrap = true;
+#endif
+							fprintf(stderr, "the 3D on the GPU: rewrapping shared textures after reset\n");
+						} else {
+							fprintf(stderr, "the 3D on the GPU: the renderer's device was reset: its pictures come back to the CPU from now on\n");
+							m.set_gpu3d_target(false);
+						}
 					}
 					make_texture();
 					if (glass) { SDL_DestroyTexture(glass); glass = nullptr; }
@@ -6419,6 +6531,19 @@ int main(int argc, char **argv)
 			}
 			frame_clock += dt * rate;
 			m.set_parts_mode(on_gpu());
+#ifdef __ANDROID__
+			const bool arcade_parts = !m.smooth() &&
+				on_gpu() && m.gpu3d_on() && m.gpu3d_target();
+			if (arcade_parts) g3_prepare();
+			m.set_arcade_parts_mode(arcade_parts && m.gpu3d_target());
+			// Only the last frame of a pass that reaches the next arcade picture can be shown: the
+			// others aren't drawn (in Wing War's busiest attract scenes, drawing every board tick
+			// took longer than the tick itself).
+			const bool arcade_skip = !m.smooth();
+			m.set_arcade_skip_mode(arcade_skip);
+#else
+			const bool arcade_skip = false;
+#endif
 			int due = int(int64_t(std::floor(frame_clock)) - game_run);
 			// A pass that came late (a scene change's work, the machine busy elsewhere) doesn't run
 			// the time it lost as frames back to back: that made the game, and smooth motion's
@@ -6453,9 +6578,11 @@ int main(int argc, char **argv)
 				android_frame_trace simulation("M1 synchronous simulation");
 				for (int i = 0; i < due; i++) {
 					if (!frame_inputs()) break;
+					if (arcade_skip) m.set_arcade_draw_next(i == due - 1 && game_run + 1 >= arcade_next_picture);
 					m.run_frame();
 					if (!after_frame(ff)) break;
 				}
+				m.set_arcade_draw_next(true);
 			}
 			display_trace.log("simulation returned; picture preparation begin", win);
 			frame_clock = std::min(frame_clock, double(game_run) + 0.999);   // (frames not run: the menu opened, a restart)
@@ -6512,6 +6639,16 @@ int main(int argc, char **argv)
 				tp.now = t;
 				tp.kind = 'N';
 				if (on_gpu()) {
+					{   // (not with this picture checked against the CPU's: that draws it again, from the game's state)
+						const int next = gpu_pictures + 1;
+						const bool checked = (gpu_verified < 3 && (next - gpu_check_from == (gpu_verified == 0 ? 1 : gpu_verified == 1 ? 60 : 600) || gpu_recheck)) ||
+							(gpu_2d && gpu_check && next % gpu_check == 0);
+						if (!no_early_frame && !hud_benchmark && !recording && !capturing && !checked && ahead_due() && read_frame_inputs()) {
+							inputs_early = true;
+							hide_early = game_part.hide_frame();
+							m.machine_free = [&] { ahead_early = true; start_ahead(true); };
+						}
+					}
 					const int r = [&] {
 						android_frame_trace scene("M1 prepare scene");
 						g3_prepare();
@@ -6533,6 +6670,7 @@ int main(int argc, char **argv)
 #endif
 						return m.render_parts(t, parts);
 					}();
+					m.machine_free = nullptr;
 					const uint64_t tc = SDL_GetTicksNS();
 					tp.draw = tc - tr;
 					scene_timing();
@@ -6608,6 +6746,7 @@ int main(int argc, char **argv)
 						gpu_failed.insert(m.render_scale());
 						if (cfg.renderer3d != 0) on_cpu_because("the GPU couldn't put the pictures together at this size", m.render_scale() > 1 ? "A lower Display > Render scale puts it back on the GPU." : NEXT);
 						gc.reset();
+						if (ahead_early) gt.wait();   // (drawn from the game's state: the frame begun stops first)
 						m.redraw();
 					}
 				} else {
@@ -6662,6 +6801,24 @@ int main(int argc, char **argv)
 			if (show_frame) {
 				arcade_picture_pending = false;
 				arcade_next_picture = game_run + 2 - game_run % 2;
+				if (const auto *arcade_parts = m.arcade_parts()) {
+					const bool composed = on_gpu() &&
+						gc.draw(*arcade_parts, m.frame_w(), m.frame_h(),
+							m.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
+						(aa_now() == 1 || gc.resolve(aa_now(), shown_w(), shown_h()));
+					if (composed) {
+						show_target = in_texture = true;
+					} else {
+						fprintf(stderr, "arcade picture composition failed at %dx (%s); drawing whole pictures at this scale\n",
+							m.render_scale(), SDL_GetError());
+						gpu_failed.insert(m.render_scale());
+						if (cfg.renderer3d != 0)
+							on_cpu_because("the GPU couldn't put the pictures together at this size",
+								m.render_scale() > 1 ? "A lower Display > Render scale puts it back on the GPU." : NEXT);
+						gc.reset();
+						m.redraw();
+					}
+				}
 			}
 		}
 		const uint64_t t1 = SDL_GetTicksNS();
@@ -6725,7 +6882,7 @@ int main(int argc, char **argv)
 		SDL_RenderClear(ren);
 		display_trace.log("clear returned; picture/filter draw begin", win);
 		// A game can suppress a transition without hiding the host menu.
-		if (!game_part.hide_frame() &&
+		if (!(hide_early >= 0 ? hide_early != 0 : game_part.hide_frame()) &&
 			!crt_paint.draw(ren, show_target ? (aa_now() > 1 && gc.resolved() ? gc.resolved() : gc.target()) : tex,
 				nullptr, cfg.crt_colours, cfg.brightness, cfg.gamma)) {
 			fprintf(stderr, "CRT colours: picture draw failed: %s\n", SDL_GetError());
@@ -6778,18 +6935,14 @@ int main(int argc, char **argv)
 		// the governor counts as missed
 		if (!paused && !menu.is_open() && (sync.holding() || cut_hold)) perf.held++;
 		// the next frame, if it'll be due by the next refresh, run while this present waits
-		bool ahead = false;
-		uint64_t ahead_t = 0;
-		if (!no_game_thread && running && m.smooth() && !paused && !menu.is_open() && !sync.holding() &&
-			!SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_TAB] && frame_clock - double(game_run) >= 0.5 &&
-			!(audio && SDL_GetAudioStreamQueued(audio.get()) > frame_bytes * int(FRAME_HZ * 0.3)) &&   // (the game waiting for the sound: none ahead either)
-			frame_inputs()) {
+		bool ahead = ahead_early;
+		if (!ahead && inputs_early && running) {   // (read for a start mid-picture that didn't come: not read again)
+			apply_frame_inputs();
+			start_ahead(false);
 			ahead = true;
-			ahead_t = SDL_GetTicksNS();
-			gt.start([&] {
-				android_frame_trace simulation("M1 ahead simulation");
-				m.run_frame();
-			});
+		} else if (!ahead && !inputs_early && ahead_due() && frame_inputs()) {
+			start_ahead(false);
+			ahead = true;
 		}
 		display_trace.log("SDL_RenderPresent begin", win);
 		const uint64_t present_begin = force_frame_timings ? SDL_GetTicksNS() : 0;
@@ -6816,6 +6969,7 @@ int main(int argc, char **argv)
 		}
 		if (ahead) {
 			perf.ahead++;
+			if (ahead_early) perf.early++;
 			const uint64_t wait_begin = force_frame_timings ? SDL_GetTicksNS() : 0;
 			{
 				android_frame_trace wait("M1 game-thread handoff");
@@ -6823,9 +6977,9 @@ int main(int argc, char **argv)
 			}
 			const uint64_t wait_end = SDL_GetTicksNS();
 			if (force_frame_timings) perf.game_wait.add(wait_end - wait_begin);
-			const uint64_t e = wait_end - ahead_t;
-			perf.emu += e;
-			perf.emu_max = std::max(perf.emu_max, e);
+			perf.emu += ahead_ns;
+			perf.emu_max = std::max(perf.emu_max, ahead_ns);
+			m.finish_capture();
 			curtain = false;
 			curtain_on_gpu = false;
 			after_frame(false);
@@ -6913,14 +7067,14 @@ int main(int argc, char **argv)
 					const double ns_per_ms_window = perf.frames * 1e6;
 					fprintf(stderr, "frame phases (avg/max ms per pass): picture prep %.2f/%.2f "
 						"(scene %.2f/%.2f, composition %.2f/%.2f, other %.2f/%.2f), pre-present %.2f/%.2f, "
-						"SDL_RenderPresent %.2f/%.2f, game-thread wait %.2f/%.2f (%d queued)\n",
+						"SDL_RenderPresent %.2f/%.2f, game-thread wait %.2f/%.2f (%d queued, %d mid-picture)\n",
 						perf.prep.total / ns_per_ms_window, perf.prep.peak / 1e6,
 						perf.scene.total / ns_per_ms_window, perf.scene.peak / 1e6,
 						perf.compose.total / ns_per_ms_window, perf.compose.peak / 1e6,
 						perf.prep_other.total / ns_per_ms_window, perf.prep_other.peak / 1e6,
 						perf.pre_present.total / ns_per_ms_window, perf.pre_present.peak / 1e6,
 						perf.render_present.total / ns_per_ms_window, perf.render_present.peak / 1e6,
-						perf.game_wait.total / ns_per_ms_window, perf.game_wait.peak / 1e6, perf.ahead);
+						perf.game_wait.total / ns_per_ms_window, perf.game_wait.peak / 1e6, perf.ahead, perf.early);
 					fprintf(stderr, "scene phases (avg/max ms per pass): 3D path %.2f/%.2f, "
 						"other screen work %.2f/%.2f, outside screen update %.2f/%.2f\n",
 						perf.scene_3d.total / ns_per_ms_window, perf.scene_3d.peak / 1e6,

@@ -3,7 +3,9 @@
 extern "C" {
 #include "../../third_party/musashi/m68k.h"
 }
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace {
 m1audio *g_board;
@@ -21,6 +23,8 @@ void m68k_write_memory_32(unsigned int a, unsigned int v) { g_board->write16(a &
 unsigned int m68k_read_disassembler_8(unsigned int a) { return g_board->read8(a & 0xffffff); }
 unsigned int m68k_read_disassembler_16(unsigned int a) { return g_board->read16(a & 0xffffff); }
 unsigned int m68k_read_disassembler_32(unsigned int a) { return (g_board->read16(a & 0xffffff) << 16) | g_board->read16((a + 2) & 0xffffff); }
+unsigned char m68k_watch[M68K_WATCH_LIMIT / 2];   // a busy loop's number + 1 at its head
+void m68k_watch_hit(unsigned int pc) { g_board->watch_hit(pc); }
 }
 
 // ymfm's host interface: the timers count in YM clocks and set the status flags when they fire.
@@ -60,6 +64,7 @@ m1audio::m1audio(std::vector<uint8_t> &sndcpu, std::vector<uint8_t> &pcm1, std::
 	m_cpu_context.resize(m68k_context_size());
 	m68k_get_context(m_cpu_context.data());
 	g_board = this;
+	m_idle_skip = !getenv("M1_NO_SOUND_IDLE_SKIP");
 }
 
 void m1audio::attach_dsb(const std::vector<uint8_t> &cpu_rom, const std::vector<uint8_t> &mpeg_rom)
@@ -95,6 +100,111 @@ void m1audio::reset()
 	// Two samples of lead (62.5 us): the Z80 delivers samples at instruction boundaries, and
 	// without it the slice's last interpolation would often need a sample not produced yet.
 	m_dsb_buf.l.assign(DSB_LEAD, 0); m_dsb_buf.r.assign(DSB_LEAD, 0); m_dsb_buf.pos = 0;
+	find_idle_loops();
+}
+
+// ---- the sound program's busy loops ----
+//
+// Most of the 68000's time goes round loops that wait. Wing War and Star Wars Arcade check 28
+// voice slots, twice, between looks at the YM's timer, and nearly all of the slots are empty;
+// Virtua Racing just reads the timer until it fires. A slice of the board (a scanline, ~630
+// cycles) sees nothing from outside change: the chips are run after the 68000, the UART's byte
+// arrives before it, and Musashi only takes an interrupt when the slice starts or the 68000
+// itself changes something. So a loop's passes can be counted off instead of run, cycle for
+// cycle, as long as one is left to end the slice on: the 68000 is then where it would have been.
+
+void m1audio::find_idle_loops()
+{
+	m_loops.clear();
+	const size_t end = std::min<size_t>(m_rom.size(), M68K_WATCH_LIMIT) & ~size_t(1);
+	auto w16 = [&](size_t a) { return uint32_t(m_rom[a] << 8 | m_rom[a + 1]); };
+	for (size_t h = 0; h + 12 <= end && m_loops.size() < 255; h += 2) {
+		// btst #bit,(offset,A4); beq.w next  ...  next: adda.l #stride,A4; dbra D4,h
+		if (w16(h) == 0x082c && w16(h + 2) < 8 && w16(h + 6) == 0x6700) {
+			const size_t next = h + 8 + int16_t(w16(h + 8));
+			if (next + 10 <= end && w16(next) == 0xd9fc && w16(next + 6) == 0x51cc &&
+				next + 8 + int16_t(w16(next + 8)) == h) {
+				idle_loop l;
+				l.kind = idle_loop::SCAN;
+				l.pc = uint32_t(h);
+				l.bit = uint8_t(w16(h + 2));
+				l.offset = int16_t(w16(h + 4));
+				l.stride = w16(next + 2) << 16 | w16(next + 4);
+				m_loops.push_back(l);
+			}
+		}
+		// movea.l #$d00001,A0; move.b (A0),D0; lsr.w #1,D0; bcc.s/bcs.s back: the YM's timer
+		if (w16(h) == 0x207c && w16(h + 2) == 0x00d0 && w16(h + 4) == 0x0001 && w16(h + 6) == 0x1010 &&
+			w16(h + 8) == 0xe248 && (w16(h + 10) == 0x64f4 || w16(h + 10) == 0x65f4)) {
+			idle_loop l;
+			l.kind = idle_loop::SPIN;
+			l.pc = uint32_t(h);
+			m_loops.push_back(l);
+		}
+	}
+}
+
+void m1audio::watch_loops()
+{
+	static std::vector<uint32_t> watched;   // (the boards of linked cabinets take turns)
+	for (uint32_t pc : watched) m68k_watch[pc >> 1] = 0;
+	watched.clear();
+	if (!m_idle_skip) return;
+	for (size_t i = 0; i < m_loops.size(); i++) {
+		m68k_watch[m_loops[i].pc >> 1] = uint8_t(i + 1);
+		watched.push_back(m_loops[i].pc);
+	}
+}
+
+// Musashi calls this before the instruction at a watched loop's head.
+void m1audio::watch_hit(uint32_t pc)
+{
+	auto &l = m_loops[m68k_watch[pc >> 1] - 1];
+	const int now = m68k_cycles_run(), left = m68k_cycles_remaining();
+	const bool same_slice = l.slice == m_slice;
+	int skip = 0;
+	if (l.kind == idle_loop::SCAN) {
+		// a pass over an empty slot is btst, beq, adda and dbra: its cycles, from one seen whole
+		const uint32_t a4 = m68k_get_reg(nullptr, M68K_REG_A4), d4 = m68k_get_reg(nullptr, M68K_REG_D4);
+		if (!l.period && same_slice && l.empty && (l.regs[1] & 0xffff) && a4 == l.regs[0] + l.stride &&
+			(d4 & 0xffff) == ((l.regs[1] - 1) & 0xffff))
+			l.period = now - l.at;
+		int n = 0;
+		if (l.period > 0) {
+			const int count = int(d4 & 0xffff);   // dbra goes back while the count stays >= 0
+			while (n < count && int64_t(n + 1) * l.period < left &&
+				   slot_empty((a4 + l.offset + uint32_t(n) * l.stride) & 0xffffff, l.bit))
+				n++;
+		}
+		// (the flags the passes leave are the btst's, which the next one sets again)
+		const uint32_t a = a4 + uint32_t(n) * l.stride, d = (d4 & 0xffff0000) | ((d4 - uint32_t(n)) & 0xffff);
+		if (n) {
+			m68k_set_reg(M68K_REG_A4, a);
+			m68k_set_reg(M68K_REG_D4, d);
+			skip = n * l.period;
+		}
+		l.regs[0] = a;
+		l.regs[1] = d;
+		l.empty = slot_empty((a + l.offset) & 0xffffff, l.bit);
+	} else {
+		// back where it was, as it was, and nothing written or taken in between: the same pass
+		// again, and again, until the slice ends
+		uint32_t regs[17];
+		for (int i = 0; i < 16; i++) regs[i] = m68k_get_reg(nullptr, m68k_register_t(M68K_REG_D0 + i));
+		regs[16] = m68k_get_reg(nullptr, M68K_REG_SR);
+		const int period = now - l.at;
+		if (same_slice && l.changes == m_changes && period > 0 && std::equal(regs, regs + 17, l.regs))
+			skip = (left - 1) / period * period;
+		std::copy(regs, regs + 17, l.regs);
+	}
+	if (skip) {
+		m68k_modify_timeslice(-skip);
+		m_skipped += skip;
+		m_skipped_total += skip;
+	}
+	l.slice = m_slice;
+	l.changes = m_changes;
+	l.at = now;
 }
 
 // ---- 68000 memory map (MAME: segam1audio_map) ----
@@ -118,6 +228,7 @@ uint8_t m1audio::read8(uint32_t a)
 		if ((a & 2) == 0) {          // data
 			uint8_t v = m_rx_latch >= 0 ? uint8_t(m_rx_latch) : 0;
 			m_rx_latch = -1;
+			m_changes++;
 			update_irq();
 			return v;
 		}
@@ -133,6 +244,7 @@ uint8_t m1audio::read8(uint32_t a)
 void m1audio::write16(uint32_t a, uint16_t v)
 {
 	a &= 0xfffffe;
+	m_changes++;
 	if (a >= 0xf00000 && a < 0xf10000) { m_ram[a - 0xf00000] = v >> 8; m_ram[a - 0xf00000 + 1] = uint8_t(v); return; }
 	if (a == 0xc50000) { m_bank1 = v & 3; return; }
 	if (a == 0xc70000) { m_bank2 = v & 3; return; }
@@ -141,6 +253,7 @@ void m1audio::write16(uint32_t a, uint16_t v)
 
 void m1audio::write8(uint32_t a, uint8_t v)
 {
+	m_changes++;
 	if (a >= 0xf00000 && a < 0xf10000) { m_ram[a - 0xf00000] = v; return; }
 	if ((a & ~1u) == 0xc50000) { if (a & 1) m_bank1 = v & 3; return; }
 	if ((a & ~1u) == 0xc70000) { if (a & 1) m_bank2 = v & 3; return; }
@@ -183,7 +296,10 @@ void m1audio::run(double usec, std::vector<int16_t> &out)
 	}
 	double cycles = usec * CPU_HZ / 1e6 + m_68k_carry;
 	int n = int(cycles);
-	int done = m68k_execute(n);
+	watch_loops();
+	m_slice++;
+	m_skipped = 0;
+	int done = m68k_execute(n) + m_skipped;
 	m_68k_carry = cycles - done;
 
 	// chip samples for this slice

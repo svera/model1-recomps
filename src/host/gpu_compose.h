@@ -5,6 +5,7 @@
 // inverse-alpha source pixels (KEY's top byte: 0xff) make the target the CPU's picture.
 #pragma once
 #include "../machine/model1.h"
+#include "../machine/android_frame_trace.h"
 #include "../gpu/gpu3d_shaders.h"
 #include <SDL3/SDL.h>
 #include <cstdio>
@@ -218,6 +219,7 @@ public:
 						SDL_UpdateTexture(t.tex, &r, im.px + size_t(c.y0) * im.stride + c.x0, int(im.stride * 4));
 					}
 			} else if (fresh || t.gen != im.gen) {
+				android_frame_trace trace(i == model1::TEX_OVERLAY ? "M1 overlay upload" : nullptr);
 				SDL_UpdateTexture(t.tex, nullptr, im.px, int(im.stride * 4));
 				uploaded += uint64_t(im.w) * im.h;
 				t.gen = im.gen;

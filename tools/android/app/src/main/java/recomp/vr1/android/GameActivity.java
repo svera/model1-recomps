@@ -13,7 +13,7 @@ import org.libsdl.app.SDLActivity;
 public class GameActivity extends SDLActivity implements InputManager.InputDeviceListener {
     private InputManager inputManager;
     private TouchControls touchControls;
-    private boolean resumed;
+    private boolean resumed, menuOpen;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,12 +56,14 @@ public class GameActivity extends SDLActivity implements InputManager.InputDevic
         boolean enabled = resumed && !controller
                 && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
         touchControls.setActive(enabled);
-        touchControls.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        touchControls.setVisibility(enabled && !menuOpen ? View.VISIBLE : View.GONE);
     }
 
     public void setTouchUiState(boolean open, boolean pcMode) {
         runOnUiThread(() -> {
+            menuOpen = open;
             if (touchControls != null) touchControls.setUiState(open, pcMode);
+            updateTouchControls();
         });
     }
 

@@ -137,6 +137,11 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   ahead of the clock. That allowance recovers at the 1% trim's rate, so the device gets a moment of silence
   instead. `M1_EVENTS_AT=400:gulp` simulates that device for 2 seconds; the trace's last column, `queued_ms`,
   shows the sound queue.
+  On Android, a screen-off EGL reset previously disabled direct 3D texture sharing even when SDL's
+  Vulkan device survived, forcing GPU readback for every picture. The host now rewraps the shared
+  textures when the Vulkan device is unchanged; other resets retain the readback fallback. On a
+  Pixel 9a, two screen-off cycles restored sharing, and the user reported normal performance and
+  correct graphics after both.
 - **Scene sync.** VF builds a new scene over several frames. The host holds the last complete picture until the new
   3D has settled, so scene changes don't show half-built frames.
 
@@ -3182,6 +3187,474 @@ unaffected. Its performance and battery effects for the other games have
 not been measured. If the OS or device cannot create a session,
 the game logs that it is continuing without the hint; a reporting error
 is logged and disables that session.
+
+#### SWA tile-layer reuse on Android
+
+An Android SWA gameplay trace showed tile-worker batches averaging 9.91 ms
+and 3D preparation averaging 6.81 ms. All seven prepared tile layers
+rebuilt 1,741 times in that capture. SWA now reuses a layer across game
+frames when its tile, palette, layout and side-treatment state are unchanged.
+The cockpit's wide-cockpit option is included in that state; its cockpit
+visibility test also depends on the tracked tile map and scroll state.
+
+An initial version still rebuilt the cockpit each frame. In a separate,
+unmatched gameplay capture, the other layers rebuilt less often, but the
+tile-worker batches still averaged 10.24 ms. The user reported that the
+subsequent version, which also reuses the cockpit layer, looked correct in
+manual play but performance felt about the same, with some places around
+15 FPS. A gameplay trace of that final version is still needed; these
+different manual runs do not establish a controlled speedup.
+
+With LOD On and Draw distance Arcade, the user reported an improvement but
+still saw FPS in the 20s. In a subsequent phone trace at 1x, a sustained
+37-second interval contained 952 picture preparations averaging 27.26 ms.
+There were 555 tile-worker batches averaging 11.79 ms and 540 cockpit-layer
+rebuilds averaging 10.66 ms. The interval also had 952 above-HUD overlay
+passes; the below-HUD GPU submission averaged 7.66 ms, while display-list
+walks averaged 0.47 ms. These timings overlap and must not be added as
+independent costs. Above-HUD objects force whole-picture rendering rather
+than direct GPU composition, including a GPU-to-CPU picture path. The trace
+does not count objects or establish which change would improve FPS.
+
+SWA's parts path now draws the above-HUD pass into a separate transparent
+image, masks it with the same bright-HUD rule, and composites it after the
+HUD. The main 3D can therefore remain on the GPU. An overlay containing
+shadows falls back to the whole picture because their blending may depend
+on the underlying scene; other games keep their existing fallback.
+
+The cockpit-side continuation also caches its generated sides. Its inputs
+are the edge and the column 12 pixels in on each side, plus the dimensions;
+changes elsewhere can rebuild the cockpit layer without repeating the
+costly continuation. Only sides the continuation actually drew are copied
+back, so an unchanged input with no continuation preserves the new layer.
+The cache retains the four most recently used input pairs, comparing their
+dimensions and edge columns exactly before reuse.
+
+In a subsequent manual phone replay with both changes, LOD On and Arcade
+distance, the user reported better performance and correct appearance.
+The trace recorded 1,830 continuation reuses and 59 builds, with cockpit
+layer rebuilds averaging 2.30 ms across the capture. The log showed windows
+around 49–63 shown FPS in the sampled gameplay. The previous run's slow
+windows were around 24–26 FPS, but the manually played runs were not
+identical, so those numbers are not a controlled comparison.
+
+Layer 6 was then instrumented during another manual replay at 1x, LOD On
+and Arcade distance. Of 1,605 rebuilds, 1,598 were caused only by the
+shared tile-palette revision; 1,536 rebuilds occurred while the layer was
+disabled. In those disabled rebuilds, tile drawing averaged 0.011 ms, but
+the side-processing section averaged 3.85 ms: it checks the empty backdrop
+for a dominant colour. SWA's disabled layer 6 now ignores palette-only
+changes; enable transitions, tile state, mode and layout changes still
+invalidate it, and an enabled layer uses the current palette.
+
+In another manual replay with this change, the user reported correct
+background and HUD appearance and performance about the same. Layer 6
+rebuilt 88 times for 7,492 prepared pictures, versus 1,605 for 6,854 in
+the preceding trace. The runs were not identical, so this confirms fewer
+rebuilds in the sampled play, not a controlled FPS improvement.
+
+The separate above-HUD overlay was then profiled by phase on the phone.
+Across 4,042 overlay passes, masking averaged 1.56 ms, clearing 0.07 ms,
+and drawing 0.02 ms; the separate texture upload averaged 0.23 ms.
+Masking is part of the overlay preparation time, so these measurements
+must not be added to that parent timing. The parts path now masks only
+the union of clipped viewports containing overlay quads. It still clears
+and uploads the full overlay, including when nothing is drawn, to avoid
+leaving stale pixels. Shadow-dependent overlays retain the whole-picture
+fallback.
+
+In a subsequent manual replay, masking averaged 0.53 ms over 4,604 passes.
+The user reported better performance and that the radar and HUD looked
+correct. The manually played runs were not identical, so this is not a
+controlled FPS or timing comparison.
+
+In that optimized overlay trace, 74 of 6,955 picture preparations exceeded
+16.67 ms; 72 contained a tile-worker batch. Of the 35 tile batches on the
+picture thread longer than 10 ms, 34 contained a cockpit-side build, and
+the longest batch took 20.17 ms with 17.91 ms in that build. These are
+nested wall times, not additive costs. The trace also recorded 584
+game-thread handoffs over 10 ms; all overlapped an ahead-simulation
+slice, and 565 overlapped for at least 90% of the wait. Among the 579
+whose ahead simulation had already started when the wait began, 49 had a
+frame-capture slice over 5 ms, so the remaining simulation work needs
+further breakdown. The capture has no scheduler events; it cannot tell
+how much of these wall-time spikes is CPU work versus descheduling.
+
+A later scheduler trace with detailed simulation instrumentation recorded
+287 ahead-simulation slices over 10 ms, averaging 11.46 ms wall time and
+11.25 ms scheduled on CPU. Within those slices, sampled V60 time excluding
+TGP averaged 5.00 ms, TGP 2.30 ms and sound 3.18 ms. These are wall-time
+samples, not exclusive CPU measurements; the thousands of TGP timing
+calls per frame add overhead, so these numbers do not establish normal
+gameplay costs or a controlled optimization result. That detailed SWA
+instrumentation was removed after the capture.
+
+An initial per-side cockpit cache did not help that replay: all 72 observed
+rebuilds changed both sides. A following input-fingerprint trace found five
+distinct edge-input pairs across 88 rebuilds, suggesting recent states recur.
+The final four-entry cache matches the actual inputs, not fingerprints.
+In another unmatched replay it built 11 times and reused 1,245 times,
+versus 88 builds and 1,120 reuses in the fingerprint replay. The user
+reported correct cockpit appearance and performance about the same. These
+different runs do not establish a controlled FPS improvement.
+
+A later 90-second Android `simpleperf` CPU sample, during gameplay at 2x,
+AA off and 60 FPS interpolated, contained 10,803 samples with none lost.
+The picture thread accounted for 50.6% of the samples. On that thread,
+8.0% were in a hash-table insertion called by backdrop-side colour counting;
+these are sampled CPU shares, not frame-time savings. The side check now
+tests the same 99% threshold without a hash table, using a majority-vote
+fallback when the first pixel is not the qualifying colour. This changes
+neither the threshold nor the side-fill decisions. After installation, the
+user reported that graphics looked correct and performance felt about the
+same. Recent diagnostic windows showed 42–51 shown FPS in the new session
+and 39–45 in the earlier sample; these manual runs are not controlled, so
+the difference does not establish an FPS improvement.
+
+A fresh 90-second sample of that build at 2x recorded 11,053 CPU samples
+with none lost. On the picture thread, 12.1% were in quad recording; the
+largest single sampled instruction copied a full vertex into the CPU
+fallback recording. Recording now keeps only the projected coordinates and
+depth needed by CPU replay, grouped by quad; fallback reconstructs the
+points before rasterization. A nonvisual test covers multiple batches,
+replay order and viewport restoration, including a failed GPU recording.
+
+An intermediate compact-vertex build still showed substantial individual
+vertex append overhead, so the final build batches the four vertices. In a
+separate 90-second sample it recorded 11,122 samples with none lost, with
+11.3% of picture-thread samples in quad recording. The user reported correct
+graphics and performance about the same for both builds. These were manual,
+unmatched runs; the sample shares do not establish a frame-time or FPS gain.
+
+#### Wing War tile-layer reuse on Android
+
+At 2x, AA off and 60 FPS interpolated, Wing War gameplay windows showed
+roughly 31–33 pictures per second, with about 10–11 ms in the 3D path and
+8–9 ms in other screen work per pass. A subsequent 60-second CPU sample
+contained 7,412 samples with none lost; tile drawing accounted for 9.7% of
+all samples, and span scanning also appeared prominently. These CPU shares
+are not frame-time savings.
+
+In wide scenes Wing War now reuses unchanged non-starfield tile layers across
+game frames, using the existing tile, palette, mode and layout revisions.
+Layers 4 and 5 retain per-frame rebuilding because the starfield repetition
+check has additional map inputs; narrow screens also retain the existing
+path. `--wingwar-tile-layer-reuse` checks invalidation and these fallbacks
+without inspecting rendered pixels. After installation, the user reported
+correct graphics and performance about the same. Some new gameplay windows
+showed 38–42 pictures per second and 5–6 ms of other screen work, but these
+unmatched play sessions do not establish an FPS improvement.
+
+At 30 FPS, an Android Wing War trace showed the whole-frame path submitting
+and reading back GPU 3D during each board frame: 82 frame captures averaged
+89 ms, including 62 ms in 3D submission. A CPU-only comparison also fell
+behind. Wing War on Android now captures non-interpolated frames in GPU
+parts when the shared 3D target and GPU composition are available; the
+board-frame capture and two-tick display cadence are unchanged. Above-HUD
+frames requiring whole-frame rendering and unavailable or failed GPU paths
+retain the existing fallback. The `--wingwar-arcade-parts` nonvisual test
+covers capture state, direct-target submission and the whole-frame fallback.
+In an unmatched 2x Auto GPU run, recent gameplay windows showed 28–29
+pictures per second without sound dropouts; the user reported much better
+performance and correct gameplay and pause/menu graphics. CPU rendering
+and other devices may still be slower.
+
+The user then reported severe slowdowns in attract mode at 30 FPS. A 40-second
+trace there showed no above-HUD overlay passes and cheap GPU submission
+(0.77 ms), but in the heaviest scenes each board-frame capture averaged
+20–23 ms, about 15 ms of it in the CPU display-list walk. With every board
+frame drawn, about 60 a second, the work exceeded real time; synchronous
+simulation passes reached 210 ms, and the log showed 6–10 pictures per second
+with hundreds of sound dropouts. At 30 FPS only the last board frame of a pass
+that reaches the next two-tick picture can be shown, so on Android Wing War
+without smooth motion the other frames are no longer drawn. Their list uploads
+are made at the next vblank by `tgp_scan`, as with smooth motion and MAME's
+frame skipping. In this mode `frame_quads()` reports the list's object count
+on every frame, drawn or skipped, as smooth motion does, so scene-change holds
+compare like with like; the shown picture is always a drawn frame. The
+`--wingwar-arcade-parts` test checks that a skipped frame is not drawn, that
+its uploads still land, and the object count, without inspecting pixels.
+
+Both 30 FPS changes, GPU-part capture and skipping frames that cannot be
+shown, were then enabled for every game on Android rather than Wing War
+alone; the 3D renderer's failure check now also runs after each 30 FPS
+frame in every game. SWA's above-HUD radar uses its separate overlay part;
+other games' above-HUD frames and unavailable GPU paths keep the whole-frame
+fallback. Tile changes accumulate until the next draw, as with smooth motion,
+so skipped frames lose none. Other platforms are unchanged.
+
+#### Where Wing War's picture time goes on Android
+
+Profiles on the Mac tested whether emulation was the limit. The emulated chips (TGP, sound
+CPUs and chips, I/O) took 0.1–8.5% of samples per game. A Wing War replay ran 40,896 frames in
+52 s, under 1.3 ms per frame for all emulation, so a TGP HLE was not pursued. In representative
+runs (1x, 60 FPS, GPU parts), the native 3D display-list walk was the largest renderer cost:
+58% in Wing War and 37% in VR. Tile layers were 7–17%.
+
+On a Pixel 9a (2x, AA off, Vulkan, 60 FPS), 60-second simpleperf captures of manual Wing War
+play (999 Hz, DWARF stacks) put about 55% of process samples on the render thread. Each shown
+picture does one walk, `render_parts` → `screen_update` → `tgp_render` → `push_object`, with no
+duplicate walk. Picture preparation was 13–25 ms against about 6 ms of game simulation.
+
+Two exact changes followed:
+- `sort_quads` now reads each quad's depth key and foreground flag once into a compact array.
+  It builds all four radix histograms in one sweep and skips a pass when every key shares that
+  byte. The stable order is unchanged.
+- `record_quads` now records a wireframe line's same-row pixel run as one span instead of one
+  span per pixel. The shaders fill spans inclusively and apply `G3_CHECKER` per pixel, so a moiré
+  line still covers every other pixel.
+
+Render-thread CPU per shown picture, before → after (the second play session's scene was heavier):
+
+| Function | Before | After |
+| --- | ---: | ---: |
+| `sort_quads` | 1.00 ms | 0.51 ms |
+| `record_quads` | 2.30 ms | 2.52 ms |
+| `push_object` | 5.14 ms | 5.41 ms |
+
+The span merge saved little in this play. The remaining walk cost is spread across transform,
+back-face, lighting and clipping lines with no single hotspot. The `rec_point` snapshot (the CPU
+fallback's copy) is where the scattered point reads first miss. The tests
+`--gpu-replay-geometry` (a line's spans against the CPU's pixels) and the sort-order check in
+`copy_bounds_and_sort` cover these changes without inspecting rendered output.
+
+#### Splitting the walk across threads (tried, removed)
+
+A parallel walk was tried next. Each display-list object was deferred with a copy of its view
+state, the objects were drawn into per-chunk arenas on the drawing threads, and the results were
+copied back in list order. The zmode 0 z each object inherits from the one before was patched in
+during that copy. A test compared every bit of the parallel output with the serial walk's, and
+the two matched. A Mac Wing War run had about 2–3 flushes per picture, with 180–600 objects each.
+
+It did not help on the Pixel 9a. The first version gave each thread an equal fixed share. A
+60-second profile of play dropped from about 43 to about 24 pictures shown per second. The render
+thread's CPU fell from about 37 s to 28 s, but the six drawing threads went from about 17 s to
+70 s. The phone's small in-order cores were several times slower at this float-heavy walk, and
+the big core waited for them. In unprofiled attract-mode runs, the same heavy scene ran at
+21 shown/s (38 ms a picture) parallel and 26–28 shown/s (30 ms) serial.
+
+With smaller chunks handed to whichever thread was free, the heavy scene ran at 29–31 shown/s
+(29 ms). That was within run-to-run noise of serial, while keeping six cores busy, so the
+parallel walk was removed.
+
+#### Compiler flags and the render thread's core
+
+The Android library is built with `-O2`. Wing War builds with `-O3` and ThinLTO, and then with
+`-march=armv8.2-a` added, were compared in alternating unprofiled attract-mode runs on the
+Pixel 9a. All three averaged 49–50 shown/s, and the heaviest five seconds ran at about 30 shown/s
+and 28 ms. That was within run-to-run noise, so `-O2` was kept.
+
+Sampling the render thread's core twice a second showed it on the X4 (core 7, 3.1 GHz) about 70%
+of the time, and on the 2.6 GHz A720 cores the rest. It never ran on the little cores. The app
+can't be pinned from outside (`taskset` is denied), so the host now pins its own render thread
+to the cores with the highest `cpuinfo_max_freq`. It does nothing when every core is as fast.
+Two runs each, alternating:
+
+| Render thread | Mean shown/s | Mean picture | Below-58 seconds | Heaviest 5 s |
+| --- | ---: | ---: | ---: | ---: |
+| Scheduler's choice | 49.3 | 15.8 ms | 17.6 ms | 28.9 ms |
+| Pinned to the X4 | 51.7 | 14.6 ms | 16.2 ms | 28.0 ms |
+
+Diagnostics builds skip the pin when the app's storage has a `no-pin-render` file.
+
+#### Recording the heavy scene for the GPU
+
+The heaviest attract-mode pictures have 40,000–49,000 quads from about 100 models. A typical
+picture has 17,000–20,000. An 18-second simpleperf profile of the render thread across the heavy
+scene found these costs:
+
+- `record_quads`, which hands the sorted quads to the GPU, was the largest single function at
+  21.5% self time. `push_object`'s walk came next at 16.7%.
+- Nearly half of `record_quads`' samples were on copying each quad's four points into a snapshot.
+  These reads follow depth order, so they miss the cache.
+- The 3D picture's other work, such as `draw_tiles`, `parts_composite`, `prepare_layers`, the
+  backdrop and `gpu3d_end`, was about 14% in total, split into pieces of 1.5–3.5%.
+
+The snapshot existed so that the CPU could redraw the picture if the GPU failed, or for a check
+picture, after the next batch had reused the quad and point buffers. Two changes cut the recording
+time:
+
+- **Prefetching.** `record_quads` prefetches the quads and points a few entries ahead.
+- **No snapshot.** While a picture is being recorded for the GPU, each batch keeps its storage
+  until `gpu3d_end`, and the replay reads the original quads and points. Both buffers have a fixed
+  size and are never reallocated, so the pointers stay valid.
+
+The CPU can't simply run `tgp_render` again instead of keeping a snapshot. Its object hooks keep
+state, such as head detection and outfit tone statistics.
+
+The phone runs alternated the builds. Recording time per picture, by window:
+
+| Build | Heavy window | Lighter window |
+| --- | ---: | ---: |
+| Before | 5.84 / 6.37 ms | 1.73 / 1.61 ms |
+| Prefetching | 5.27 / 4.88 ms | 1.31 / 1.33 ms |
+
+A second pair of runs compared prefetching alone against prefetching with no snapshot:
+
+| Build | Heaviest window | Another window |
+| --- | ---: | ---: |
+| Prefetching | 3.62 / 3.65 ms | 1.73 / 1.76 ms |
+| No snapshot | 2.85 / 2.87 ms | 1.38 / 1.38 ms |
+
+Every run reported 0 differences. Frame rate and picture time stayed within run-to-run noise
+(heavy seconds at 26–27 ms), so the saving didn't show up in the frame rate.
+
+The GPU can't also take over transforming and lighting the points. The CPU still needs every
+transformed point for back-face culling, the depth-sort key and clipping. The GPU's float
+division also doesn't round exactly like the CPU's, so the pictures would no longer match.
+
+Preparing the recording in storage order was tried and rejected. The idea was to read each
+batch's points in the order they're stored, where a model's quads and points sit together, and
+then record in depth order from a small entry per quad. The output matched: 0 differences over
+more than 300 checked pictures per scale on macOS, and 0 differences on the phone. But
+preparing every quad first cost more than the scattered depth-order reads it saved. Four
+alternating phone runs per build, recording time per picture:
+
+| Build | Heaviest window | Lighter windows |
+| --- | ---: | ---: |
+| Depth order (kept) | 3.41 ms | 0.94 ms |
+| Storage order first | 3.83 ms | 1.14 ms |
+
+Frame rate and picture time didn't change.
+
+#### Drawing the 2D layers while the 3D is walked
+
+In the heavy scene each picture spent about 7 ms in screen work outside the 3D. A 20 s profile
+showed that most of it was the render thread waiting for the worker pool. Most of that work was
+rebuilding the changed tile layers (`prepare_layers`: drawing them, finding curtains), about
+5 ms of worker CPU per heavy picture. The 3D walk itself runs on the render thread alone, and the
+pool sits idle during it.
+
+The walk reads only the game's memory. It adds nothing to the GPU's list of parts before
+`gpu3d_end`. The layers, their images and the parts below the 3D don't depend on it either. So
+in parts mode, with the 3D recorded for the GPU, `screen_update` hands the whole 2D side to a
+thread of its own (`side_job` in `parallel.h`). That covers rebuilding the layers, the backdrop
+and sides, the middle layers' composite and the HUD's composite. The render thread walks the 3D
+at the same time and waits for the 2D before `gpu3d_end`. The 2D still splits its rows over the
+pool as before.
+
+Moving only the drawing and compositing, with the layers rebuilt before the walk, saved about
+0.3 ms and changed nothing measurable. Moving the rebuild as well cut the heavy scene's other
+screen work from about 7.3 ms to 3.1 ms per picture. On title and menu screens there's almost
+no 3D to hide behind, and the handover cost about 0.5 ms a picture. So the 2D goes beside the
+walk only when the last picture's walk took at least 1.5 ms. `M1_NO_LAYER_OVERLAP` turns it
+off.
+
+Alternating 70 s attract-mode runs on the phone at 2x (one baseline run was cut short and is
+left out):
+
+| Build | Mean shown/s | Mean picture | Worst second | Seconds at 24 ms or more |
+| --- | ---: | ---: | ---: | --- |
+| Before (3 runs) | 51.8 | 14.6 ms | 30–31 shown/s | in every run |
+| 2D beside the walk (4 runs) | 52.7 | 13.9 ms | 36–42 shown/s | none |
+
+Every run checked the GPU's 3D against the CPU's with 0 differences. On macOS, with every 7th
+picture checked, Wing War at 1x and 2x, VR and SWA also had 0 differences.
+
+#### Starting the next game frame mid-picture
+
+The host already ran the next game frame on a thread of its own, but only during
+`SDL_RenderPresent`. Present takes about 1.3 ms on the phone and a heavy-scene game frame about
+7 ms, so the render thread waited 3–4.6 ms per pass for that frame after every present.
+
+The game frame can't simply run beside the whole picture. The 3D walk reads the palette, the
+TGP and polygon RAM uploaded at vblank, the light parameters and the game's own RAM through its
+hooks. The 2D layers read the tile RAM. Copying all of that for every game was too large a
+first step. What can overlap is the end of the picture. Once the walk and the 2D are done,
+nothing else reads the game's state: the GPU's submission, the edge pass, the parts' change
+bands and the GPU composition all work on the picture's own buffers.
+
+So in parts mode, the host reads the next frame's inputs before the picture. It also sets
+`model1::machine_free`. `screen_update` calls that as soon as the walk, the 2D and the HUD's
+composite are done (for SWA, after the above-HUD pass). Pictures with objects above the HUD in
+the other games are drawn whole and don't qualify. Before the call, the HUD's composite moves
+ahead of `gpu3d_end` (its place in the list of parts is unchanged). `render_smooth`'s own
+bookkeeping also runs first, because the frame's start reads it (`keep_still`) or writes it
+(`m_render_done`). A frame with no 3D, which the frame's end normally draws on the game's
+thread, is drawn afterwards on the render thread (`finish_capture`). This is skipped for
+pictures checked against the CPU's, input recording, the HUD benchmark and `M1_CAPTURE`.
+`M1_NO_EARLY_FRAME` turns it off. On the Mac, at 120 passes a second and 60 pictures a second,
+about half of the game frames started mid-picture.
+
+Two pairs of 70 s attract-mode runs on the phone at 2x, in opposite order:
+
+| Build | Mean shown/s | Mean picture | Worst heavy-scene second | Game-thread wait |
+| --- | ---: | ---: | --- | ---: |
+| Present only (2 runs) | 51.6, 52.7 | 14.1, 13.8 ms | 36, 39 shown/s | 3.6, 3.5 ms |
+| Mid-picture start (2 runs) | 55.7, 54.9 | 12.5, 12.8 ms | 46, 42 shown/s | 2.5, 2.7 ms |
+
+Every run checked the GPU's 3D against the CPU's with 0 differences. On macOS, with every 7th
+picture checked, Wing War at 1x and 2x, VR and SWA had 0 differences, also with
+`M1_NO_GAME_THREAD`. Starting the frame before the walk would hide the rest of the game
+frame. That would need the state above double-buffered for each game, including each game's
+hook state (SWA's per-frame object lists, VR's scenery).
+
+### Making the boards' simulation cheaper
+
+A phone profile of Wing War's game thread put the sound board at 16% (the 68000 6.6%, the
+MultiPCMs 5.2%, the YM 2.8%) and the I/O board's Z80 at 10%. A temporary histogram of the
+68000's program counter showed where its time went:
+
+- Wing War and SWA spend about 80% of their instructions in two scans of 28 voice slots
+  (`btst #0,(0,A4); beq.w next; … next: adda.l #stride,A4; dbra D4,head`). The main loop runs
+  them between reads of the YM's status, and nearly all the slots are empty.
+- VR spends 94% in a spin on the YM's timer A
+  (`movea.l #$d00001,A0; move.b (A0),D0; lsr.w #1,D0; bcc.s`).
+
+These loops can be counted off instead of run, and the 68000 ends the slice exactly where it
+would have been. Within a slice (about one scanline) nothing outside the 68000 changes:
+
+- The chips run after the 68000, so the YM's status is frozen.
+- The UART's byte arrives before the slice.
+- Musashi only takes an interrupt when the slice starts, when SR changes, or when
+  `m68k_set_irq` is called (only at the start of `run` and on the UART's data read).
+
+`m1audio::find_idle_loops` finds both shapes in the ROM at reset. Musashi's instruction hook
+(`m68kconf.h`) calls `watch_hit` at a loop's head, through a byte map of watched addresses:
+
+- **Scan:** the hook learns the cycles of one pass over an empty slot. It then skips the
+  following empty slots by moving A4 and D4 on. The next `btst` sets the flags again.
+- **Spin:** a pass that comes back with every register and SR the same, and with nothing
+  written or read from the UART in between, repeats until the slice ends. It is skipped in whole
+  passes.
+
+In both cases at least one cycle is left, so the slice ends on a real instruction. The skipped
+cycles go through `m68k_modify_timeslice` and are added back to the slice's count.
+`M1_NO_SOUND_IDLE_SKIP=1` turns this off. About two-thirds of the 68000's cycles are skipped
+in Wing War and SWA and three-quarters in VR.
+
+Musashi also ran a `setjmp` on every `m68k_execute` (on macOS and Android this saves the signal
+mask, a system call). It also copied the 16 registers before every instruction. Both serve
+`m68k_pulse_bus_error`, which nothing here calls. They are now behind
+`M68K_EMULATE_BUS_ERROR`, which is off. On the Mac this `setjmp` was three-quarters of what
+remained of the 68000.
+
+The Z80 has no loop to skip: its hot helpers find their dual-port RAM bit ready on the first
+check. Its timers are checked only when one is due (`m_ctc_due`). Wing War runs CTC channel 2
+with no interrupt every 16 cycles, though, so that check still passes after most
+instructions. The exact count depends on each instruction's length, so `ctc_advance` was
+only made a single pass.
+
+The output is unchanged. With the harness (`tools/model1run.cpp`) the WAV and every frame's
+hash were identical to before for Wing War, VR and SWA:
+
+- 3,600 attract frames.
+- 5,400 scripted gameplay frames, with the skip on and off.
+
+`make test-m1audio-idle-skip` runs a small hand-assembled sound program with both loop shapes
+and a UART interrupt. It checks that the program sends the same bytes and plays the same
+samples with skipping on and off, and that skipping happened. On the Mac the harness ran at:
+
+| Game | Before | After |
+| --- | ---: | ---: |
+| Wing War | 287 frames/s | 294 frames/s |
+| VR | 505 frames/s | 527 frames/s |
+| SWA | 997 frames/s | 1,110 frames/s |
+
+There the 68000 dropped from 5.3% to 1.2% of a Wing War run (in `sample`). On the phone, two
+pairs of 70 s Wing War runs measured game time per frame of 6.76 → 6.57 ms and 7.16 → 7.11 ms.
+That is within the run-to-run noise, and pictures shown per second were unchanged, because the
+picture, not the game thread, limits the phone.
 
 ## VR renderer optimizations on macOS
 

@@ -1,4 +1,5 @@
 #include "model1io2.h"
+#include <algorithm>
 
 namespace {
 uint8_t z_read(void *user, uint16_t address) { return static_cast<model1io2 *>(user)->mem_r(address); }
@@ -37,6 +38,7 @@ void model1io2::reset()
 	m_fpga_counter = 0;
 	std::fill(std::begin(m_ctc), std::end(m_ctc), ctc_channel{});
 	m_ctc_vector = 0;
+	m_ctc_due = UINT64_MAX;
 	m_ee = EE_RESET;
 	m_cs = m_clk = m_di = 0;
 	m_accum = m_shift = 0;
@@ -52,7 +54,7 @@ void model1io2::run(double usec)
 	while (double(m_cpu.cyc - start) < target) {
 		m_time = m_cpu.cyc;
 		z80_step(&m_cpu);
-		ctc_advance();
+		if (m_cpu.cyc >= m_ctc_due) ctc_advance();
 	}
 	m_carry = target - double(m_cpu.cyc - start);
 	m_time = m_cpu.cyc;
@@ -167,6 +169,7 @@ void model1io2::ctc_write(uint8_t channel, uint8_t value)
 			const uint64_t prescaler = (ctc.control & 0x20) ? 256 : 16;
 			ctc.next_cycle = m_cpu.cyc + ctc.constant * prescaler;
 		}
+		ctc_schedule();
 		return;
 	}
 
@@ -185,6 +188,7 @@ void model1io2::ctc_write(uint8_t channel, uint8_t value)
 		ctc.next_cycle = m_cpu.cyc + ctc.constant * prescaler;
 		ctc.running = true;
 	}
+	ctc_schedule();
 }
 
 uint8_t model1io2::ctc_read(uint8_t channel) const
@@ -197,17 +201,30 @@ uint8_t model1io2::ctc_read(uint8_t channel) const
 	return uint8_t(count);
 }
 
+// (Wing War runs channel 2 with no interrupt every 16 cycles, so this is called after most
+// instructions: the next one due is found in the same pass.)
 void model1io2::ctc_advance()
 {
+	uint64_t due = UINT64_MAX;
 	for (uint8_t channel = 0; channel < 4; channel++) {
 		auto &ctc = m_ctc[channel];
-		if (!ctc.running || ctc.next_cycle > m_cpu.cyc) continue;
-
-		if ((ctc.control & 0x80) && !m_cpu.int_pending)
-			z80_gen_int(&m_cpu, uint8_t(m_ctc_vector + channel * 2));
-		const uint64_t prescaler = (ctc.control & 0x20) ? 256 : 16;
-		ctc.next_cycle += ctc.constant * prescaler;
+		if (!ctc.running) continue;
+		if (ctc.next_cycle <= m_cpu.cyc) {
+			if ((ctc.control & 0x80) && !m_cpu.int_pending)
+				z80_gen_int(&m_cpu, uint8_t(m_ctc_vector + channel * 2));
+			const uint64_t prescaler = (ctc.control & 0x20) ? 256 : 16;
+			ctc.next_cycle += ctc.constant * prescaler;
+		}
+		due = std::min(due, ctc.next_cycle);
 	}
+	m_ctc_due = due;
+}
+
+void model1io2::ctc_schedule()
+{
+	m_ctc_due = UINT64_MAX;
+	for (const auto &ctc : m_ctc)
+		if (ctc.running) m_ctc_due = std::min(m_ctc_due, ctc.next_cycle);
 }
 
 uint8_t model1io2::port_input(int port)

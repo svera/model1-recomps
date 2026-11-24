@@ -127,21 +127,17 @@ final class TouchControls extends View {
     private void layoutControls() {
         controls.clear();
         float w = getWidth() - insetLeft - insetRight, h = getHeight() - insetTop - insetBottom;
-        if (w == 0 || h == 0) return;
+        if (menu || w == 0 || h == 0) return;
         float left = insetLeft, right = left + w, top = insetTop;
         float r = h * 0.065f;
         add("STICK", STICK, left + h * 0.27f, top + h * 0.78f, h * 0.17f);
-        if (menu) {
-            add("CLOSE", BACK, left + w * 0.5f, top + h * 0.09f, r);
-            add("OK", SOUTH, right - h * 0.12f, top + h * 0.85f, r);
-            add("BACK", EAST, right - h * 0.27f, top + h * 0.85f, r);
-            return;
-        }
         float utilityRadius = r * 0.8f;
         float utilityOffset = h * (pcMode ? 0.085f : 0.17f);
-        add("START", START, left + w * 0.5f - utilityOffset, top + h * 0.09f, utilityRadius);
-        if (!pcMode) add("COIN", DPAD_UP, left + w * 0.5f, top + h * 0.09f, utilityRadius);
-        add("MENU", BACK, left + w * 0.5f + utilityOffset, top + h * 0.09f, utilityRadius);
+        // centred on the screen, not the safe area: a one-sided camera cutout would shift the group
+        float centre = getWidth() * 0.5f;
+        add("START", START, centre - utilityOffset, top + h * 0.09f, utilityRadius);
+        if (!pcMode) add("COIN", DPAD_UP, centre, top + h * 0.09f, utilityRadius);
+        add("MENU", BACK, centre + utilityOffset, top + h * 0.09f, utilityRadius);
 
         if (GAME.equals("vr.zip")) {
             action("GAS", RIGHT_TRIGGER, 0, 0, right, top, h, r);
@@ -216,7 +212,7 @@ final class TouchControls extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (!active) return false;
+        if (!active || menu) return false;
         int action = event.getActionMasked(), index = event.getActionIndex();
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             float x = event.getX(index), y = event.getY(index);

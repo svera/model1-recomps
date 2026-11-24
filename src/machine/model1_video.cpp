@@ -679,12 +679,12 @@ int model1::quad_t::compare(const model1::quad_t* other) const
 void model1::sort_quads() const
 {
 	android_frame_trace trace("M1 3D sort");
-	const int count = m_quadpt - &m_quaddb[0];
+	const int count = m_quadpt - m_quadbase;
 	bool finite = true;
 	for (int i = 0; i < count; i++)
 	{
-		m_quadind[i] = &m_quaddb[i];
-		finite = finite && std::isfinite(m_quaddb[i].z);
+		m_quadind[i] = &m_quadbase[i];
+		finite = finite && std::isfinite(m_quadbase[i].z);
 	}
 	if (count < 256 || !finite) {
 		std::sort(m_quadind.get(), m_quadind.get() + count, [](const quad_t *a, const quad_t *b) {
@@ -697,31 +697,46 @@ void model1::sort_quads() const
 		const uint32_t bits = q->z == 0 ? 0 : std::bit_cast<uint32_t>(q->z);
 		return bits & 0x80000000u ? bits : bits ^ 0x7fffffffu;
 	};
-	m_quadsort.resize(count);
-	auto *from = m_quadind.get(), *to = m_quadsort.data();
-	for (int shift = 0; shift < 32; shift += 8) {
-		std::array<size_t, 512> offsets{};
-		const auto bucket = [&](const quad_t *q) {
-			return ((key(q) >> shift) & 255) | (shift == 24 && q->foreground ? 256 : 0);
+	// The keys read once, side by side; every pass's counts in one go, and a pass whose byte is the
+	// same for every quad (the depths' high bytes, often) skipped: the order as before.
+	m_quadsort[0].resize(count);
+	m_quadsort[1].resize(count);
+	sort_item *from = m_quadsort[0].data(), *to = m_quadsort[1].data();
+	std::array<std::array<uint32_t, 512>, 4> counts{};
+	for (int i = 0; i < count; i++) {
+		const quad_t &q = m_quadbase[i];
+		const uint32_t k = key(&q), fg = q.foreground ? 1u : 0u;
+		from[i] = { k, uint32_t(i) | (fg << 31) };
+		counts[0][k & 255]++;
+		counts[1][(k >> 8) & 255]++;
+		counts[2][(k >> 16) & 255]++;
+		counts[3][(k >> 24) | (fg << 8)]++;
+	}
+	for (int pass = 0; pass < 4; pass++) {
+		auto &offsets = counts[pass];
+		const int shift = pass * 8;
+		const auto bucket = [&](const sort_item &s) {
+			return ((s.key >> shift) & 255) | (pass == 3 ? (s.index >> 31) << 8 : 0);
 		};
-		for (int i = 0; i < count; i++) offsets[bucket(from[i])]++;
-		size_t next = 0;
+		if (offsets[bucket(from[0])] == uint32_t(count)) continue;
+		uint32_t next = 0;
 		for (auto &offset : offsets) {
-			const size_t size = offset;
+			const uint32_t size = offset;
 			offset = next;
 			next += size;
 		}
 		for (int i = 0; i < count; i++) to[offsets[bucket(from[i])]++] = from[i];
 		std::swap(from, to);
 	}
+	for (int i = 0; i < count; i++) m_quadind[i] = &m_quadbase[from[i].index & 0x7fffffffu];
 }
 
 void model1::unsort_quads() const
 {
-	const int count = m_quadpt - &m_quaddb[0];
+	const int count = m_quadpt - m_quadbase;
 	for (int i = 0; i < count; i++)
 	{
-		m_quadind[i] = &m_quaddb[i];
+		m_quadind[i] = &m_quadbase[i];
 	}
 }
 
@@ -729,7 +744,7 @@ void model1::unsort_quads() const
 void model1::draw_quads(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
 	view_t *view = m_view.get();
-	int count = m_quadpt - &m_quaddb[0];
+	int count = m_quadpt - m_quadbase;
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	if (benchmark_geometry && !m_probing) benchmark_geometry->quads += count;
 #endif
@@ -749,10 +764,27 @@ void model1::draw_quads(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	view->y1 = std::max(view->y1, cliprect.min_y);
 	view->y2 = std::min(view->y2, cliprect.max_y);
 
+	// The clipped view bounds every pixel this batch can draw, including wireframes.
+	if (m_overlay_separate && !m_rec && count > 0 && view->x1 <= view->x2 && view->y1 <= view->y2) {
+		if (m_overlay_bounds.max_x < m_overlay_bounds.min_x)
+			m_overlay_bounds = rectangle(view->x1, view->x2, view->y1, view->y2);
+		else {
+			m_overlay_bounds.min_x = std::min(m_overlay_bounds.min_x, view->x1);
+			m_overlay_bounds.max_x = std::max(m_overlay_bounds.max_x, view->x2);
+			m_overlay_bounds.min_y = std::min(m_overlay_bounds.min_y, view->y1);
+			m_overlay_bounds.max_y = std::max(m_overlay_bounds.max_y, view->y2);
+		}
+	}
+
 	if (m_rec) { if (count > 0) record_quads(view, count); }
 	else {
 		const uint64_t t0 = trace_ns();
-		raster_quads(bitmap, view, count);
+		// Shadows can depend on the picture beneath the overlay, which is on the GPU.
+		if (m_overlay_separate && std::any_of(m_quadind.get(), m_quadind.get() + count,
+			[](const quad_t *q) { return q->col & MOIRE; }))
+			m_parts_whole = true;
+		else if (!m_overlay_separate || !m_parts_whole)
+			raster_quads(bitmap, view, count);
 		m_raster_ms += (trace_ns() - t0) / 1e6;
 	}
 
@@ -2200,26 +2232,49 @@ int model1::skip_direct(int list_offset) const
 	return list_offset;
 }
 
+// The objects in the list tgp_render would draw (as index_objects counts them), without drawing
+int model1::list_objects()
+{
+	if ((m_listctl[1] & 0x1f) != 0x1f) return 0;
+	set_current_render_list();
+	int objects = 0, off = 0;
+	for (int guard = 0; guard < 0x10000; guard++) {
+		switch (readi(off)) {
+		case 0: off += 2; break;
+		case 1: case 0x41: objects++; off += 8; break;
+		case 2: off = skip_direct(off); break;
+		case 3: off += 16; break;
+		case 4: off += 6 + (readi(off + 4) + 1) * 2; break;
+		case 5: case 6: off += 6 + readi(off + 4) * 2; break;
+		case 7: case 8: off += 4; break;
+		case 9: case 0xc: off += 6; break;
+		case 0xa: off += 8; break;
+		case 0xb: off += 26; break;
+		default: return objects;
+		}
+	}
+	return objects;
+}
+
 void model1::draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
 	if (m_probing) {
-		m_quadpt = &m_quaddb[0];
-		m_pointpt = &m_pointdb[0];
+		m_quadpt = m_quadbase;
+		m_pointpt = m_pointbase;
 		return;
 	}
 	if (!m_seen_edges.empty()) {
 		if (m_replaying) close_steps();
 		else m_seen_edges.clear();
 	}
-	if (m_quadpt != &m_quaddb[0])
+	if (m_quadpt != m_quadbase)
 	{
 		M1_LOG(LOG_TGP, "VIDEO: sort&draw\n");
 		sort_quads();
 		draw_quads(bitmap, cliprect);
 	}
 
-	m_quadpt = &m_quaddb[0];
-	m_pointpt = &m_pointdb[0];
+	next_batch();
 }
 
 
@@ -2234,10 +2289,22 @@ int model1::draw_direct(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lis
 	unsort_quads();
 	draw_quads(bitmap, cliprect);
 
-	m_quadpt = &m_quaddb[0];
-	m_pointpt = &m_pointdb[0];
+	next_batch();
 
 	return list_offset;
+}
+
+// A batch drawn: its storage taken again for the next, or kept, recorded for the GPU, till the
+// picture ends (gpu3d_end), its replay reading the quads and points where they are.
+void model1::next_batch()
+{
+	if (m_rec) {
+		m_quadbase = m_quadpt;
+		m_pointbase = m_pointpt;
+	} else {
+		m_quadpt = m_quadbase;
+		m_pointpt = m_pointbase;
+	}
 }
 
 
@@ -2837,15 +2904,23 @@ void model1::video_start()
 
 	m_pointpt = &m_pointdb[0];
 	m_quadpt = &m_quaddb[0];
+	m_pointbase = m_pointpt;
+	m_quadbase = m_quadpt;
 	m_listctl[0] = m_listctl[1] = 0;
 
+}
+
+static bool overlay_blocked(uint32_t argb)
+{
+	constexpr int feature_level = 8;
+	return argb != model1::KEY && (((argb >> 16) & 0xff) > feature_level ||
+		((argb >> 8) & 0xff) > feature_level || (argb & 0xff) > feature_level);
 }
 
 // Only cat1 HUD features can mask the above-HUD pass. Sampling the whole picture
 // also masks SWA's name-entry letters with the photograph in the cat0 backdrop.
 void model1::build_overlay_mask(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
-	constexpr int feature_level = 8; // anything darker counts as HUD background
 	parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });
 	if (!m_overlay_block) {
 		m_overlay_block = std::make_unique<uint8_t[]>(size_t(bitmap.width()) * bitmap.height());
@@ -2855,14 +2930,36 @@ void model1::build_overlay_mask(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		for (int y = cliprect.min_y + begin; y < cliprect.min_y + end; y++) {
 			const uint32_t *const hud = &m_top.pix(y / m_scale);
 			for (int x = cliprect.min_x; x <= cliprect.max_x; x++) {
-				const uint32_t argb = hud[x / m_scale];
-				int r = (argb >> 16) & 0xff, g = (argb >> 8) & 0xff, b = argb & 0xff;
 				int i = y * m_overlay_stride + x;
-				m_overlay_block[i] = argb != KEY && (r > feature_level || g > feature_level || b > feature_level);
+				m_overlay_block[i] = overlay_blocked(hud[x / m_scale]);
 				m_overlay_hud_snapshot[i] = bitmap.pix(y, x);
 			}
 		}
 	});
+}
+
+void model1::add_overlay_parts(const rectangle &cliprect)
+{
+	android_frame_trace trace("M1 overlay mask");
+	const int x0 = std::max(cliprect.min_x, m_overlay_bounds.min_x);
+	const int x1 = std::min(cliprect.max_x, m_overlay_bounds.max_x);
+	const int y0 = std::max(cliprect.min_y, m_overlay_bounds.min_y);
+	const int y1 = std::min(cliprect.max_y, m_overlay_bounds.max_y);
+	if (x0 <= x1 && y0 <= y1) parallel_rows(y1 - y0 + 1, [&](int begin, int end) {
+		for (int y = y0 + begin; y < y0 + end; y++) {
+			const uint32_t *hud = &m_top.pix(y / m_scale);
+			uint32_t *dst = &m_overlay.pix(y);
+			for (int x = x0; x <= x1; x++)
+				if (overlay_blocked(hud[x / m_scale])) dst[x] = KEY;
+		}
+	});
+	m_parts->img[TEX_OVERLAY] = { m_overlay.data(), m_overlay.width(), m_overlay.height(),
+		size_t(m_overlay.width()), ++m_overlay_gen };
+	gpu_op o;
+	o.tex = TEX_OVERLAY;
+	o.sw = o.dw = float(m_overlay.width());
+	o.sh = o.dh = float(m_overlay.height());
+	m_parts->ops.push_back(o);
 }
 
 // Restore the bright HUD features over the above-HUD blip pass, so blips only
@@ -2908,10 +3005,18 @@ void model1::record_quads(view_t *view, int count)
 	const bool depth = s_hd_raster && s_moire_blend && !no_depth && m_video->scenery_polys_end;
 	const uint32_t batch = uint32_t(m_rec_batches.size());
 	m_rec_batches.push_back({ view->x1, view->x2, view->y1, view->y2, m_rec_quads.size(), size_t(count) });
+	m_rec_quads.insert(m_rec_quads.end(), m_quadind.get(), m_quadind.get() + count);
+	// Depth order visits quads and their points scattered across the picture's storage: fetch a
+	// quad ahead, and its points once its pointers are in.
+	constexpr int quad_ahead = 16, points_ahead = 8;
 	for (int i = 0; i < count; i++) {
+		if (i + quad_ahead < count) __builtin_prefetch(m_quadind[i + quad_ahead]);
+		if (i + points_ahead < count)
+			for (const point_t *p : m_quadind[i + points_ahead]->p) {
+				__builtin_prefetch(p);
+				__builtin_prefetch(reinterpret_cast<const char *>(p + 1) - 1);
+			}
 		const quad_t &q = *m_quadind[i];
-		m_rec_quads.push_back(q);
-		for (int k = 0; k < 4; k++) m_rec_points.push_back(*q.p[k]);
 		if (m_rec_bad || view->y2 < view->y1) continue;
 		int color = q.col;
 		if (color < 0) color = -1 - color;
@@ -2933,10 +3038,20 @@ void model1::record_quads(view_t *view, int count)
 				g.batch = batch;
 				const uint32_t idx = uint32_t(m_rec_polys.size());
 				const size_t from = m_rec_spans.size();
+				// A row's run of the line's pixels, one span: the GPU fills a span's pixels (a moiré
+				// line's every other one, by G3_CHECKER) as it did the pixels one by one
+				const int step = (color & MOIRE) ? 2 : 1;
 				line_pixels(rectangle(view->x1, view->x2, view->y1, view->y2), m_bitmap_rec_w, m_bitmap_rec_h, ax, ay, bx, by, (color & MOIRE) != 0,
-							[&](int x, int y) { m_rec_spans.push_back({ idx, y, x, x }); });
+							[&](int x, int y) {
+								if (m_rec_spans.size() > from) {
+									gpu3d_span &s = m_rec_spans.back();
+									if (s.y == y && x == s.xb + step) { s.xb = x; return; }
+									if (s.y == y && x == s.xa - step) { s.xa = x; return; }
+								}
+								m_rec_spans.push_back({ idx, y, x, x });
+								m_rec_y0 = std::min(m_rec_y0, y); m_rec_y1 = std::max(m_rec_y1, y);
+							});
 				if (m_rec_spans.size() == from) continue;
-				for (size_t k = from; k < m_rec_spans.size(); k++) { m_rec_y0 = std::min(m_rec_y0, m_rec_spans[k].y); m_rec_y1 = std::max(m_rec_y1, m_rec_spans[k].y); }
 				m_rec_polys.push_back(g);
 				continue;
 			}
@@ -2995,7 +3110,9 @@ void model1::gpu3d_begin(const bitmap_rgb32 &bitmap)
 	m_bitmap_rec_w = bitmap.width(); m_bitmap_rec_h = bitmap.height();
 	m_rec = true;
 	m_rec_bad = bool(m_gameplay.wireframe);
-	m_rec_batches.clear(); m_rec_quads.clear(); m_rec_points.clear(); m_rec_polys.clear(); m_rec_spans.clear();
+	m_rec_batches.clear(); m_rec_quads.clear(); m_rec_polys.clear(); m_rec_spans.clear();
+	m_quadpt = m_quadbase = m_quaddb.get();
+	m_pointpt = m_pointbase = m_pointdb.get();
 	m_rec_rows = 0;
 	m_rec_y0 = m_rec_m0 = 1 << 30;
 	m_rec_y1 = m_rec_m1 = -1;
@@ -3009,11 +3126,7 @@ void model1::rec_replay(bitmap_rgb32 &bitmap)
 	const int sx1 = view->x1, sx2 = view->x2, sy1 = view->y1, sy2 = view->y2;
 	for (const rec_batch &b : m_rec_batches) {
 		view->x1 = b.x1; view->x2 = b.x2; view->y1 = b.y1; view->y2 = b.y2;
-		for (size_t i = 0; i < b.count; i++) {
-			quad_t &q = m_rec_quads[b.first + i];
-			for (int k = 0; k < 4; k++) q.p[k] = &m_rec_points[(b.first + i) * 4 + k];
-			m_quadind[i] = &q;
-		}
+		std::copy_n(m_rec_quads.begin() + b.first, b.count, m_quadind.get());
 		raster_quads(bitmap, view, int(b.count));
 	}
 	view->x1 = sx1; view->x2 = sx2; view->y1 = sy1; view->y2 = sy2;
@@ -3023,6 +3136,10 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 {
 	android_frame_trace trace("M1 3D draw submission");
 	m_rec = false;
+	struct rewind {   // (the picture's batches, kept for the replay, let go)
+		model1 &m;
+		~rewind() { m.m_rec_quads.clear(); m.m_quadpt = m.m_quadbase = m.m_quaddb.get(); m.m_pointpt = m.m_pointbase = m.m_pointdb.get(); }
+	} rewind_{*this};
 	const uint64_t t0 = trace_ns();
 	bool ok = true;
 	double gms = 0;
@@ -3050,7 +3167,6 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 			m_g3.polys = int(m_rec_polys.size());
 			m_g3.ms = m_rec_ms + (trace_ns() - t0) / 1e6;
 			m_g3.handed++;
-			m_rec_quads.clear();
 			return;
 		}
 		fprintf(stderr, "the 3D on the GPU: drawing into the renderer's texture failed: the pictures come back to the CPU from now on\n");
@@ -3084,7 +3200,7 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 			if (diff) {
 				m_g3.differ++;
 				fprintf(stderr, "gpu3d check: frame %llu %dx%d: %zu pixels differ (first at %zu,%zu: cpu %08x gpu %08x)\n",
-						(unsigned long long)m_frame, bitmap.width(), bitmap.height(), diff, first % bitmap.width(), first / bitmap.width(), a[first], g[first]);
+						(unsigned long long)m_picture_frame, bitmap.width(), bitmap.height(), diff, first % bitmap.width(), first / bitmap.width(), a[first], g[first]);
 			}
 			if (verify) {
 				if (diff && gpu_diff_ok(dd, (long long)n)) {   // (rounding: the GPU's kept)
@@ -3109,7 +3225,6 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 	m_g3.rec_ms = m_rec_ms;
 	m_g3.polys = int(m_rec_polys.size());
 	m_g3.ms = ms;
-	m_rec_quads.clear();   // (the points' copies stay allocated)
 }
 
 void model1::recheck_gpu3d()
