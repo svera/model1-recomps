@@ -45,8 +45,12 @@ set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
 add_subdirectory("${FT_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/freetype")
 
 option(M1_ALWAYS_FRAME_TIMINGS "Keep frame timing diagnostics enabled" OFF)
+set(M1_ANDROID_VERSION "android-dev" CACHE STRING "Android build version")
+if(NOT M1_ANDROID_VERSION MATCHES "^[A-Za-z0-9._+-]+$")
+    message(FATAL_ERROR "Invalid Android build version")
+endif()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/version.h"
-    "#define M1_VERSION \"android-dev\"\n#define M1_DATE \"\"\n#define M1_COMMIT \"\"\n")
+    "#define M1_VERSION \"${M1_ANDROID_VERSION}\"\n#define M1_DATE \"\"\n#define M1_COMMIT \"\"\n")
 add_library(main SHARED ${source_list} src/main/cpp/touch_controller.cpp)
 target_compile_features(main PRIVATE cxx_std_20)
 target_compile_options(main PRIVATE -O2)

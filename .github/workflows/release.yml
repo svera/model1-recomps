@@ -75,9 +75,50 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  android:
+    name: Package Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+
+      - name: Build and sign APKs
+        env:
+          ANDROID_VERSION_NAME: ${{ github.event.release.tag_name }}
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: sh tools/android/package.sh
+
+      - name: Store APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: build/android-release/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   upload:
     name: Attach release assets
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -106,4 +147,7 @@ jobs:
             packages/wingwar/WingWarRecomp-mac.zip \
             packages/wingwar/WingWarRecomp-windows.zip \
             packages/wingwar/WingWarRecomp-linux.tar.gz \
+            packages/VirtuaRacingRecomp-android.apk \
+            packages/StarWarsArcadeRecomp-android.apk \
+            packages/WingWarRecomp-android.apk \
             --clobber

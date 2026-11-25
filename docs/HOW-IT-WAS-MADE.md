@@ -11,6 +11,36 @@ SHA-256-verified source as release packages. It can also be run manually from th
 New updates cancel an older run for the same pull request. ROM-backed checks remain local: CI does
 not download game ROMs or require secrets.
 
+## Android releases
+
+When a GitHub release is published, the release workflow builds signed ARM64 APKs for Virtua Racing,
+Star Wars Arcade and Wing War alongside the desktop packages. The APKs contain no game ROMs.
+The Android job needs these repository Actions secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: the base64-encoded keystore file.
+- `ANDROID_KEYSTORE_PASSWORD`: its password.
+- `ANDROID_KEY_ALIAS`: the signing key alias.
+- `ANDROID_KEY_PASSWORD`: the key password.
+
+For a new signing key, `keytool -genkeypair -keystore model1-release.p12 -storetype PKCS12
+-alias model1 -keyalg RSA -keysize 3072 -validity 10000` prompts for the credentials. Encode
+the file with `base64 < model1-release.p12 | tr -d '\n'` for the first secret; treat the output
+as sensitive and do not commit the keystore or print its contents in CI. PKCS12 uses the same
+password for the keystore and key.
+
+Keep the keystore and its credentials backed up securely and use the same signing key for every
+release: Android only accepts an update signed by the same key. The locally signed debug and
+diagnostics builds normally have a different key; replacing them with a release may require
+uninstalling first, which removes their imported ROMs and saves.
+
+The release tag becomes Android's version name and the version in the game log; it must contain
+only letters, digits, dot, underscore, plus and hyphen. The release workflow run number is the
+version code, so later workflow runs have higher codes; rerunning the same run keeps its code. Do not
+recreate the workflow or distribute builds with larger version codes without coordinating the
+sequence. The job checks APK signatures and 16 KB native-library alignment before uploading them.
+To build the same packages locally, set the four signing variables above plus
+`ANDROID_VERSION_NAME` and a positive `ANDROID_VERSION_CODE`, then run `sh tools/android/package.sh`.
+
 ## The approach
 
 Virtua Fighter (1993) runs on Sega's Model 1 board. Its game logic is a program for the main CPU, an NEC V60. Around
