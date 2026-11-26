@@ -163,7 +163,7 @@ disconnects, the game returns to solo play.
 
 ### LAN multiplayer (experimental)
 
-Race with friends on **two to four computers, one player per computer**, connected to
+Race with friends on **two to four devices, one player per device**, connected to
 the same Wi-Fi or wired network. Everyone needs the same game version and ROM
 set. No IP addresses or account are needed.
 
@@ -373,7 +373,7 @@ and keypad plus/minus for throttle; bindings can be changed under Controls.
 
 ### LAN multiplayer (experimental)
 
-Play on two computers on the same local network, with the same game version and ROMs.
+Play on two devices on the same local network, with the same game version and ROMs.
 Both players need PC play style and one local player. At the demonstration or game
 selection screen, open **LAN** in the menu. One player creates a room; the other
 finds and joins it. The host chooses **Start linked game**, then both press Start.
