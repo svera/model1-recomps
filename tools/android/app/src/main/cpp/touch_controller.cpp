@@ -44,8 +44,9 @@ void detach()
 }
 }
 
-void android_touch_set_state(bool enabled, unsigned buttons, const std::array<float, 6> &axes)
+void android_touch_set_state(bool enabled, unsigned buttons, std::array<float, 6> axes, bool vr_stick)
 {
+	if (vr_stick) axes[SDL_GAMEPAD_AXIS_RIGHTY] = axes[SDL_GAMEPAD_AXIS_LEFTY];
 	std::lock_guard<std::mutex> lock(state_mutex);
 	if (!enabled) {
 		button_until.fill({});
@@ -66,9 +67,9 @@ void android_touch_set_state(bool enabled, unsigned buttons, const std::array<fl
 #ifdef __ANDROID__
 extern "C" JNIEXPORT void JNICALL
 Java_recomp_vr1_android_TouchControls_nativeSetState(JNIEnv *, jclass, jboolean enabled,
-	jint buttons, jfloat lx, jfloat ly, jfloat rx, jfloat ry, jfloat lt, jfloat rt)
+	jint buttons, jfloat lx, jfloat ly, jfloat rx, jfloat ry, jfloat lt, jfloat rt, jboolean vr_stick)
 {
-	android_touch_set_state(bool(enabled), unsigned(buttons), {lx, ly, rx, ry, lt, rt});
+	android_touch_set_state(bool(enabled), unsigned(buttons), {lx, ly, rx, ry, lt, rt}, bool(vr_stick));
 }
 #endif
 

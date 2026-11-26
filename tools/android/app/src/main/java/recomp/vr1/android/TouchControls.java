@@ -18,7 +18,7 @@ final class TouchControls extends View {
     private static final int SOUTH = 0, EAST = 1, WEST = 2, NORTH = 3;
     private static final int BACK = 4, START = 6, DPAD_UP = 11;
     private static final int STICK = -1, THROTTLE = -2, LEFT_TRIGGER = -3;
-    private static final int RIGHT_TRIGGER = -4, REAR = -5;
+    private static final int RIGHT_TRIGGER = -4;
     private static final String GAME = BuildConfig.GAME_ARCHIVE;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -65,7 +65,7 @@ final class TouchControls extends View {
     }
 
     private static native void nativeSetState(boolean enabled, int buttons,
-            float lx, float ly, float rx, float ry, float lt, float rt);
+            float lx, float ly, float rx, float ry, float lt, float rt, boolean vrStick);
 
     void setActive(boolean enabled) {
         if (active == enabled) return;
@@ -130,7 +130,8 @@ final class TouchControls extends View {
         if (menu || w == 0 || h == 0) return;
         float left = insetLeft, right = left + w, top = insetTop;
         float r = h * 0.065f;
-        add("STICK", STICK, left + h * 0.27f, top + h * 0.78f, h * 0.17f);
+        add("STICK", STICK, left + h * (GAME.equals("vr.zip") ? 0.24f : 0.27f),
+                top + h * 0.78f, h * 0.17f);
         float utilityRadius = r * 0.8f;
         float utilityOffset = h * (pcMode ? 0.085f : 0.17f);
         // centred on the screen, not the safe area: a one-sided camera cutout would shift the group
@@ -138,26 +139,23 @@ final class TouchControls extends View {
         add("START", START, centre - utilityOffset, top + h * 0.09f, utilityRadius);
         if (!pcMode) add("COIN", DPAD_UP, centre, top + h * 0.09f, utilityRadius);
         add("MENU", BACK, centre + utilityOffset, top + h * 0.09f, utilityRadius);
+        add("VIEW", NORTH, right - h * 0.12f, top + h * 0.30f, r);
 
         if (GAME.equals("vr.zip")) {
             action("GAS", RIGHT_TRIGGER, 0, 0, right, top, h, r);
             action("BRAKE", LEFT_TRIGGER, 1, 0, right, top, h, r);
             action("SHIFT+", SOUTH, 0, 1, right, top, h, r);
             action("SHIFT-", EAST, 1, 1, right, top, h, r);
-            action("VIEW", NORTH, 0, 2, right, top, h, r);
-            action("REAR", REAR, 1, 2, right, top, h, r);
         } else {
             controls.add(new Control("THROTTLE", THROTTLE, right - h * 0.48f,
                     top + h * 0.72f, h * 0.055f, h * 0.38f));
             if (GAME.equals("swa.zip")) {
                 action("LASER", RIGHT_TRIGGER, 0, 0, right, top, h, r);
                 action("TORPEDO", LEFT_TRIGGER, 1, 0, right, top, h, r);
-                action("VIEW", NORTH, 0, 1, right, top, h, r);
             } else {
                 action("GUN", SOUTH, 0, 0, right, top, h, r);
                 action("MISSILE", EAST, 1, 0, right, top, h, r);
                 action("SMOKE", WEST, 0, 1, right, top, h, r);
-                action("VIEW", NORTH, 1, 1, right, top, h, r);
             }
         }
     }
@@ -261,9 +259,8 @@ final class TouchControls extends View {
                 if (c.action >= 0) buttons |= 1 << c.action;
                 else if (c.action == LEFT_TRIGGER) lt = 1;
                 else if (c.action == RIGHT_TRIGGER) rt = 1;
-                else if (c.action == REAR) ry = 1;
             }
         }
-        nativeSetState(active, buttons, lx, ly, 0, ry, lt, rt);
+        nativeSetState(active, buttons, lx, ly, 0, ry, lt, rt, GAME.equals("vr.zip"));
     }
 }

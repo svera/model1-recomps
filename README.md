@@ -129,6 +129,7 @@ Pad buttons**.
 External rear views swing around the car so it stays visible; the onboard view turns in place.
 Release the look-back control to return to the selected camera. The keyboard binding can
 be changed in Controls; the right stick's look-back axis is not remappable.
+On Android, hold the on-screen stick down to look back.
 
 Under **Controls > Player 1 > Analog axes > Steering curve**, **Arcade** (formerly
 Linear) keeps the original response. **Standard** (the default) replaces Exponential with a nonlinear

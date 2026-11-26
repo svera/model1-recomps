@@ -1,4 +1,5 @@
 #include "../tools/android/app/src/main/cpp/touch_controller.h"
+#include "../src/games/vr/controls.h"
 
 #include <SDL3/SDL.h>
 #include <cassert>
@@ -38,6 +39,22 @@ int main()
 	assert(!SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START));
 	assert(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX) == 0);
 	assert(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) == 0);
+
+	for (float y : { -1.0f, 0.0f, 0.48f, 0.5f, 1.0f, 0.0f }) {
+		android_touch_set_state(true, 0, {0.5f, y, 0, 0, 0, 0}, true);
+		assert(android_touch_update() == id);
+		SDL_UpdateJoysticks();
+		assert(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX) > 16000);
+		assert(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY) == SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY));
+		uint8_t inputs[3]{};
+		game::vr::CONTROLS.right_stick_input(inputs, 0, SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY));
+		assert(bool(inputs[1] & game::vr::CAMERA_REAR_INPUT) == (y >= 0.5f));
+	}
+	android_touch_set_state(true, 0, {0, 0.75f, 0, -0.5f, 0, 0});
+	android_touch_update();
+	SDL_UpdateJoysticks();
+	assert(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY) > 0);
+	assert(SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHTY) < 0);
 
 	android_touch_set_state(true, 1u << SDL_GAMEPAD_BUTTON_SOUTH, {0, 0, 0, 0, 0, 1});
 	android_touch_set_state(true, 0, {});
