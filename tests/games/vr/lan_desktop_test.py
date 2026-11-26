@@ -10,6 +10,7 @@ import tempfile
 binary, regions = (Path(arg).resolve() for arg in sys.argv[1:3])
 count = int(sys.argv[3]) if len(sys.argv) > 3 else 2
 time_scale = float(sys.argv[4]) if len(sys.argv) > 4 else 2.0
+test_worker = os.environ.get("M1_MULTIPLAYER_GAME_THREAD") is not None
 assert 2 <= count <= 4
 assert time_scale > 0
 
@@ -31,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
             (data / region.name).symlink_to(region)
         # No GPU startup verification, captures, screenshots or pixel comparisons.
         (data / "settings.ini").write_text(
-            "renderer_3d = 0\nscale = 1\nantialiasing = 1\nfps = 30\n")
+            f"renderer_3d = 0\nscale = 1\nantialiasing = 1\nfps = {120 if test_worker else 30}\n")
         events = [f"{1000 + (int(at) - 10) * 40}:{name}"
                   for at, name in (event.split(":", 1) for event in menu_events(10))]
         if player == 0:
@@ -90,6 +91,9 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
     identities = []
     for output in outputs:
         assert "Model 1 renderer: invalid" not in output, output
+        if test_worker:
+            ahead = re.search(r"(\d+) ahead frames \((\d+) LAN, (\d+) early\)", output)
+            assert ahead and int(ahead[2]) > 0, output
         prepared = re.search(r"LAN: preparing cabinet (\d+),", output)
         assert prepared, output
         player = int(prepared[1])

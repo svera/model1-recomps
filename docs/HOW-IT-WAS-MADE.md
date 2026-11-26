@@ -40,6 +40,9 @@ recreate the workflow or distribute builds with larger version codes without coo
 sequence. The job checks APK signatures and 16 KB native-library alignment before uploading them.
 To build the same packages locally, set the four signing variables above plus
 `ANDROID_VERSION_NAME` and a positive `ANDROID_VERSION_CODE`, then run `sh tools/android/package.sh`.
+The three release variants were also built locally and their signatures and
+16 KB alignment checked using the local release key; this does not verify the
+values of the GitHub secrets or a published-release workflow run.
 
 ## The approach
 
@@ -2021,8 +2024,10 @@ budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and
 The desktop's on-demand VR session also supports an experimental two-to-four-computer
 linked session. `src/host/lan_session.h` wraps a pinned BSD-licensed arcade-lan
 revision (provenance and local changes in `third_party/arcade-lan`). It owns
-discovery, membership and transport, polling the library at its expected 60 Hz
-independently of rendering and simulation. The library's small `max_devices`
+discovery, membership and transport, advancing the library's protocol clock at its
+expected 60 Hz independently of rendering and simulation. Pending datagrams are
+also received between those ticks so a cabinet waiting for its peers need not
+wait another full protocol period. The library's small `max_devices`
 extension limits admission to four devices, one racer on each.
 The vendored linked transport also learns not-yet-direct peer addresses from later
 room lists: START can precede the list containing another newly joined guest.
@@ -2056,7 +2061,51 @@ cabinets by their stable IDs.
 Each packet also carries the board-frame counter. Simulation waits for every
 active peer to reach its current board frame, rather than allowing slower machines
 to lag through race initialization with uninitialized car-model pointers.
-New frame data publishes immediately; empty library heartbeats protect the roster
+Waiting for peer data does not reset the simulation clock or discard queued audio;
+both can worsen stalls and sound cuts in a linked session.
+Each completed frame publishes before display presentation, and brief waits for
+peer frames defer presentation so vsync does not repeatedly delay network polling.
+In an experimental Android-to-Mac CPU-rendered VR session, this raised simulation
+from roughly 32 to 57-58 frames/s.
+The Android multiplayer host also skips unshown arcade pictures and
+uses GPU parts where available. During solo catch-up it draws only the last due
+frame, but in a LAN session it cannot assume that the next due frame will be
+allowed by the peer: it draws at the next picture opportunity instead. In manual
+CPU-rendered 30 FPS tests VR played correctly, while heavy Wing War scenes still
+showed roughly 19-23 presentations/s despite often reaching 57-58 simulation
+frames/s. In smooth-motion mode the Android multiplayer
+host can now run the next frame on a worker during presentation, both solo and
+over LAN. It checks peer readiness first, joins the worker before accessing the
+machine again, and handles audio and publication on the host thread. It remains
+synchronous for 30 FPS, linked local cabinets and the Live Monitor. Nonvisual
+CPU-rendered desktop LAN tests exercised the worker for both VR and Wing War,
+including pause and disconnect handling; they do not establish Android performance
+or visual correctness. In a manual CPU-only Wing War test at 120 FPS and 2x,
+the user reported poor performance: heavy scenes produced roughly 9-20
+presentations/s, with picture preparation averaging about 35-100 ms. Simulation
+was usually much cheaper, and the worker ran 607 frames during that session.
+In a separate manual GPU-enabled Wing War test at 60 FPS and 2x, the user
+reported performance close to 60 FPS; sampled windows showed roughly 50-60
+presentations/s. This test used Vulkan and GPU composition, with automatic
+pixel comparisons disabled for manual visual testing. The sessions were not
+matched, and the report did not establish visual correctness or LAN performance.
+When GPU parts are available, the worker can also start mid-picture after
+`machine_free` releases the machine; a capture needed by that frame is
+deferred until the worker has joined and the picture has been submitted.
+The Wing War LAN test exercises this handoff without inspecting pixels.
+In manual Android-to-Mac LAN sessions with GPU checks temporarily disabled,
+the user reported that VR and Wing War gameplay, graphics, controls and audio
+worked, including pause and reconnect. Backgrounding a phone in a two-player
+session ended the race as expected. The Android shutdown logs recorded 2,777
+VR and 2,778 Wing War LAN frames using the early worker. The user observed low
+FPS on Wing War's Mac waiting screen; its cause has not been established.
+The nonvisual linked-ROM test exercised staggered starts and the guest waiting
+phase with zero native function fallbacks, but does not profile that Mac screen.
+Android now uses the multiplayer host by default for supported VR and Wing War
+modes, with the single host retained for incompatible modes. The user checked
+gameplay and the Game, Controls and LAN menus in marker-free Android diagnostic
+builds, again with automated GPU checks disabled for manual visual testing.
+Empty library heartbeats protect the roster
 while the ROM is still enabling its communication board, and heartbeats and pause
 control continue while waiting. The host can retire a guest stalled behind it for three seconds even when
 that guest's networking still responds.
@@ -3486,6 +3535,8 @@ Two runs each, alternating:
 | Pinned to the X4 | 51.7 | 14.6 ms | 16.2 ms | 28.0 ms |
 
 Diagnostics builds skip the pin when the app's storage has a `no-pin-render` file.
+The experimental Android multiplayer host uses the same pinning policy; its
+performance impact has not yet been measured.
 
 #### Recording the heavy scene for the GPU
 

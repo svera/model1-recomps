@@ -18,6 +18,14 @@ if (androidVersionCode != null &&
 if (androidVersionName != null && !(androidVersionName ==~ /[A-Za-z0-9._+-]+/)) {
     throw new GradleException('ANDROID_VERSION_NAME may contain only letters, digits, dot, underscore, plus and hyphen')
 }
+def gitOutput = { List<String> args ->
+    providers.exec {
+        workingDir repo
+        commandLine(['git'] + args)
+    }.standardOutput.asText.get().trim()
+}
+def nativeVersion = androidVersionName == null ? gitOutput(['describe', '--tags', '--always']) : androidVersionName
+def nativeCommit = gitOutput(['rev-parse', '--short', 'HEAD'])
 def games = [
     vr:      [title: 'Virtua Racing', applicationId: 'recomp.vr1.android', io: 'model1io.zip', log: 'virtua-racing-log.txt'],
     swa:     [title: 'Star Wars Arcade', applicationId: 'recomp.swa.android', io: 'model1io.zip', log: 'swa-log.txt'],
@@ -64,7 +72,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_shared'
-                arguments "-DM1_ANDROID_VERSION=${androidVersionName == null ? 'android-dev' : androidVersionName}"
+                arguments "-DM1_ANDROID_VERSION=${nativeVersion}", "-DM1_ANDROID_COMMIT=${nativeCommit}"
                 targets 'main'
             }
         }

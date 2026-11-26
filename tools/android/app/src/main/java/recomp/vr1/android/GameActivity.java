@@ -3,7 +3,9 @@ package recomp.vr1.android;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.hardware.input.InputManager;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,6 +16,8 @@ public class GameActivity extends SDLActivity implements InputManager.InputDevic
     private InputManager inputManager;
     private TouchControls touchControls;
     private boolean resumed, menuOpen;
+    private boolean lanDiscovery;
+    private WifiManager.MulticastLock multicastLock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,11 +35,13 @@ public class GameActivity extends SDLActivity implements InputManager.InputDevic
         super.onResume();
         resumed = true;
         updateTouchControls();
+        updateLanDiscovery();
     }
 
     @Override
     protected void onPause() {
         resumed = false;
+        updateLanDiscovery();
         if (touchControls != null) touchControls.setActive(false);
         super.onPause();
     }
@@ -67,12 +73,38 @@ public class GameActivity extends SDLActivity implements InputManager.InputDevic
         });
     }
 
+    public void setLanDiscovery(boolean enabled) {
+        runOnUiThread(() -> {
+            lanDiscovery = enabled;
+            updateLanDiscovery();
+        });
+    }
+
+    private void updateLanDiscovery() {
+        if (resumed && lanDiscovery) {
+            if (multicastLock == null) {
+                WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wifi == null) {
+                    Log.e("Model1LAN", "Wi-Fi service unavailable; LAN discovery may not work");
+                    return;
+                }
+                multicastLock = wifi.createMulticastLock("Model1LAN");
+                multicastLock.setReferenceCounted(false);
+            }
+            if (!multicastLock.isHeld()) multicastLock.acquire();
+        } else if (multicastLock != null && multicastLock.isHeld()) {
+            multicastLock.release();
+        }
+    }
+
     @Override public void onInputDeviceAdded(int id) { updateTouchControls(); }
     @Override public void onInputDeviceRemoved(int id) { updateTouchControls(); }
     @Override public void onInputDeviceChanged(int id) { updateTouchControls(); }
 
     @Override
     protected void onDestroy() {
+        lanDiscovery = false;
+        updateLanDiscovery();
         if (inputManager != null) inputManager.unregisterInputDeviceListener(this);
         if (touchControls != null) touchControls.setActive(false);
         super.onDestroy();

@@ -77,11 +77,46 @@ __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 #endif
 #ifdef __ANDROID__
 #include <android/performance_hint.h>
+#include <sched.h>
 #include "touch_controller.h"
 #endif
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
-#include <sched.h>
 #include <unistd.h>
+#endif
+
+#ifdef __ANDROID__
+static void pin_render_thread()
+{
+	bool pin_render = true;
+#if defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (FILE *f = fopen((std::string(SDL_GetAndroidInternalStoragePath()) + "/no-pin-render").c_str(), "r")) {
+		fclose(f);
+		pin_render = false;
+		fprintf(stderr, "Render thread: not pinned (no-pin-render)\n");
+	}
+#endif
+	if (cpu_set_t allowed; pin_render && sched_getaffinity(0, sizeof allowed, &allowed) == 0) {
+		long fastest = 0;
+		std::vector<long> freq(CPU_SETSIZE, 0);
+		for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+			if (!CPU_ISSET(cpu, &allowed)) continue;
+			if (FILE *fq = fopen(("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/cpuinfo_max_freq").c_str(), "r")) {
+				if (fscanf(fq, "%ld", &freq[cpu]) == 1) fastest = std::max(fastest, freq[cpu]);
+				fclose(fq);
+			}
+		}
+		cpu_set_t target;
+		CPU_ZERO(&target);
+		for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
+			if (fastest && freq[cpu] == fastest) CPU_SET(cpu, &target);
+		if (CPU_COUNT(&target) && CPU_COUNT(&target) < CPU_COUNT(&allowed)) {
+			if (sched_setaffinity(0, sizeof target, &target) == 0)
+				fprintf(stderr, "Render thread pinned to the %d fastest core(s) (%ld kHz)\n", CPU_COUNT(&target), fastest);
+			else
+				perror("Render thread pin");
+		}
+	}
+}
 #endif
 
 // Picture shapes F6 / View+RB cycle through; zero follows the window.
@@ -1087,6 +1122,10 @@ struct local_cabinet
 	bool settings_dirty = false;
 	bool gpu_enabled = false, gpu_shared = false, compose_enabled = false, composed = false;
 	bool gpu_crashed = false, gpu_retry_pending = false, gpu_marker_owned = false;
+#ifdef __ANDROID__
+	bool arcade_picture_pending = false;
+	int next_arcade_frame = 0;
+#endif
 	std::string gpu_notice;
 	uint64_t gpu_failed = 0;
 };
@@ -1108,6 +1147,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		for (uint8_t byte : *rom) lan_fingerprint = (lan_fingerprint ^ byte) * 16777619u;
 	for (const unsigned char byte : std::string(M1_VERSION " " M1_COMMIT))
 		lan_fingerprint = (lan_fingerprint ^ byte) * 16777619u;
+	fprintf(stderr, "LAN: local game fingerprint %08x\n", lan_fingerprint);
 	std::vector<uint8_t> lan_saved_eeprom;
 	std::vector<uint8_t> lan_saved_nvram_settings;
 	bool lan_leave_requested = false, lan_start_requested = false, lan_open_requested = false;
@@ -1820,7 +1860,30 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	std::array<player_controls, 2> bindings{cabinets[0]->config.ctl[0],
 		on_demand ? waiting_config.ctl[0] : cabinets[1]->config.ctl[0]};
 	std::array<SDL_JoystickID, 2> claimed_pads{};
-	auto open_local_pads = [&] { return refresh_gamepads(pads, bindings.data(), false, claimed_pads); };
+#ifdef __ANDROID__
+	SDL_JoystickID touch_pad_id = android_touch_update();
+	struct touch_cleanup {
+		~touch_cleanup() { android_touch_shutdown(); }
+	} touch_guard;
+	bool touch_menu_open = false;
+	std::optional<bool> touch_pc_mode;
+#endif
+	auto open_local_pads = [&] {
+#ifdef __ANDROID__
+		auto preferred = claimed_pads;
+		if (touch_pad_id) preferred[0] = touch_pad_id;
+		return refresh_gamepads(pads, bindings.data(), false, preferred);
+#else
+		return refresh_gamepads(pads, bindings.data(), false, claimed_pads);
+#endif
+	};
+	auto pad_binding = [&](int player, int action) {
+#ifdef __ANDROID__
+		if (player == 0 && touch_pad_id && pads[0] && SDL_GetGamepadID(pads[0]) == touch_pad_id)
+			return player_controls::defaults(0, cabinets[0]->game->controls()).pad[action];
+#endif
+		return bindings[player].pad[action];
+	};
 	struct pad_cleanup {
 		SDL_Gamepad **pads;
 		std::array<SDL_JoystickID, 2> test_pads{};
@@ -1848,6 +1911,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	}
 	bool running = true, paused = false, menu_failed = false;
 	std::array<uint64_t, 3> next_picture{};
+	uint64_t last_lan_present = 0;
 	bool shape_restart = false;
 	bool second_player = !on_demand, join_pending = false, join_start_was = false;
 	bool player1_started = !on_demand;
@@ -2651,6 +2715,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	audio_frame_clock frame_clock(FRAME_HZ);
 	int frames = 0;
 	bool perf_enabled = cabinets[0]->config.timings || getenv("M1_PERF") != nullptr;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	perf_enabled = true;
+#endif
 	uint64_t perf_started = SDL_GetTicksNS(), perf_last_frame = 0;
 	int perf_frames = 0, perf_interval_late = 0, perf_sim_late = 0;
 	uint64_t perf_sim_total = 0, perf_mix_total = 0, perf_present_total = 0, perf_idle_total = 0;
@@ -2929,8 +2996,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	auto prepare_lan = [&](std::span<const uint8_t> bytes) {
 		auto &c = *cabinets[0];
 		if (bytes.size() < 13 || !std::equal(bytes.begin(), bytes.begin() + 4, "M1LS") ||
-			model1_link::get32(bytes.data() + 4) != lan_fingerprint || bytes[12] != bytes.size() - 13)
+			model1_link::get32(bytes.data() + 4) != lan_fingerprint || bytes[12] != bytes.size() - 13) {
+			fprintf(stderr, "LAN: invalid start packet: size %zu, peer fingerprint %08x, settings size %u\n",
+				bytes.size(), bytes.size() >= 8 ? model1_link::get32(bytes.data() + 4) : 0,
+				bytes.size() >= 13 ? unsigned(bytes[12]) : 0);
 			return lan.fail("Incompatible LAN game data or protocol. Use matching ROMs and builds.");
+		}
 		if (!lan_eligible()) return lan.fail("Cannot start LAN while a local game is in progress.");
 		const auto [offset, size] = c.game->lan_nvram_settings();
 		if (offset > c.machine.nvram().size() || size > c.machine.nvram().size() - offset)
@@ -2982,11 +3053,139 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	audio_wake_clock wake_clock;
 	const uint64_t events_started = SDL_GetTicks();
 	uint64_t last_event_ms = 0;
+	auto read_cabinet_inputs = [&](int p) {
+		auto &c = *cabinets[p];
+		SDL_Gamepad *selected[2]{pads[p], nullptr};
+		pad_state states[2]{c.pad, {}};
+#ifdef __ANDROID__
+		std::array<player_controls, 2> touch_controls{c.config.ctl[0], c.config.ctl[1]};
+		if (p == 0 && touch_pad_id && pads[0] && SDL_GetGamepadID(pads[0]) == touch_pad_id) {
+			const player_controls defaults = player_controls::defaults(0, c.game->controls());
+			std::copy(std::begin(defaults.pad), std::end(defaults.pad), std::begin(touch_controls[0].pad));
+			touch_controls[0].pad[C_COIN] = SDL_GAMEPAD_BUTTON_DPAD_UP;
+			touch_controls[0].analog_axis = defaults.analog_axis;
+		}
+		const player_controls *input_controls = touch_controls.data();
+#else
+		const player_controls *input_controls = c.config.ctl;
+#endif
+		const bool suppress = network_cabinet.active() &&
+			(join_overlay.is_open() || !c.game->local_boot_complete(c.machine));
+		const hotkey action = suppress ? hotkey::none :
+			read_inputs(c.machine, selected, states, input_controls, c.game->controls(), *c.game, c.service);
+		if (network_cabinet.active()) {
+			c.machine.m_inputs[0] |= IN0_TEST | IN0_SERVICE;
+			c.service = {};
+			if (suppress) {
+				std::fill_n(c.machine.m_inputs, 3, uint8_t(0xff));
+				const auto &profile = game::get_io_profile(c.machine.title());
+				for (int channel = 0; channel < 8; channel++)
+					if (!profile.analog_controls[channel].empty())
+						c.machine.set_analog_input(channel, profile.analog_neutral[channel]);
+				states[0] = {};
+			}
+		}
+		c.pad = states[0];
+		if (action == hotkey::menu) {
+			open_menu();
+			paused = !network_cabinet.active() || network_cabinet.paused();
+			fprintf(stderr, "two cabinets: opened settings from cabinet %d\n", p + 1);
+		}
+		if (action == hotkey::scale) {
+			for (int i = 0; i < cabinet_count; i++)
+				cabinets[i]->config.scale = cabinets[i]->config.scale % 6 + 1;
+			apply_shared_settings();
+		}
+		if (action == hotkey::aspect) set_shape((cabinets[0]->config.aspect + 1) % N_ASPECTS);
+		if (action == hotkey::free_cam) {
+			set_free_camera(c.machine.free_cam());
+			fprintf(stderr, "two cabinets: free camera %s\n", c.machine.free_cam() ? "on" : "off");
+		}
+		return action;
+	};
+	auto finish_frame = [&](bool lan_boot_frame, uint64_t sim_ns) {
+		if (lan_booting && cabinets[0]->game->local_boot_complete(cabinets[0]->machine)) {
+			lan_booting = false;
+			cabinets[0]->machine.set_drawing(true);
+			next_picture = {};
+			fprintf(stderr, "LAN: cabinet %d boot complete; showing game\n", network_cabinet.player());
+		}
+		if (cabinets[2]) cabinets[2]->machine.m_audio_out.clear();
+		if (perf_enabled) {
+			perf_sim_total += sim_ns;
+			perf_sim_samples.push_back(sim_ns);
+			if (sim_ns > uint64_t(1e9 / FRAME_HZ)) perf_sim_late++;
+		}
+		++frames;
+		frame_clock.advance();
+		const uint64_t mix_started = perf_enabled ? SDL_GetTicksNS() : 0;
+		size_t samples = 0;
+		for (int p = 0; p < cabinet_count; p++) {
+			auto &c = cabinets[p];
+			c->game->after_frame(); samples = std::max(samples, c->machine.m_audio_out.size());
+		}
+		mixed.resize(samples);
+		for (size_t sample = 0; sample < samples; sample++) {
+			int sum = 0;
+			for (int p = 0; p < (second_player ? 2 : 1); p++) {
+				const auto &c = cabinets[p];
+				if (sample < c->machine.m_audio_out.size()) sum += c->machine.m_audio_out[sample] * c->config.volume / 100;
+			}
+			mixed[sample] = int16_t(std::clamp(sum / cabinet_count, -32768, 32767));
+		}
+		if (audio && !fast_forward && !lan_boot_frame && !SDL_PutAudioStreamData(audio.get(), mixed.data(), int(mixed.size() * sizeof(int16_t)))) {
+			fprintf(stderr, "two cabinets: audio queue: %s\n", SDL_GetError());
+			return false;
+		}
+		if (audio && !fast_forward && !lan_boot_frame) sound_recovery.submitted(int(mixed.size() * sizeof(int16_t)));
+		for (int p = 0; p < cabinet_count; p++) cabinets[p]->machine.m_audio_out.clear();
+		if (perf_enabled) perf_mix_total += SDL_GetTicksNS() - mix_started;
+		if (perf_enabled) ++perf_frames;
+		return true;
+	};
+	const bool use_game_thread = !getenv("M1_NO_GAME_THREAD") &&
+#ifdef __ANDROID__
+		true;
+#else
+		getenv("M1_MULTIPLAYER_GAME_THREAD") != nullptr;
+#endif
+	side_job game_worker;
+	uint64_t ahead_frames = 0, ahead_lan_frames = 0, early_frames = 0;
+	if (use_game_thread) {
+		// Start before pinning the render thread so the worker retains the allowed CPU set.
+		game_worker.start([] {});
+		game_worker.wait();
+	}
+#ifdef __ANDROID__
+	pin_render_thread();
+	bool android_lan_active = false;
+#endif
 	while (running && (quit_after < 0 || frames < quit_after)) {
+#ifdef __ANDROID__
+		const SDL_JoystickID next_touch_pad = android_touch_update();
+		if (next_touch_pad != touch_pad_id) {
+			if (claimed_pads[0] == touch_pad_id) claimed_pads[0] = 0;
+			touch_pad_id = next_touch_pad;
+			if (open_local_pads())
+				for (int p = 0; p < cabinet_count; p++) cabinets[p]->pad = {};
+		}
+		if (!touch_pc_mode || *touch_pc_mode != pc_mode || touch_menu_open != join_overlay.is_open()) {
+			touch_menu_open = join_overlay.is_open();
+			touch_pc_mode = pc_mode;
+			android_touch_ui_state(touch_menu_open, *touch_pc_mode);
+		}
+#endif
 		if (perf_enabled) ++perf_loops;
 		const uint64_t lan_now = SDL_GetTicks();
 		lan.status(!network_cabinet.active() && cabinets[0]->game->can_join_local_cabinet() ? 1 : 0);
 		lan.update(lan_now);
+#ifdef __ANDROID__
+		const bool lan_active = lan.role() != LAN_OFF;
+		if (lan_active != android_lan_active) {
+			android_lan_active = lan_active;
+			android_lan_discovery(lan_active);
+		}
+#endif
 		if (lan_leave_requested) {
 			lan_leave_requested = false;
 			if (!finish_lan(true)) return 1;
@@ -3278,19 +3477,19 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (join_overlay.ready() && !join_overlay.is_open())
 					for (int p = 0; p < cabinet_count; p++)
 						if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
-							bindings[p].pad[C_MENU] == event.gbutton.button) {
+							pad_binding(p, C_MENU) == event.gbutton.button) {
 							open_menu();
 							break;
 						}
 				for (int p = 0; p < 2; p++)
 					if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
-						bindings[p].pad[C_START] == event.gbutton.button) {
+						pad_binding(p, C_START) == event.gbutton.button) {
 						if (!controller_start(p)) return 1;
 						break;
 					}
 				for (int p = 0; p < 2; p++)
 					if (paused && !network_cabinet.active() && pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
-						bindings[p].pad[C_MENU] == event.gbutton.button) {
+						pad_binding(p, C_MENU) == event.gbutton.button) {
 						paused = false;
 						if (cabinets[p])
 							cabinets[p]->pad.menu_was = cabinets[p]->pad.back_was = cabinets[p]->pad.back_combo = true;
@@ -3493,8 +3692,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			const bool *keys = SDL_GetKeyboardState(nullptr);
 			const bool key_start = bindings[1].key[C_START] != SDL_SCANCODE_UNKNOWN && keys[bindings[1].key[C_START]];
 			const int player = !player1_started && pads[0] &&
-				player_controls::pad_down(pads[0], bindings[0].pad[C_START]) ? 0 : 1;
-			const bool pad_start = pads[player] && player_controls::pad_down(pads[player], bindings[player].pad[C_START]);
+				player_controls::pad_down(pads[0], pad_binding(0, C_START)) ? 0 : 1;
+			const bool pad_start = pads[player] && player_controls::pad_down(pads[player], pad_binding(player, C_START));
 			if ((key_start || pad_start) && !join_start_was) {
 				if (key_start) { if (!request_join()) return 1; }
 				else if (!controller_start(player)) return 1;
@@ -3521,6 +3720,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			const double frame_bytes = double(m1audio::OUT_RATE) / FRAME_HZ * 2 * sizeof(int16_t);
 			frame_clock.update(elapsed, audio ? SDL_GetAudioStreamQueued(audio.get()) / frame_bytes : -1);
 		}
+		bool lan_waiting = false;
 		while (frame_clock.due() && (quit_after < 0 || frames < quit_after)) {
 			if (network_cabinet.paused()) {
 				paused = true;
@@ -3532,48 +3732,35 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (!start_linked_session()) return 1;
 				break;
 			}
+			if (network_cabinet.active() && !network_cabinet.ready_for_frame(cabinets[0]->machine)) {
+				lan_waiting = true;
+				break;
+			}
+#ifdef __ANDROID__
+			std::array<bool, 3> arcade_draws{};
+#endif
 			for (int p = 0; p < cabinet_count; p++) {
 				auto &c = *cabinets[p];
 				c.machine.set_parts_mode(c.compose_enabled);
-				SDL_Gamepad *selected[2]{pads[p], nullptr};
-				pad_state states[2]{c.pad, {}};
-				const bool suppress = network_cabinet.active() &&
-					(join_overlay.is_open() || !c.game->local_boot_complete(c.machine));
-				const hotkey action = suppress ? hotkey::none :
-					read_inputs(c.machine, selected, states, c.config.ctl, c.game->controls(), *c.game, c.service);
-				if (network_cabinet.active()) {
-					c.machine.m_inputs[0] |= IN0_TEST | IN0_SERVICE;
-					c.service = {};
-					if (suppress) {
-						std::fill_n(c.machine.m_inputs, 3, uint8_t(0xff));
-						const auto &profile = game::get_io_profile(c.machine.title());
-						for (int channel = 0; channel < 8; channel++)
-							if (!profile.analog_controls[channel].empty())
-								c.machine.set_analog_input(channel, profile.analog_neutral[channel]);
-						states[0] = {};
-					}
+#ifdef __ANDROID__
+				const bool arcade_skip = !c.machine.smooth() && !lan_booting;
+				if (arcade_skip && c.gpu_enabled && c.machine.gpu3d_target())
+					prepare_gpu_targets(c);
+				c.machine.set_arcade_parts_mode(arcade_skip && c.compose_enabled &&
+					c.gpu_enabled && c.machine.gpu3d_target());
+				c.machine.set_arcade_skip_mode(arcade_skip);
+				arcade_draws[p] = arcade_skip && !frame_clock.defer_picture(network_cabinet.active()) &&
+					(frames >= c.next_arcade_frame || (!c.texture && !c.composed));
+				c.machine.set_arcade_draw_next(!arcade_skip || arcade_draws[p]);
+				if (!arcade_skip) {
+					c.arcade_picture_pending = false;
+					c.next_arcade_frame = frames;
 				}
-				c.pad = states[0];
-				if (action == hotkey::menu) {
-					open_menu();
-					paused = !network_cabinet.active() || network_cabinet.paused();
-					fprintf(stderr, "two cabinets: opened settings from cabinet %d\n", p + 1);
-				}
-				if (action == hotkey::scale) {
-					for (int i = 0; i < cabinet_count; i++)
-						cabinets[i]->config.scale = cabinets[i]->config.scale % 6 + 1;
-					apply_shared_settings();
-				}
-				if (action == hotkey::aspect) {
-					set_shape((cabinets[0]->config.aspect + 1) % N_ASPECTS);
-				}
-				if (action == hotkey::free_cam) {
-					set_free_camera(c.machine.free_cam());
-					fprintf(stderr, "two cabinets: free camera %s\n", c.machine.free_cam() ? "on" : "off");
-				}
+#endif
+				read_cabinet_inputs(p);
 				c.game->before_frame();
 			}
-			if (paused || (network_cabinet.active() && !network_cabinet.ready_for_frame(cabinets[0]->machine))) {
+			if (paused) {
 				frame_clock.reset();
 				if (audio) SDL_ClearAudioStream(audio.get());
 				break;
@@ -3596,50 +3783,84 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			display_trace.log("simulation begin", cabinets[0]->display->window);
 			run_frame();
 			display_trace.log("simulation returned", cabinets[0]->display->window);
-			if (lan_booting && cabinets[0]->game->local_boot_complete(cabinets[0]->machine)) {
-				lan_booting = false;
-				cabinets[0]->machine.set_drawing(true);
-				next_picture = {};
-				fprintf(stderr, "LAN: cabinet %d boot complete; showing game\n", network_cabinet.player());
-			}
-			if (cabinets[2]) cabinets[2]->machine.m_audio_out.clear();
-			if (perf_enabled) {
-				const uint64_t sim_ns = SDL_GetTicksNS() - frame_started;
-				perf_sim_total += sim_ns;
-				perf_sim_samples.push_back(sim_ns);
-				if (sim_ns > uint64_t(1e9 / FRAME_HZ)) perf_sim_late++;
-			}
-			++frames;
-			frame_clock.advance();
-			const uint64_t mix_started = perf_enabled ? SDL_GetTicksNS() : 0;
-			size_t samples = 0;
-			for (int p = 0; p < cabinet_count; p++) {
-				auto &c = cabinets[p];
-				c->game->after_frame(); samples = std::max(samples, c->machine.m_audio_out.size());
-			}
-			mixed.resize(samples);
-			for (size_t sample = 0; sample < samples; sample++) {
-				int sum = 0;
-				for (int p = 0; p < (second_player ? 2 : 1); p++) {
-					const auto &c = cabinets[p];
-					if (sample < c->machine.m_audio_out.size()) sum += c->machine.m_audio_out[sample] * c->config.volume / 100;
+#ifdef __ANDROID__
+			for (int p = 0; p < cabinet_count; p++)
+				if (arcade_draws[p]) {
+					cabinets[p]->arcade_picture_pending = true;
+					cabinets[p]->next_arcade_frame = frames + 2;
 				}
-				mixed[sample] = int16_t(std::clamp(sum / cabinet_count, -32768, 32767));
+#endif
+			if (!finish_frame(lan_boot_frame, perf_enabled ? SDL_GetTicksNS() - frame_started : 0)) return 1;
+			if (network_cabinet.active() && !network_cabinet.update(lan, SDL_GetTicks(), cabinets[0]->machine)) {
+				if (!finish_lan(false)) return 1;
+				break;
 			}
-			if (audio && !fast_forward && !lan_boot_frame && !SDL_PutAudioStreamData(audio.get(), mixed.data(), int(mixed.size() * sizeof(int16_t))))
-				{ fprintf(stderr, "two cabinets: audio queue: %s\n", SDL_GetError()); return 1; }
-			if (audio && !fast_forward && !lan_boot_frame) sound_recovery.submitted(int(mixed.size() * sizeof(int16_t)));
-			for (int p = 0; p < cabinet_count; p++) cabinets[p]->machine.m_audio_out.clear();
-			if (perf_enabled) perf_mix_total += SDL_GetTicksNS() - mix_started;
-			if (perf_enabled) ++perf_frames;
 		}
 		std::array<bool, 3> updated{};
 		const bool shot_due = shot_at >= 0 && frames >= shot_at && !shot_saved;
 		std::array<SDL_Rect, 3> viewports{};
 		std::array<float, 3> picture_aspects{};
 		const uint64_t picture_now = SDL_GetTicksNS();
+		const bool defer_lan_picture = lan_waiting && !join_overlay.is_open() && !shot_due && !screenshot_pending &&
+			picture_now - last_lan_present < 33000000ull;
+		bool ahead = false, early = false, inputs_ahead = false, restart_picture = false;
+		uint64_t ahead_ns = 0;
+		auto ahead_possible = [&] {
+			auto &machine = cabinets[0]->machine;
+			return use_game_thread && instance_count() == 1 && on_demand &&
+				!paused && !fast_forward && !join_overlay.is_open() && !lan_booting &&
+				!join_pending && !shape_restart && !shot_due && !screenshot_pending &&
+				(shot_at < 0 || shot_saved || frames + 1 < shot_at) &&
+				(quit_after < 0 || frames < quit_after) && machine.smooth() &&
+				frame_clock.fraction() >= 0.5 &&
+				(!audio || SDL_GetAudioStreamQueued(audio.get()) <=
+					double(m1audio::OUT_RATE) * 2 * sizeof(int16_t) * 0.3) &&
+				(!network_cabinet.active() || network_cabinet.ready_for_frame(machine));
+		};
+		auto start_ahead = [&](bool mid_picture) {
+			auto &machine = cabinets[0]->machine;
+			if (!mid_picture) cabinets[0]->game->before_frame();
+			const uint64_t started = SDL_GetTicksNS();
+			if (perf_enabled) {
+				if (perf_last_frame) {
+					const uint64_t interval = started - perf_last_frame;
+					perf_frame_intervals.push_back(interval);
+					if (interval > uint64_t(1.5e9 / FRAME_HZ)) perf_interval_late++;
+				}
+				perf_last_frame = started;
+			}
+			game_worker.start([&, mid_picture] {
+				android_frame_trace simulation(mid_picture ? "M1 multiplayer early simulation" : "M1 multiplayer ahead simulation");
+				const uint64_t begin = SDL_GetTicksNS();
+				if (mid_picture) {
+					machine.set_defer_capture(true);
+					cabinets[0]->game->before_frame();
+				}
+				run_frame();
+				if (mid_picture) machine.set_defer_capture(false);
+				ahead_ns = SDL_GetTicksNS() - begin;
+			});
+			ahead = true;
+			early = mid_picture;
+		};
+		auto complete_ahead = [&] {
+			if (!ahead) return true;
+			game_worker.wait("M1 multiplayer game-thread handoff");
+			if (early) cabinets[0]->machine.finish_capture();
+			++ahead_frames;
+			if (early) ++early_frames;
+			if (network_cabinet.active()) ++ahead_lan_frames;
+			if (!finish_frame(false, ahead_ns)) return false;
+			ahead = false;
+			if (network_cabinet.active() && !network_cabinet.update(lan, SDL_GetTicks(), cabinets[0]->machine)) {
+				if (!finish_lan(false)) return false;
+				restart_picture = true;
+			}
+			return true;
+		};
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
+			if (defer_lan_picture) continue;
 			auto &c = *cabinets[p];
 			display_trace.log("picture preparation begin", c.display->window);
 			int width = 0, height = 0;
@@ -3675,16 +3896,34 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				c.machine.set_aspect(aspect); c.machine.redraw();
 				display_trace.log("aspect change/redraw returned", c.display->window);
 			}
+#ifdef __ANDROID__
+			if (!c.machine.smooth() && !c.arcade_picture_pending && !shape_changed && (c.texture || c.composed)) {
+				updated[p] = join_overlay.is_open() || shot_due || screenshot_pending;
+				continue;
+			}
+#endif
 			bool composed = false;
 			bool whole_picture = true;
 			if (c.machine.smooth() && c.compose_enabled) {
 				display_trace.log("GPU targets/parts begin", c.display->window);
 				prepare_gpu_targets(c);
 				const double now = double(c.machine.frame_number() - 1) + frame_clock.fraction();
+				if (p == 0 && !getenv("M1_NO_EARLY_FRAME") && ahead_possible()) {
+					const hotkey action = read_cabinet_inputs(0);
+					inputs_ahead = action == hotkey::none && !paused && !join_overlay.is_open() &&
+						!shape_restart && !c.service.left_test_menu;
+					if (inputs_ahead)
+						c.machine.machine_free = [&] { start_ahead(true); };
+				}
 				const int rendered = c.machine.render_parts(now, c.parts);
+				c.machine.machine_free = nullptr;
+				if (ahead) game_worker.wait("M1 multiplayer early handoff");
 				display_trace.log("GPU targets/parts returned", c.display->window);
 				if (rendered == 0) {
+					if (!ahead && inputs_ahead) start_ahead(false);
+					if (!complete_ahead()) return 1;
 					updated[p] = false;
+					if (restart_picture) break;
 					continue;
 				}
 				if (rendered == 1) {
@@ -3695,6 +3934,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						(aa == 1 || c.compose.resolve(aa, c.machine.frame_w() / aa, c.machine.frame_h() / aa));
 					display_trace.log("GPU composition/resolve returned", c.display->window);
 					if (!composed) {
+						if (early) c.machine.finish_capture();
 						fprintf(stderr, "two cabinets: GPU composition failed at %dx (%s); using the CPU for this session\n",
 							c.machine.render_scale(), SDL_GetError());
 						unwrap_gpu_targets(c);
@@ -3708,6 +3948,26 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}
 			} else if (c.machine.smooth())
 				c.machine.render_smooth(double(c.machine.frame_number() - 1) + frame_clock.fraction());
+#ifdef __ANDROID__
+			else if (!shape_changed && c.arcade_picture_pending) {
+				if (const auto *parts = c.machine.arcade_parts()) {
+					const int aa = c.machine.render_scale() / std::max(1, c.config.scale);
+					composed = c.compose_enabled &&
+						c.compose.draw(*parts, c.machine.frame_w(), c.machine.frame_h(),
+							c.machine.render_scale() > 1 ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST) &&
+						(aa == 1 || c.compose.resolve(aa, c.machine.frame_w() / aa, c.machine.frame_h() / aa));
+					if (composed) whole_picture = false;
+					else {
+						fprintf(stderr, "two cabinets: arcade picture composition failed (%s); using whole pictures\n", SDL_GetError());
+						unwrap_gpu_targets(c);
+						c.machine.set_gpu3d_target(false);
+						c.machine.set_arcade_parts_mode(false);
+						c.machine.redraw();
+					}
+				}
+			}
+			c.arcade_picture_pending = false;
+#endif
 			if (c.gpu_enabled && c.machine.m_g3.failed > c.gpu_failed) {
 				c.machine.set_gpu3d_on(false);
 				c.gpu_enabled = false;
@@ -3740,6 +4000,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				perf_render_count[p]++;
 			}
 		}
+		if (restart_picture) continue;
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
 			bool already_presented = false, needs_present = false;
@@ -3813,13 +4074,31 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			if (shot_due && p == 2 && !monitor_above() &&
 				!save_picture(renderer, "build/host_monitor_at.png")) return 1;
+			auto &machine = cabinets[0]->machine;
+			if (!ahead && p == 0 && ahead_possible()) {
+				if (!inputs_ahead) read_cabinet_inputs(0);
+				if (!paused && !join_overlay.is_open() && !shape_restart &&
+					!cabinets[0]->service.left_test_menu) {
+					machine.set_parts_mode(cabinets[0]->compose_enabled);
+#ifdef __ANDROID__
+					machine.set_arcade_parts_mode(false);
+					machine.set_arcade_skip_mode(false);
+					machine.set_arcade_draw_next(true);
+#endif
+					start_ahead(false);
+				}
+			}
 			display_trace.log("SDL_RenderPresent begin", window);
-			if (!SDL_RenderPresent(renderer)) {
+			const bool presented = SDL_RenderPresent(renderer);
+			if (!presented) {
+				if (ahead) game_worker.wait("M1 multiplayer game-thread handoff");
 				fprintf(stderr, "two cabinets: present: %s\n", SDL_GetError());
 				return 1;
 			}
+			if (!complete_ahead()) return 1;
 			display_trace.log("SDL_RenderPresent returned", window);
 			if (p == 0) display_trace.presented();
+			if (p == 0) last_lan_present = SDL_GetTicksNS();
 			if (p == 0) ++fps_presents;
 			if (perf_enabled) {
 				const uint64_t present_ns = SDL_GetTicksNS() - present_started;
@@ -3877,19 +4156,21 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (quit_after < 0 && now >= next_save) { autosave(); next_save = now + 60000000000ull; }
 		const uint64_t wait_started = SDL_GetTicksNS();
-		uint64_t deadline = wait_started + 8000000ull;
+		uint64_t deadline = wait_started + (defer_lan_picture ? 1000000ull : 8000000ull);
 		if (!paused && !frame_clock.due()) {
 			const uint64_t next_frame = last + uint64_t(frame_clock.until_next() * 1e9);
 			deadline = std::min(deadline, next_frame);
 		}
-		for (int p = 0; p < instance_count(); p++)
-			if (next_picture[p]) deadline = std::min(deadline, next_picture[p]);
+		if (!defer_lan_picture)
+			for (int p = 0; p < instance_count(); p++)
+				if (next_picture[p]) deadline = std::min(deadline, next_picture[p]);
 		if ((!fast_forward || paused) && deadline > wait_started) SDL_DelayNS(deadline - wait_started);
 		if (perf_enabled) perf_idle_total += SDL_GetTicksNS() - wait_started;
 	}
-	fprintf(stderr, "two cabinets: %d frames, %d cabinet(s) running, %llu/%llu link exchanges\n", frames, cabinet_count,
+	fprintf(stderr, "two cabinets: %d frames, %d cabinet(s) running, %llu/%llu link exchanges, %llu ahead frames (%llu LAN, %llu early)\n", frames, cabinet_count,
 		(unsigned long long)(pair ? pair->status(0).exchanges : 0),
-		(unsigned long long)(pair ? pair->status(1).exchanges : 0));
+		(unsigned long long)(pair ? pair->status(1).exchanges : 0), (unsigned long long)ahead_frames,
+		(unsigned long long)ahead_lan_frames, (unsigned long long)early_frames);
 	return quit_after >= 0 && !getenv("M1_SAVE") ? 0 : save() ? 0 : 1;
 }
 #endif
@@ -4097,7 +4378,9 @@ int main(int argc, char **argv)
 		return 2;
 	}
 #ifdef __ANDROID__
-	const bool automatic_local_multiplayer = false;
+	const bool automatic_local_multiplayer = game_part.local_multiplayer() && !split_screen &&
+		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() &&
+		recompiler_map.empty() && !getenv("M1_SCRIPT") && !hud_benchmark;
 #else
 	const bool automatic_local_multiplayer = game_part.local_multiplayer() && !split_screen &&
 		!arg_arcade && !link_player && !link_port_set && !replay_mode && record_path.empty() &&
@@ -6106,38 +6389,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "%s performance hint: unavailable on this Android version or device; continuing without it\n", hint_name);
 		}
 	}
-	// The render thread kept to the fastest cores (a Pixel 9a's X4): left to the scheduler, it spent
-	// a quarter of its time on the slower cores and drew 7% slower. Where every core is as fast, as
-	// it was. Testing (a file "no-pin-render" in the app's storage): off.
-	bool pin_render = true;
-#if defined(M1_ALWAYS_FRAME_TIMINGS)
-	if (FILE *f = fopen((std::string(SDL_GetAndroidInternalStoragePath()) + "/no-pin-render").c_str(), "r")) {
-		fclose(f);
-		pin_render = false;
-		fprintf(stderr, "Render thread: not pinned (no-pin-render)\n");
-	}
-#endif
-	if (cpu_set_t allowed; pin_render && sched_getaffinity(0, sizeof allowed, &allowed) == 0) {
-		long fastest = 0;
-		std::vector<long> freq(CPU_SETSIZE, 0);
-		for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
-			if (!CPU_ISSET(cpu, &allowed)) continue;
-			if (FILE *fq = fopen(("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpufreq/cpuinfo_max_freq").c_str(), "r")) {
-				if (fscanf(fq, "%ld", &freq[cpu]) == 1) fastest = std::max(fastest, freq[cpu]);
-				fclose(fq);
-			}
-		}
-		cpu_set_t target;
-		CPU_ZERO(&target);
-		for (int cpu = 0; cpu < CPU_SETSIZE; cpu++)
-			if (fastest && freq[cpu] == fastest) CPU_SET(cpu, &target);
-		if (CPU_COUNT(&target) && CPU_COUNT(&target) < CPU_COUNT(&allowed)) {
-			if (sched_setaffinity(0, sizeof target, &target) == 0)
-				fprintf(stderr, "Render thread pinned to the %d fastest core(s) (%ld kHz)\n", CPU_COUNT(&target), fastest);
-			else
-				perror("Render thread pin");
-		}
-	}
+	pin_render_thread();
 #endif
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
 	bool sustained_racing = false;

@@ -59,6 +59,7 @@ public:
 			m_next += 1000;
 		}
 		if (now >= m_next) m_next = now + 1000;
+		if (!polls) lan_poll(m_device.get());
 		if (const char *problem = lan_problem(m_device.get())) fail(std::string("LAN: ") + problem);
 	}
 	bool interrupted() { const bool value = m_interrupted; m_interrupted = false; return value; }

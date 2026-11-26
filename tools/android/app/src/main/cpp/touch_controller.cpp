@@ -149,6 +149,26 @@ void android_touch_ui_state(bool menu_open, bool pc_mode)
 	if (cls) env->DeleteLocalRef(cls);
 	env->DeleteLocalRef(activity);
 }
+
+void android_lan_discovery(bool enabled)
+{
+	auto *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
+	auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+	if (!env || !activity) {
+		fprintf(stderr, "LAN: cannot access Android activity for discovery\n");
+		return;
+	}
+	jclass cls = env->GetObjectClass(activity);
+	jmethodID method = cls ? env->GetMethodID(cls, "setLanDiscovery", "(Z)V") : nullptr;
+	if (method) env->CallVoidMethod(activity, method, jboolean(enabled));
+	else fprintf(stderr, "LAN: cannot enable Android discovery\n");
+	if (env->ExceptionCheck()) {
+		env->ExceptionDescribe();
+		env->ExceptionClear();
+	}
+	if (cls) env->DeleteLocalRef(cls);
+	env->DeleteLocalRef(activity);
+}
 #endif
 
 void android_touch_shutdown()

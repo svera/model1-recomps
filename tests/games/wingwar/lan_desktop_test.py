@@ -8,6 +8,8 @@ import sys
 import tempfile
 
 binary, regions = (Path(arg).resolve() for arg in sys.argv[1:3])
+test_worker = os.environ.get("M1_MULTIPLAYER_GAME_THREAD") is not None
+settings = f"renderer_3d = 0\nscale = 1\nfps = {120 if test_worker else 30}\n"
 with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
     root = Path(directory)
     env = dict(os.environ, M1_HIDDEN="1", M1_QUIT_AFTER="-1", M1_SAVE="1",
@@ -20,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
     seed.mkdir()
     for region in regions.glob("*.bin"):
         (seed / region.name).symlink_to(region)
-    (seed / "settings.ini").write_text("renderer_3d = 0\nscale = 1\nfps = 30\n")
+    (seed / "settings.ini").write_text(settings)
     initial = subprocess.run([str(binary), str(seed)], env=dict(env, M1_QUIT_AFTER="10"),
                              capture_output=True, text=True, timeout=120)
     assert initial.returncode == 0, initial.stderr
@@ -42,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
         data.mkdir()
         for region in regions.glob("*.bin"):
             (data / region.name).symlink_to(region)
-        (data / "settings.ini").write_text("renderer_3d = 0\nscale = 1\nfps = 30\n")
+        (data / "settings.ini").write_text(settings)
         for name in ("nvram.sav", "eeprom_93c46.sav"):
             shutil.copyfile(seed / name, data / name)
         if player == 1:
@@ -89,6 +91,9 @@ with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
             print(output)
 
     for player, output in enumerate(outputs[:2], 1):
+        if test_worker:
+            ahead = re.search(r"(\d+) ahead frames \((\d+) LAN, (\d+) early\)", output)
+            assert ahead and int(ahead[2]) > 0, output
         assert f"LAN: preparing cabinet {player}" in output, output
         assert f"LAN: cabinet {player} boot complete; showing game" in output, output
         assert re.search(rf"LAN: status cabinet={player} running=1 ticks=[1-9]\d* .*participants=2", output), output
