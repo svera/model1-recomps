@@ -57,11 +57,11 @@ with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
                 path.write_bytes(saved)
         events = ["1000:escape"] + [f"{1080 + i * 80}:down" for i in range(6)] + ["1640:return"]
         if player == 0:
-            events += ["2200:return", "12000:return", "30000:1", "32000:1",
+            events += ["2200:return", "12000:return", "19500:status", "30000:1", "32000:1",
                        "50000:status", "65000:status", "70000:close"]
         elif player == 1:
             events += ["2200:down", "2400:return", "5000:down", "5200:return",
-                       "30000:1", "32000:1", "50000:status", "55000:close"]
+                       "19500:status", "30000:1", "32000:1", "50000:status", "55000:close"]
         else:
             events += ["2200:down", "2400:return", "7000:down", "7200:return", "16000:close"]
         log = (root / f"{player}.log").open("w+")
@@ -95,7 +95,8 @@ with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
             ahead = re.search(r"(\d+) ahead frames \((\d+) LAN, (\d+) early\)", output)
             assert ahead and int(ahead[2]) > 0, output
         assert f"LAN: preparing cabinet {player}" in output, output
-        assert f"LAN: cabinet {player} boot complete; showing game" in output, output
+        boot = f"LAN: cabinet {player} boot complete; showing game"
+        assert boot in output and output.index(boot) < output.index(f"LAN: status cabinet={player}"), output
         assert re.search(rf"LAN: status cabinet={player} running=1 ticks=[1-9]\d* .*participants=2", output), output
         eeprom = (root / str(player - 1) / "eeprom_93c46.sav").read_bytes()
         nvram = (root / str(player - 1) / "nvram.sav").read_bytes()

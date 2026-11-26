@@ -2119,6 +2119,44 @@ nonvisual VR desktop lifecycle test, macOS hidden-window presentations took
 about 140 ms each, delaying boot past the scripted Start events. The test now
 uses SDL's dummy video driver and CPU composition; it reaches the race and
 passes the LAN lifecycle without pixel comparisons.
+The linked cabinets previously booted at game speed even though their pictures
+and audio were suppressed. A Wing War Mac diagnostic showed roughly 12 seconds
+of preparation. The host now runs linked boot frames in small batches as fast
+as it can, polling the network and retaining the peer-frame readiness check. Once
+boot completes, it resets the audio frame clock and returns to normal pacing.
+In the nonvisual VR four-player desktop lifecycle test, all four cabinets
+completed boot in about 0.70 seconds, compared with about 4.81 seconds before
+acceleration. The test staggers room searches: simultaneous searches on one
+Mac share a discovery port and some guests may not receive the room.
+A manual VR Mac/Android session logged 1.94 seconds of linked boot on both
+devices. The user reported slow, interrupted game-over sound and a slow title
+on both while linked. A repeat with the startup acceleration disabled produced
+the same reported slowdown: in results phase `0x1c`, the phone's diagnostic
+logged whole-picture rendering at roughly 43-65 ms per picture and both
+cabinets slowed to about 35 simulation frames/s. This comparison does not yet
+identify which whole-picture fallback is responsible. Both diagnostic builds
+disabled automated pixel comparisons; the original phone app and settings were
+restored. An Android trace from the baseline run contained 225 3D draw
+submission slices over 30 ms, peaking at 64 ms, in a roughly 13-second interval.
+The trace suggests that submission is expensive during the slowdown, but does
+not by itself identify the whole-picture fallback.
+
+The line-scroll fallback had applied to the entire results screen, even when
+its interpolated slide could be composed from the 2D layers. It now uses GPU
+parts in that case, retaining whole-picture rendering when a slide needs
+per-row render-resolution positioning. A nonvisual linked-ROM test exercised
+both moving and stationary results slides without changing their scroll state.
+In a manual Mac/Android LAN repeat, the user reported smooth game-over sound
+and correct results graphics. Sampled phone results pictures used GPU parts
+and took about 4-7 ms to prepare, versus 43-65 ms in the baseline; adjacent
+phone simulation windows ran at about 57-58 frames/s. The temporary diagnostics
+disabled automated pixel comparisons, and the original phone app and settings
+were restored.
+In a nonvisual dummy-video test, both Wing War cabinets completed 596 boot
+frames in about 0.75 seconds. A manual Mac/Android session logged 2.01 seconds
+on the Mac and 1.99 seconds on the phone; the user reported about three seconds
+overall and gameplay was fine. The temporary diagnostics disabled automated
+pixel comparisons.
 An extended nonvisual linked-ROM test reproduces the prolonged wait and later
 start sequence for both cabinets. With the additional native entry hints it
 matches the interpreter for 26,184 frames without fallbacks.

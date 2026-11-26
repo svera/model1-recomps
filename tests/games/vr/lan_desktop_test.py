@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
         events = [f"{1000 + (int(at) - 10) * 40}:{name}"
                   for at, name in (event.split(":", 1) for event in menu_events(10))]
         if player == 0:
-            events += ["2000:return", "6500:return", "20000:1", "21000:1", "55000:status",
+            events += ["2000:return", f"{15000 if count > 2 else 6500}:return", "20000:1", "21000:1", "55000:status",
                        "60000:escape", "61000:status", "62000:status", "64000:escape",
                        "69000:status", "70000:p", "71000:status", "72000:status",
                        "74000:p", "78000:escape", "79000:status", "82000:status",
@@ -48,13 +48,15 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
                        "69000:status", "71000:status", "71500:p", "72000:status",
                        "85000:close"]
         else:
-            events += ["2000:down", "2200:return", f"{4500 + player * 200}:down",
-                       f"{4700 + player * 200}:return", "20000:1", "21000:1", "55000:status",
+            search_at = 2000 + (player - 1) * 3000
+            events += [f"{search_at}:down", f"{search_at + 200}:return", f"{search_at + 2300}:down",
+                       f"{search_at + 2500}:return", "20000:1", "21000:1", "55000:status",
                        "61000:status", "62000:status"]
             if player == 2:
                 events += ["69000:status", "71000:status", "72000:status", "80000:close"]
             else:
                 events += ["65000:close"]
+        events += [f"{18500 if count > 2 else 10000}:status"]
         events = [f"{int(int(at) * time_scale) if int(at) >= 20000 else at}:{name}"
                   for at, name in (event.split(":", 1) for event in events)]
         env = dict(os.environ, M1_HIDDEN="1", M1_QUIT_AFTER="-1", M1_SAVE="1",
@@ -102,10 +104,12 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
         boot_complete = f"LAN: cabinet {player} boot complete; showing game"
         assert output.count(boot_complete) == 1, output
         assert output.index(f"LAN: preparing cabinet {player}") < output.index(boot_complete)
+        assert output.index(boot_complete) < output.index(f"LAN: status cabinet={player}"), output
     assert sorted(identities) == list(range(1, count + 1)), identities
     host_status = re.findall(
         r"LAN: status cabinet=(\d+) running=(\d+) ticks=(\d+) phase=(\w+) "
         r"participants=(\d+) menu=(\d+) frame=(\d+)", outputs[0])
+    host_status = host_status[1:]
     assert len(host_status) >= 7, host_status
     assert any(int(row[2]) > 100 and row[1] == "1" for row in host_status)
     assert any(row[4] == str(count) and row[3] == "14" for row in host_status), host_status
@@ -126,6 +130,7 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
         assert paused_status[2] == paused_status[3], paused_status
     guest_status = re.findall(
         r"LAN: status .*ticks=(\d+) .*menu=(\d+) frame=(\d+) ready=\d+ paused=(\d+)", outputs[1])
+    guest_status = guest_status[1:]
     assert guest_status[0][1] == "1" and guest_status[0][3] == "0", guest_status
     assert int(guest_status[1][0]) > int(guest_status[0][0]), guest_status
     assert host_status[-1][0] == "0", host_status  # guest closed: returned to room

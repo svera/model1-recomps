@@ -496,6 +496,11 @@ void model1::smooth_screen_update(double now)
 		screen_update(m_bitmap, m_bitmap.cliprect());
 		return;
 	}
+	if (m_parts) {
+		// This path positions individual rows at render resolution, not in the 1x parts.
+		m_parts = nullptr;
+		m_parts_whole = true;
+	}
 	m_tile_slide_interpolating = true;
 	m_tile_slide_layer = slide->layer;
 	screen_update(m_bitmap, m_bitmap.cliprect());
@@ -544,10 +549,12 @@ bool model1::render_smooth(double now, bool shown)
 	auto draw = [&](const std::function<void()> &tail) {
 		bool done = false;
 		auto once = [&] { if (!done) { done = true; tail(); } };
+		gpu_parts *const parts = m_parts;
 		m_picture_tail = once;
 		smooth_screen_update(now);
 		m_picture_tail = nullptr;
 		once();
+		m_parts = parts;
 	};
 	if (!m_video->smooth_frames) {
 		m_replaying = false;

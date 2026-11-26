@@ -763,6 +763,31 @@ struct model1_video_test
 		puts("Tile slide interpolation: fractional, wrapped, and discontinuous row scrolls checked");
 	}
 
+	static void tile_slide_compositor()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		m.set_smooth(true);
+		m.set_render_scale(2);
+		m.m_frame = 10;
+		m.m_ram_b[0x1138] = 0x1c;
+		m.m_tiles.tile_w(0x5000, 0x8000, 0xffff);
+		m.m_tiles.tile_w(0x5004, 0x4000, 0xffff);
+		m.m_tiles.tile_w(0x4000, 4, 0xffff);
+		auto &previous = m.m_tile_slide_hist[8 % model1::SKY_HIST];
+		auto &latest = m.m_tile_slide_hist[9 % model1::SKY_HIST];
+		previous.frame = 8; previous.mode = 0x1c; previous.rows[0] = 0;
+		latest.frame = 9; latest.mode = 0x1c; latest.rows[0] = 4;
+		model1::gpu_parts parts;
+		assert(m.render_parts(9.5, parts) == 2);
+		assert(m.m_tiles.tile_r(0x4000) == 4 && !m.m_tile_slide_interpolating && !m.m_parts);
+		previous.rows[0] = 4;
+		assert(m.render_parts(9.5, parts) == 1);
+		assert(m.m_tiles.tile_r(0x4000) == 4 && !m.m_parts);
+		puts("Tile slide compositing: fractional fallback and stationary parts preserve scroll state");
+	}
+
 	static void free_camera_path()
 	{
 		std::istringstream input(
@@ -2855,7 +2880,8 @@ struct model1_video_test
 				std::array<uint16_t, model1::SCREEN_H> scroll_before;
 				for (int y = 0; y < model1::SCREEN_H; y++) scroll_before[y] = m.m_tiles.tile_r(0x4000 + y);
 				model1::gpu_parts parts;
-				assert(m.render_parts(double(m.m_frame - 1) + 0.5, parts) == 2);
+				const int rendered = m.render_parts(double(m.m_frame - 1) + 0.5, parts);
+				assert(rendered == 1 || rendered == 2);
 				for (int y = 0; y < model1::SCREEN_H; y++) assert(m.m_tiles.tile_r(0x4000 + y) == scroll_before[y]);
 			}
 			if ((result_frame - 1) % 5) continue;
@@ -5051,12 +5077,17 @@ int main(int argc, char **argv)
 		puts("Record interpolation metadata tests passed");
 		return 0;
 	}
+	if (argc > 1 && std::string(argv[1]) == "--tile-slide-compositor") {
+		model1_video_test::tile_slide_compositor();
+		return 0;
+	}
 	if (argc > 2 && std::string(argv[2]) == "--vr-menu-backdrops") {
 		model1_video_test::vr_menu_backdrops(argv[1]);
 		return 0;
 	}
 	if (argc > 2 && std::string(argv[2]) == "--tile-slide-interpolation") {
 		model1_video_test::tile_slide_interpolation();
+		model1_video_test::tile_slide_compositor();
 		return 0;
 	}
 	model1_video_test::frustum_clipping();

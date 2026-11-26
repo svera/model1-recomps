@@ -2955,6 +2955,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	std::string last_lan_notice;
 	bool lan_was_paused = false;
 	bool lan_booting = false;
+	uint64_t lan_boot_started = 0, lan_boot_frames = 0;
 	int lan_racers = 0;
 	auto finish_lan = [&](bool leave) {
 		lan_booting = false;
@@ -3020,6 +3021,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (!interp) c.runtime.attach(c.machine.cpu(), host_game().name);
 		c.machine.forget_camera();
 		lan_booting = true;
+		lan_boot_started = SDL_GetTicksNS();
+		lan_boot_frames = 0;
 		c.machine.set_drawing(false);
 		std::fill_n(c.machine.m_inputs, 3, uint8_t(0xff));
 		c.pad = {};
@@ -3104,11 +3107,15 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return action;
 	};
 	auto finish_frame = [&](bool lan_boot_frame, uint64_t sim_ns) {
-		if (lan_booting && cabinets[0]->game->local_boot_complete(cabinets[0]->machine)) {
+		if (lan_boot_frame) ++lan_boot_frames;
+		const bool boot_complete = lan_booting && cabinets[0]->game->local_boot_complete(cabinets[0]->machine);
+		if (boot_complete) {
 			lan_booting = false;
 			cabinets[0]->machine.set_drawing(true);
 			next_picture = {};
-			fprintf(stderr, "LAN: cabinet %d boot complete; showing game\n", network_cabinet.player());
+			fprintf(stderr, "LAN: cabinet %d boot complete; showing game (%.2fs, %llu frames)\n",
+				network_cabinet.player(), double(SDL_GetTicksNS() - lan_boot_started) / 1e9,
+				(unsigned long long)lan_boot_frames);
 		}
 		if (cabinets[2]) cabinets[2]->machine.m_audio_out.clear();
 		if (perf_enabled) {
@@ -3118,6 +3125,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		++frames;
 		frame_clock.advance();
+		if (boot_complete) frame_clock.reset();
 		const uint64_t mix_started = perf_enabled ? SDL_GetTicksNS() : 0;
 		size_t samples = 0;
 		for (int p = 0; p < cabinet_count; p++) {
@@ -3713,7 +3721,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		const double elapsed = std::min(0.1, double(now - last) / 1e9);
 		last = now;
 		if (paused) frame_clock.reset();
-		else if (fast_forward) {
+		else if (fast_forward || lan_booting) {
 			frame_clock.reset();
 			frame_clock.update(4.0 / FRAME_HZ);
 		} else {
@@ -4157,7 +4165,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (quit_after < 0 && now >= next_save) { autosave(); next_save = now + 60000000000ull; }
 		const uint64_t wait_started = SDL_GetTicksNS();
-		uint64_t deadline = wait_started + (defer_lan_picture ? 1000000ull : 8000000ull);
+		uint64_t deadline = wait_started + ((defer_lan_picture || (lan_booting && lan_waiting)) ? 1000000ull : 8000000ull);
 		if (!paused && !frame_clock.due()) {
 			const uint64_t next_frame = last + uint64_t(frame_clock.until_next() * 1e9);
 			deadline = std::min(deadline, next_frame);
@@ -4165,7 +4173,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (!defer_lan_picture)
 			for (int p = 0; p < instance_count(); p++)
 				if (next_picture[p]) deadline = std::min(deadline, next_picture[p]);
-		if ((!fast_forward || paused) && deadline > wait_started) SDL_DelayNS(deadline - wait_started);
+		if ((!fast_forward || paused) && (!lan_booting || lan_waiting || paused) && deadline > wait_started)
+			SDL_DelayNS(deadline - wait_started);
 		if (perf_enabled) perf_idle_total += SDL_GetTicksNS() - wait_started;
 	}
 	fprintf(stderr, "two cabinets: %d frames, %d cabinet(s) running, %llu/%llu link exchanges, %llu ahead frames (%llu LAN, %llu early)\n", frames, cabinet_count,
