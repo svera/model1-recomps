@@ -76,13 +76,13 @@ build/musashi/m68kops.c: $(BIN)/m68kmake third_party/musashi/m68k_in.c
 	@mkdir -p build/musashi
 	$(BIN)/m68kmake build/musashi third_party/musashi/m68k_in.c >/dev/null
 MUSASHI_CFLAGS = -O2 -w -Ithird_party/musashi -Ibuild/musashi
-$(OBJ)/musashi/m68kops.o: build/musashi/m68kops.c
+$(OBJ)/musashi/m68kops.o: build/musashi/m68kops.c third_party/musashi/m68kconf.h
 	@mkdir -p $(dir $@)
 	$(CC) $(MUSASHI_CFLAGS) -c $< -o $@
-$(OBJ)/musashi/m68kcpu.o: third_party/musashi/m68kcpu.c build/musashi/m68kops.c
+$(OBJ)/musashi/m68kcpu.o: third_party/musashi/m68kcpu.c build/musashi/m68kops.c third_party/musashi/m68kconf.h
 	@mkdir -p $(dir $@)
 	$(CC) $(MUSASHI_CFLAGS) -c $< -o $@
-$(OBJ)/musashi/m68kdasm.o: third_party/musashi/m68kdasm.c build/musashi/m68kops.c
+$(OBJ)/musashi/m68kdasm.o: third_party/musashi/m68kdasm.c build/musashi/m68kops.c third_party/musashi/m68kconf.h
 	@mkdir -p $(dir $@)
 	$(CC) $(MUSASHI_CFLAGS) -c $< -o $@
 $(OBJ)/musashi/softfloat.o: third_party/musashi/softfloat/softfloat.c
@@ -122,6 +122,7 @@ $(OBJ)/%.o: %.cpp
 $(OBJ)/tools/model1run.o $(OBJ)/tools/model1script.o: CXXFLAGS += $(SDL_CFLAGS)
 $(OBJ)/tools/games/%/tool.o: CXXFLAGS += $(SDL_CFLAGS)
 $(OBJ)/tests/host_gamepads_test.o $(OBJ)/tests/host_audio_test.o $(OBJ)/tests/host_fullscreen_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(OBJ)/tests/android_touch_controller_test.o $(OBJ)/tools/android/app/src/main/cpp/touch_controller.o: CXXFLAGS += $(SDL_CFLAGS)
 $(BIN)/host_fullscreen_test: $(OBJ)/tests/host_fullscreen_test.o
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
@@ -165,6 +166,13 @@ test-host-lan: $(BIN)/host_lan_test
 
 .PHONY: test-host-gamepads
 
+$(BIN)/android_touch_controller_test: $(OBJ)/tests/android_touch_controller_test.o $(OBJ)/tools/android/app/src/main/cpp/touch_controller.o
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS)
+test-android-touch: $(BIN)/android_touch_controller_test
+	$(BIN)/android_touch_controller_test
+.PHONY: test-android-touch
+
 MODEL1RUN_OBJS = $(call objs,tools/model1run.cpp $(TOOL_GAME) src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) $(RT))
 $(BIN)/model1run: $(MODEL1RUN_OBJS) $(REC_NONE) $(MUSASHI_OBJ) $(Z80_OBJ) $(CORO_OBJ)
 	@mkdir -p $(dir $@)
@@ -173,6 +181,17 @@ $(BIN)/model1run: $(MODEL1RUN_OBJS) $(REC_NONE) $(MUSASHI_OBJ) $(Z80_OBJ) $(CORO
 # RmlUi (MIT): the in-game menu. Its core and the SDL backend, built with FreeType.
 RML_SRC = $(wildcard third_party/rmlui/Source/Core/*.cpp third_party/rmlui/Source/Core/*/*.cpp) \
 	third_party/rmlui/Backends/RmlUi_Platform_SDL.cpp third_party/rmlui/Backends/RmlUi_Renderer_SDL.cpp
+# Android's CMake build selects one game's native host.
+ANDROID_GAME ?= vr
+.PHONY: android-sources
+android-sources:
+	@printf '%s\n' src/host/main.cpp src/host/menu.cpp src/games/$(ANDROID_GAME)/host.cpp $(ROMSET) \
+		src/games/$(ANDROID_GAME)/romset.cpp src/host/stb_image_impl.cpp $(CORE) $(MACHINE) $(SOUND) \
+		$(RT) $(NATIVE) $(RML_SRC) src/rt/rec_table_none.cpp src/rt/coro_arm64.S \
+		src/gpu/gpu3d_sdlgpu.cpp third_party/sljit/sljitLir.c third_party/z80/z80.c \
+		third_party/musashi/m68kcpu.c build/musashi/m68kops.c third_party/musashi/m68kdasm.c \
+		third_party/musashi/softfloat/softfloat.c third_party/arcade-lan/src/lan.c \
+		third_party/arcade-lan/src/lan_udp.c
 RML_CFLAGS = -DRMLUI_STATIC_LIB -DRMLUI_FONT_ENGINE_FREETYPE -DRMLUI_SDL_VERSION_MAJOR=3 -Ithird_party/rmlui/Include -Ithird_party/rmlui/Backends
 $(OBJ)/third_party/rmlui/%.o: CXXFLAGS += $(RML_CFLAGS) $(FT_CFLAGS) $(SDL_CFLAGS) -w
 $(OBJ)/src/host/stb_image_impl.o: CXXFLAGS += -w
@@ -228,6 +247,20 @@ $(BIN)/model1io_adc_test: tests/model1io_adc_test.cpp $(OBJ)/src/machine/model1i
 
 test-model1io-adc: $(BIN)/model1io_adc_test
 	$(BIN)/model1io_adc_test
+
+# the sound board's busy loops, skipped and not
+$(BIN)/m1audio_idle_skip_test: $(call objs,tests/m1audio_idle_skip_test.cpp $(SOUND)) $(MUSASHI_OBJ) $(Z80_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+test-m1audio-idle-skip: $(BIN)/m1audio_idle_skip_test
+	$(BIN)/m1audio_idle_skip_test
+
+$(BIN)/page_allocator_test: tests/page_allocator_test.cpp src/machine/mame_lite.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $< -o $@
+test-page-allocator: $(BIN)/page_allocator_test
+	$(BIN)/page_allocator_test
+.PHONY: test-page-allocator
 
 # The TGP core's float rounding, as its mode register selects
 $(BIN)/mb86233_test: tests/mb86233_test.cpp $(OBJ)/src/core/mb86233.o
@@ -374,4 +407,4 @@ clean:
 	rm -rf build/obj build/bin
 
 -include $(shell find $(OBJ) -name '*.d' 2>/dev/null)
-.PHONY: all clean native regions rec test-romset test-romset-tool test-model1io-adc test-mb86233
+.PHONY: all clean native regions rec test-romset test-romset-tool test-model1io-adc test-m1audio-idle-skip test-mb86233

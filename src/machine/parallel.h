@@ -1,5 +1,6 @@
 // A small pool of worker threads for splitting a frame's drawing by rows.
 #pragma once
+#include "android_frame_trace.h"
 #ifdef __APPLE__
 #include <pthread.h>
 #endif
@@ -21,7 +22,7 @@ public:
 	// than one band a thread, each thread takes the next band when it's done with its last, so a
 	// thread with heavy rows (the floor) doesn't leave the rest waiting.
 	// few: as few as 2 parts are worth sharing out (each part is a big job of its own)
-	void run(int n, const std::function<void(int, int)> &f, int per_thread = 1, bool few = false)
+	void run(int n, const std::function<void(int, int)> &f, int per_thread = 1, bool few = false, const char *wait_trace = nullptr)
 	{
 		const int t = threads();
 		// inside a band (a worker's, or this thread's mid-run): no pool to hand it to, so here
@@ -41,7 +42,10 @@ public:
 		m_cv.notify_all();
 		take_bands(f, n);
 		std::unique_lock<std::mutex> l(m_mu);
-		m_done.wait(l, [&] { return m_left == 0; });
+		if (m_left != 0) {
+			android_frame_trace wait(wait_trace);
+			m_done.wait(l, [&] { return m_left == 0; });
+		}
 		m_job = nullptr;
 	}
 
@@ -107,6 +111,65 @@ private:
 	}
 };
 
+// One job at a time on a thread of its own, alongside the caller (which waits for it before
+// touching anything the job does). Its own row splitting shares the pool, one caller at a time.
+class side_job
+{
+public:
+	void start(std::function<void()> f)
+	{
+		{
+			std::lock_guard<std::mutex> l(m_mu);
+			if (!m_thread.joinable()) m_thread = std::thread([this] { loop(); });
+			m_job = std::move(f);
+			m_busy = true;
+		}
+		m_cv.notify_one();
+	}
+	void wait(const char *trace = nullptr)
+	{
+		std::unique_lock<std::mutex> l(m_mu);
+		if (!m_busy) return;
+		android_frame_trace t(trace);
+		m_done.wait(l, [&] { return !m_busy; });
+	}
+	~side_job()
+	{
+		{ std::lock_guard<std::mutex> l(m_mu); m_quit = true; }
+		m_cv.notify_one();
+		if (m_thread.joinable()) m_thread.join();
+	}
+
+private:
+	std::thread m_thread;
+	std::mutex m_mu;
+	std::condition_variable m_cv, m_done;
+	std::function<void()> m_job;
+	bool m_busy = false, m_quit = false;
+
+	void loop()
+	{
+#ifdef __APPLE__
+		pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+		std::unique_lock<std::mutex> l(m_mu);
+		for (;;) {
+			m_cv.wait(l, [&] { return m_quit || (m_busy && m_job); });
+			if (m_quit) return;
+			auto job = std::move(m_job);
+			m_job = nullptr;
+			l.unlock();
+			job();
+			l.lock();
+			m_busy = false;
+			m_done.notify_all();
+		}
+	}
+};
+
 inline void parallel_rows(int n, const std::function<void(int, int)> &f, int per_thread = 1) { row_pool::get().run(n, f, per_thread); }
 // n big jobs (n may be smaller than the threads), one at a time to each thread that's free
-inline void parallel_jobs(int n, const std::function<void(int)> &f) { row_pool::get().run(n, [&](int a, int b) { for (int i = a; i < b; i++) f(i); }, 1, true); }
+inline void parallel_jobs(int n, const std::function<void(int)> &f, const char *wait_trace = nullptr)
+{
+	row_pool::get().run(n, [&](int a, int b) { for (int i = a; i < b; i++) f(i); }, 1, true, wait_trace);
+}

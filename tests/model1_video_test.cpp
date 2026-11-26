@@ -19,6 +19,614 @@
 
 struct model1_video_test
 {
+	static void wingwar_arcade_parts()
+	{
+		struct fake_gpu : gpu3d {
+			int targets = 0, downloads = 0;
+			const char *name() const override { return "test"; }
+			bool draw(const gpu3d_poly *, size_t, const gpu3d_span *, size_t, size_t,
+				uint32_t *, size_t, int, int, int, int, double *) override {
+				downloads++;
+				return true;
+			}
+			bool make_targets(int, int, int) override { return true; }
+			bool draw_target(const gpu3d_poly *, size_t, const gpu3d_span *, size_t, size_t,
+				int, int, int, int, int) override {
+				targets++;
+				return true;
+			}
+		} gpu;
+		model1::regions regions{};
+		regions.title = game::id{"wingwar"};
+		regions.polygons.resize(12 * sizeof(uint32_t));
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.set_gpu3d(&gpu);
+		m.set_gpu3d_on(true);
+		m.set_gpu3d_target(true);
+		m.set_parts_mode(true);
+		m.set_arcade_parts_mode(true);
+		m.m_gpu3d_verify = 0;
+		m.capture_arcade_frame();
+		assert(m.arcade_parts() && m.frame_in_parts() && m.frame_unshown());
+		assert(!m.arcade_parts()->ops.empty());
+		m.redraw();
+		assert(!m.arcade_parts() && !m.frame_unshown());
+
+		m.capture_arcade_frame();
+		m.set_arcade_parts_mode(false);
+		m.capture_arcade_frame();
+		assert(!m.arcade_parts() && !m.frame_unshown());
+
+		m.set_arcade_parts_mode(true);
+		const std::array<uint32_t, 5> commands{ 0x41, 0x40000, 0, 1, 0xf };
+		for (size_t i = 0; i < commands.size(); i++) {
+			m.m_display_list0[2 * i] = uint16_t(commands[i]);
+			m.m_display_list0[2 * i + 1] = uint16_t(commands[i] >> 16);
+		}
+		m.m_listctl[1] = 0x1f;
+		m.m_gameplay.object = [](uint32_t, uint32_t, uint32_t, uint32_t, const float *) {
+			game::object_effects effect;
+			effect.hidden = true;
+			return effect;
+		};
+		m.capture_arcade_frame();
+		assert(m.m_above_hud_seen && !m.arcade_parts() && !m.frame_unshown());
+
+		model1::gpu_parts parts;
+		m.m_parts = &parts;
+		m.gpu3d_begin(m.m_bitmap);
+		m.m_rec_polys.emplace_back();
+		m.gpu3d_end(m.m_bitmap);
+		assert(gpu.targets == 1 && gpu.downloads == 0 && parts.d3_target == 0);
+		m.m_parts = nullptr;
+
+		// A frame the host won't show isn't drawn: its list's uploads wait for the vblank, and
+		// frame_quads() counts the list's objects (past an upload) on drawn and skipped frames alike.
+		const std::array<uint32_t, 9> uploads{ 4, 0x40000, 0, 0x1234, 0x41, 0x40000, 0, 1, 0xf };
+		for (size_t i = 0; i < uploads.size(); i++) {
+			m.m_display_list0[2 * i] = uint16_t(uploads[i]);
+			m.m_display_list0[2 * i + 1] = uint16_t(uploads[i] >> 16);
+		}
+		m.capture_arcade_frame();
+		assert(m.frame_quads() == 0);
+		m.set_arcade_skip_mode(true);
+		m.set_arcade_draw_next(false);
+		m.m_above_hud_seen = false;
+		m.m_render_done = false;
+		m.m_tgp_ram[0] = 0;
+		m.capture_arcade_frame();
+		assert(!m.m_above_hud_seen && !m.m_render_done && m.frame_quads() == 1);
+		m.tgp_scan();
+		assert(m.m_tgp_ram[0] == 0x1234);
+		m.set_arcade_draw_next(true);
+		m.capture_arcade_frame();
+		assert(m.m_above_hud_seen && m.frame_quads() == 1);
+		m.set_arcade_skip_mode(false);
+	}
+
+	static void gpu_replay_geometry()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"swa"};
+		model1 m(std::move(regions));
+		bitmap_rgb32 bitmap;
+		bitmap.allocate(100, 100);
+		m.gpu3d_begin(bitmap);
+		m.s_hd_raster = true;
+		m.m_view->x1 = 2; m.m_view->x2 = 90;
+		m.m_view->y1 = 3; m.m_view->y2 = 80;
+		model1::point_t p[2][4];
+		model1::quad_t q[2];
+		for (int batch = 0; batch < 2; batch++) {
+			for (int i = 0; i < 4; i++) {
+				p[batch][i].s = {10 + i * 7 + batch * 100, 20 + i * 6};
+				p[batch][i].fx = 10.25f + i * 7 + batch * 100;
+				p[batch][i].fy = 20.5f + i * 6;
+				p[batch][i].z = 30.75f + i + batch * 100;
+			}
+			q[batch] = model1::quad_t(batch ? 0x654321 : 0x123456, 42, &p[batch][0], &p[batch][1], &p[batch][2], &p[batch][3]);
+			q[batch].obj = 0xabcdef;
+		}
+		m.m_quadind[0] = &q[0];
+		m.record_quads(m.m_view.get(), 1);
+		assert(m.m_rec_polys.size() == 1 && !m.m_rec_bad);
+		m.m_rec_bad = true;
+		m.m_view->x1 = 4;
+		m.m_quadind[0] = &q[1];
+		m.record_quads(m.m_view.get(), 1);
+		assert(m.m_rec_batches.size() == 2);
+		assert(m.m_rec_batches[0].first == 0 && m.m_rec_batches[1].first == 1);
+		assert(m.m_rec_batches[0].x1 == 2 && m.m_rec_batches[1].x1 == 4);
+		assert((m.m_rec_quads == std::vector<model1::quad_t *>{&q[0], &q[1]}));
+		std::vector<std::tuple<uint32_t, uint32_t, int>> replayed;
+		m.m_gameplay.wireframe = [&](uint32_t object, uint32_t colour) -> std::optional<uint32_t> {
+			replayed.emplace_back(object, colour, m.m_view->x1);
+			return std::nullopt;
+		};
+		m.s_hd_raster = false;
+		m.m_view->x1 = 7;
+		m.rec_replay(bitmap);
+		assert((replayed == std::vector<std::tuple<uint32_t, uint32_t, int>>{
+			{0xabcdef, 0x123456, 2}, {0xabcdef, 0x654321, 4}}));
+		assert(m.m_view->x1 == 7);
+
+		// A batch recorded for the GPU keeps its storage till the picture ends (the replay reads it
+		// there); a batch drawn by the CPU gives it to the next.
+		m.m_gameplay.wireframe = nullptr;
+		m.gpu3d_begin(bitmap);
+		model1::quad_t *const quads = m.m_quaddb.get();
+		model1::point_t *const points = m.m_pointdb.get();
+		assert(m.m_quadpt == quads && m.m_quadbase == quads && m.m_pointbase == points);
+		m.m_quadpt += 3; m.m_pointpt += 6;
+		m.next_batch();
+		assert(m.m_quadbase == quads + 3 && m.m_quadpt == quads + 3);
+		assert(m.m_pointbase == points + 6 && m.m_pointpt == points + 6);
+		m.gpu3d_end(bitmap);
+		assert(m.m_quadpt == quads && m.m_quadbase == quads && m.m_pointpt == points && m.m_pointbase == points);
+		assert(m.m_rec_quads.empty());
+		m.m_quadpt += 3; m.m_pointpt += 6;
+		m.next_batch();
+		assert(m.m_quadpt == quads && m.m_pointpt == points);
+
+		// A line's recorded spans: one a row, covering the pixels the CPU draws (a moiré line's
+		// every other pixel by the GPU's checker)
+		m.m_gameplay.wireframe = nullptr;
+		m.m_view->x1 = 0; m.m_view->x2 = 99; m.m_view->y1 = 0; m.m_view->y2 = 99;
+		for (const bool moire : {false, true}) for (const int dir : {1, -1}) {
+			const int ax = dir > 0 ? 5 : 85, bx = dir > 0 ? 85 : 5, ay = 10, by = 17;
+			model1::point_t lp[4];
+			lp[0].s = lp[1].s = {ax, ay};
+			lp[2].s = lp[3].s = {bx, by};
+			const int colour = 0x00abcdef | (moire ? 0x01000000 : 0);
+			model1::quad_t line(colour, 1, &lp[0], &lp[1], &lp[2], &lp[3]);
+			m.gpu3d_begin(bitmap);
+			m.s_hd_raster = true;
+			m.m_quadind[0] = &line;
+			m.record_quads(m.m_view.get(), 1);
+			assert(m.m_rec_polys.size() == 1 && (m.m_rec_polys[0].flags & G3_LINE));
+			assert(m.m_rec_spans.size() == 8);   // (rows 10..17)
+			std::vector<uint32_t> gpu(100 * 100, 0), cpu(100 * 100, 0);
+			for (const gpu3d_span &s : m.m_rec_spans)
+				for (int x = s.xa; x <= s.xb; x++)
+					if (!moire || !((x ^ s.y) & 1)) gpu[s.y * 100 + x] = 1;
+			assert(m.m_rec_y0 == 10 && m.m_rec_y1 == 17);
+			std::fill_n(bitmap.data(), 100 * 100, 0u);
+			m.s_hd_raster = false;
+			m.rec_replay(bitmap);
+			for (int i = 0; i < 100 * 100; i++) cpu[i] = bitmap.data()[i] != 0;
+			assert(gpu == cpu);
+		}
+	}
+
+	static void frustum_clipping()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_view->a_bottom = m.m_view->a_right = 1;
+		m.m_view->a_top = m.m_view->a_left = -1;
+		model1::point_t p[] = {{-.5f, -.5f, 1}, {.5f, -.5f, 1}, {.5f, .5f, 1}, {-.5f, .5f, 1}};
+		model1::quad_t q(0, 1, &p[0], &p[1], &p[2], &p[3]);
+		auto clip = [&](bool preclassify = false) {
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			int level = 0;
+			const unsigned out = preclassify ? m.fclip_classify(level, q) : 0;
+			if (out != 15) m.fclip_push_quad(level, q, out);
+			return m.m_quadpt - m.m_quaddb.get();
+		};
+		assert(clip() == 1 && m.m_pointpt == m.m_pointdb.get());
+		assert(clip(true) == 1 && m.m_pointpt == m.m_pointdb.get());
+		for (auto &point : p) point.x += 3;
+		assert(clip() == 0 && m.m_pointpt == m.m_pointdb.get());
+		assert(clip(true) == 0 && m.m_pointpt == m.m_pointdb.get());
+		p[0].x = p[3].x = -.5f;
+		assert(clip() == 1 && m.m_pointpt - m.m_pointdb.get() == 2);
+		assert(m.m_pointdb[0].x == 1 && m.m_pointdb[1].x == 1);
+		assert(clip(true) == 1 && m.m_pointpt - m.m_pointdb.get() == 2);
+		assert(m.m_pointdb[0].x == 1 && m.m_pointdb[1].x == 1);
+	}
+
+	static void deferred_object_projection()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_view->ext = 0;
+		m.m_view->scale = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = {
+			-2, -2, 8, 2, -2, 8,
+			0, 0, 0, -1, -1, -1, 8, 1, -1, 8,
+			0, 0, 0, -1, 0, 1, 8, 0, 0, 0,
+		};
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t unlinked = 1, triangle = 0x4000 | (1 << 8) | 2;
+		std::memcpy(poly + 6, &unlinked, sizeof(unlinked));
+		std::memcpy(poly + 16, &triangle, sizeof(triangle));
+		m.m_tgp_ram[0] = 0x400;
+		m.m_pointpt = m.m_pointdb.get();
+		m.m_quadpt = m.m_quaddb.get();
+		m.m_pointdb[0].fx = -123;
+		m.m_pointdb[1].fx = -123;
+		float depth = 0;
+		m.push_object(0x40000, 0x800000, 2, depth);
+		assert(m.m_quadpt == m.m_quaddb.get() + 1);
+		assert(m.m_pointdb[0].fx == -123 && m.m_pointdb[1].fx == -123);
+		const auto &q = m.m_quaddb[0];
+		assert(q.p[0] == &m.m_pointdb[3] && q.p[0]->fx == 264 && q.p[0]->fy == 208);
+		assert(q.p[1] == &m.m_pointdb[2] && q.p[1]->fx == 232 && q.p[1]->fy == 208);
+		assert(q.p[2] != q.p[3] && q.p[2]->fx == 248 && q.p[2]->fy == 176);
+		assert(q.p[2]->fx == q.p[3]->fx && q.p[2]->fy == q.p[3]->fy);
+	}
+
+	static void early_face_rejection()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"swa"};
+		model1 m(std::move(regions));
+		m.m_gameplay.object = {};
+		m.m_view->ext = 0;
+		m.m_view->scale = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		float *poly = reinterpret_cast<float *>(m.m_poly_ram.get());
+		const float object[] = {
+			24, -2, 8, 28, -2, 8,
+			0, 0, 0, -1, 24, 2, 8, 28, 2, 8,
+			0, 0, 0, -1, -2, 2, 8, 2, 2, 8,
+		};
+		std::copy(std::begin(object), std::end(object), poly);
+		const uint32_t first = 0x4a01, second = 0x4601;
+		std::memcpy(poly + 6, &first, sizeof first);
+		std::memcpy(poly + 16, &second, sizeof second);
+		m.m_tgp_ram[0] = 0;
+		auto render = [&] {
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			m.m_pointdb[0].fx = -123;
+			float depth = 0;
+			m.push_object(0x40000, 0x800000, 2, depth);
+			std::vector<std::tuple<float, float, float, float, float, float, int>> quads;
+			for (auto *q = m.m_quaddb.get(); q != m.m_quadpt; ++q)
+				for (auto *p : q->p)
+					quads.emplace_back(p->x, p->y, p->z, p->fx, p->fy, q->z, q->col);
+			return std::make_tuple(depth, m.m_pointdb[0].fx, quads);
+		};
+		const auto optimized = render();
+		m.early_face_rejection = false;
+		const auto baseline = render();
+		assert(std::get<1>(baseline) != -123 && std::get<1>(optimized) == -123);
+		assert(!std::get<2>(baseline).empty());
+		assert(std::get<0>(baseline) == std::get<0>(optimized));
+		assert(std::get<2>(baseline) == std::get<2>(optimized));
+
+		int callbacks = 0;
+		m.m_gameplay.object = [&](uint32_t, uint32_t, uint32_t, uint32_t, const float *) {
+			game::object_effects effect;
+			effect.colour = [&](uint32_t, int, int &, int &, int &) { ++callbacks; };
+			return effect;
+		};
+		m.early_face_rejection = true;
+		render();
+		assert(callbacks == 2);
+	}
+
+	static void object_vertex_reuse()
+	{
+		const float object[] = {
+			-2, -2, 8, 2, -2, 8,
+			0, 0, 0, -1, -1, -1, 8, 1, -1, 8,
+			0, 0, 0, -1, -1, -1, 8, 1, 1, 8,
+			0, 0, 0, -1, 2, -2, 8, 0, 0, 0,
+		};
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		regions.polygons.resize(sizeof object);
+		std::memcpy(regions.polygons.data(), object, sizeof object);
+		const uint32_t quad = 0x4601, triangle = 0x4502;
+		for (int word : {6, 16})
+			std::memcpy(regions.polygons.data() + word * 4, &quad, sizeof quad);
+		std::memcpy(regions.polygons.data() + 26 * 4, &triangle, sizeof triangle);
+		model1 m(std::move(regions));
+		m.m_view->ext = 0;
+		m.m_view->scale = 1;
+		m.m_view->ayyc = 1;
+		m.m_view->translation[0] = m.m_view->translation[4] = m.m_view->translation[8] = 1;
+		m.m_view->set_viewport(248, 192, 0, 495, 0, 383);
+		m.m_view->set_zoom(128, 128);
+		m.m_tgp_ram[0] = 0x400;
+		auto geometry = [&](bool reuse, float x) {
+			m.benchmark_vertex_reuse = reuse;
+			m.m_view->translation[9] = x;
+			m.m_pointpt = m.m_pointdb.get();
+			m.m_quadpt = m.m_quaddb.get();
+			float depth = 1;
+			m.push_object(0x40000, 0, 3, depth);
+			assert(m.m_quadpt == m.m_quaddb.get() + 3);
+			assert(m.m_quadpt[-1].p[2] != m.m_quadpt[-1].p[3]);
+			std::vector<std::tuple<float, float, float, float, int>> result;
+			for (auto *q = m.m_quaddb.get(); q != m.m_quadpt; q++)
+				for (auto *p : q->p)
+					result.emplace_back(p->x, p->y, p->z, q->z, q->col);
+			return result;
+		};
+		const auto baseline = geometry(false, 0);
+		assert(geometry(true, 0) == baseline);
+		const auto moved = geometry(false, 1);
+		assert(moved != baseline && geometry(true, 1) == moved);
+	}
+
+	static void vr_tile_layer_reuse()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_tiles.update(m.m_pens);
+		auto generation = [&](int layer) { return m.cached_layer(layer, 0).gen; };
+		const auto first = generation(1);
+		++m.m_frame;
+		assert(generation(1) == first);
+
+		m.tile_write(0x5002, 1); // Scroll on the separate sky map.
+		m.tile_write(0x2000, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first);
+		m.m_palette->set_pen_color(0x1000, 1, 2, 3);
+		assert(generation(1) == first);
+
+		m.tile_write(0, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 1);
+		m.char_write(16, 0x1111);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 2);
+		m.m_palette->set_pen_color(0, 1, 2, 3);
+		assert(generation(1) == first + 3);
+		m.tile_write(0x6000, 0x8000);
+		assert(generation(1) == first + 4);
+
+		m.tile_write(0x5004, 0x4000);
+		const auto split = generation(1);
+		m.tile_write(0x1000, 1); // The split window can draw from the paired map.
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == split + 1);
+		m.work_ram()[0x1138] = 0x12;
+		assert(generation(1) == split + 2);
+	}
+
+	static void backdrop_colour_threshold()
+	{
+		constexpr uint32_t key = 0xff000000, sky = 0x123456, other = 0x654321;
+		constexpr int width = 100, limit = width * model1::SCREEN_H / 100;
+		bitmap_rgb32 pixels;
+		pixels.allocate(width + 2, model1::SCREEN_H);
+		pixels.fill(sky);
+		auto classify = [&](uint32_t colour) {
+			return model1::backdrop_colour(pixels, 1, width + 1, colour);
+		};
+		assert(classify(key) == sky && classify(sky) == sky);
+		assert(!classify(other));
+		for (int i = 0; i < limit; i++)
+			pixels.pix(i / width, 1 + i % width) = i % 2 ? other : key;
+		assert(classify(key) == sky && classify(sky) == sky);
+		pixels.pix(limit / width, 1 + limit % width) = other;
+		assert(!classify(key) && !classify(sky));
+		pixels.fill(key);
+		assert(classify(key) == key && !classify(sky));
+		pixels.fill(sky);
+		for (int y = 0; y < 3; y++) pixels.pix(y, 1) = other;
+		assert(model1::backdrop_colour(pixels, 1, 2, key) == sky);
+		pixels.pix(3, 1) = other;
+		assert(!model1::backdrop_colour(pixels, 1, 2, key));
+	}
+
+	static void wingwar_tile_layer_reuse()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"wingwar"};
+		model1 m(std::move(regions));
+		m.set_aspect(16.0f / 9);
+		m.m_wide_frame = true;
+		m.m_tiles.update(m.m_pens);
+		auto generation = [&](int layer, int flags = 0) { return m.cached_layer(layer, flags).gen; };
+		const auto first = generation(1);
+		const auto backdrop = generation(6, segas24_tile::DRAW_OPAQUE);
+		const auto starfield = generation(5);
+		++m.m_frame;
+		assert(generation(1) == first);
+		assert(generation(6, segas24_tile::DRAW_OPAQUE) == backdrop);
+		assert(generation(5) == starfield + 1);
+
+		m.tile_write(0, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 1);
+		m.char_write(16, 0x1111);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 2);
+		m.tile_write(0x5000, 1);
+		assert(generation(1) == first + 3);
+		m.tile_write(0x6000, 0x8000);
+		assert(generation(1) == first + 4);
+		m.m_palette->set_pen_color(0, 1, 2, 3);
+		assert(generation(1) == first + 5);
+		m.work_ram()[0x1138] = 1;
+		assert(generation(1) == first + 6);
+
+		m.tile_write(0x5004, 0x4000);
+		const auto split = generation(1);
+		m.tile_write(0x1000, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == split + 1);
+		std::vector<uint16_t> tiles(0x8000), chars(0x40000);
+		m.m_tiles.swap_rams(tiles, chars);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == split + 2);
+
+		m.m_wide_frame = false;
+		const auto narrow = generation(1);
+		++m.m_frame;
+		assert(generation(1) == narrow + 1);
+		m.m_wide_frame = true;
+		assert(generation(1) == narrow + 2);
+		++m.m_frame;
+		assert(generation(1) == narrow + 2);
+	}
+
+	static void swa_tile_layer_reuse()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"swa"};
+		model1 m(std::move(regions));
+		m.m_tiles.update(m.m_pens);
+		auto generation = [&](int layer) { return m.cached_layer(layer, 0).gen; };
+		const auto first = generation(1);
+		const auto other = generation(5);
+		const auto cockpit = generation(3);
+		++m.m_frame;
+		assert(generation(1) == first);
+		assert(generation(5) == other);
+		assert(generation(3) == cockpit);
+
+		game::swa::set_wide_cockpit(m, false);
+		assert(generation(3) == cockpit + 1);
+		assert(generation(1) == first);
+		game::swa::set_wide_cockpit(m, true);
+		assert(generation(3) == cockpit + 2);
+		m.tile_write(0x1000, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(3) == cockpit + 3);
+		m.tile_write(0x5001, 0x8000);
+		m.tile_write(0x4200, 1);
+		assert(generation(3) == cockpit + 4);
+		m.tile_write(0x5005, 0x8000);
+		assert(generation(3) == cockpit + 5);
+
+		m.tile_write(0, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 1);
+		assert(generation(5) == other);
+		m.char_write(16, 0x1111);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == first + 2);
+		m.tile_write(0x5000, 1);
+		assert(generation(1) == first + 3);
+		m.m_palette->set_pen_color(0, 1, 2, 3);
+		assert(generation(1) == first + 4);
+		assert(generation(5) == other + 1);
+
+		m.tile_write(0x6000, 0x8000);
+		assert(generation(1) == first + 5);
+		m.tile_write(0x5004, 0x4000);
+		const auto split = generation(1);
+		m.tile_write(0x1001, 1);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == split + 1);
+
+		m.tile_write(0x5007, 0x8000);
+		auto backdrop = [&] { return m.cached_layer(6, segas24_tile::DRAW_OPAQUE).gen; };
+		const auto disabled = backdrop();
+		m.m_palette->set_pen_color(0, 4, 5, 6);
+		assert(backdrop() == disabled);
+		m.set_aspect(16.0f / 9);
+		assert(backdrop() == disabled + 1);
+		m.work_ram()[0x1138] = 1;
+		assert(backdrop() == disabled + 2);
+		m.tile_write(0x5003, 1);
+		assert(backdrop() == disabled + 3);
+		m.m_palette->set_pen_color(0, 7, 8, 9);
+		assert(backdrop() == disabled + 3);
+		m.tile_write(0x5007, 0);
+		assert(backdrop() == disabled + 4);
+		assert(m.m_layer_revision[6].palette == m.m_tile_palette_revision);
+		m.m_palette->set_pen_color(0, 10, 11, 12);
+		assert(backdrop() == disabled + 5);
+
+		std::vector<uint16_t> tiles(0x8000), chars(0x40000);
+		m.m_tiles.swap_rams(tiles, chars);
+		m.m_tiles.update(m.m_pens);
+		assert(generation(1) == split + 2);
+	}
+
+	static void swa_cockpit_side_reuse()
+	{
+		constexpr int ext = 16, height = 32, width = 496 + 2 * ext;
+		std::vector<uint32_t> pixels(size_t(width) * height, 0);
+		for (int y = 0; y < height; y++) {
+			pixels[size_t(y) * width + ext] = 0x10000 + y;
+			pixels[size_t(y) * width + ext + 12] = 0x10000 + y;
+		}
+		game::swa::cockpit_sides_cache cache;
+		assert(cache.draw(pixels.data(), width, height, ext));
+		assert(cache.builds == 1 && cache.entries.front().sides == 1);
+		pixels[ext + 40] = 42;
+		assert(cache.draw(pixels.data(), width, height, ext));
+		assert(cache.builds == 1);
+		pixels[ext] ^= 1;
+		cache.draw(pixels.data(), width, height, ext);
+		assert(cache.builds == 2);
+		pixels[ext + 12] ^= 1;
+		cache.draw(pixels.data(), width, height, ext);
+		assert(cache.builds == 3);
+		pixels[ext + 495] ^= 1;
+		cache.draw(pixels.data(), width, height, ext);
+		assert(cache.builds == 4);
+		pixels[ext + 495 - 12] ^= 1;
+		cache.draw(pixels.data(), width, height, ext);
+		assert(cache.builds == 5);
+		cache.draw(pixels.data(), width, height - 1, ext);
+		assert(cache.builds == 6);
+		assert(!cache.draw(pixels.data(), width, height, 0));
+		assert(cache.builds == 6);
+		std::vector<uint32_t> blank(size_t(496 + 2 * (ext + 1)) * height, 0);
+		assert(!cache.draw(blank.data(), 496 + 2 * (ext + 1), height, ext + 1));
+		assert(cache.builds == 7 && cache.entries.front().sides == 0);
+		assert(!cache.draw(blank.data(), 496 + 2 * (ext + 1), height, ext + 1));
+		assert(cache.builds == 7);
+
+		game::swa::cockpit_sides_cache recent;
+		for (uint32_t value : { 1u, 2u, 3u, 4u, 1u, 5u, 1u, 2u }) {
+			pixels[ext] = value;
+			recent.draw(pixels.data(), width, height, ext);
+			if (value == 4) assert(recent.builds == 4);
+			if (value == 5) assert(recent.builds == 5);
+		}
+		assert(recent.builds == 6);
+	}
+
+#if defined(__ANDROID__) || defined(__APPLE__)
+	static void vr_partial_hud_tracking()
+	{
+		model1::regions regions{};
+		regions.title = game::id{"vr"};
+		model1 m(std::move(regions));
+		m.m_tiles.update(m.m_pens);
+		auto revision = m.m_tiles.layer_revision(1);
+		m.tile_write(64 * 3, 1);
+		m.m_tiles.update(m.m_pens);
+		auto changes = m.m_tiles.layer1_changes_since(revision);
+		assert(changes.entries == 1 && changes.direct == 1 && changes.graphics == 0);
+		assert(m.m_tiles.layer1_dirty_bands(revision, model1::SCREEN_H / 8) == (uint64_t{1} << 3));
+		revision = m.m_tiles.layer_revision(1);
+		m.char_write(16, 0x1111);
+		m.m_tiles.update(m.m_pens);
+		changes = m.m_tiles.layer1_changes_since(revision);
+		assert(changes.graphics == 1 && changes.direct == 0);
+		revision = m.m_tiles.layer_revision(1);
+		m.tile_write(0x5004, 1);
+		assert(m.m_tiles.layer1_changes_since(revision).scroll);
+		m.tile_write(0x5004, 0x4000);
+		assert(!m.m_tiles.layer1_band_drawing_supported());
+	}
+#endif
+
 	static void vr_menu_backdrops(const char *dir)
 	{
 		auto check = [](model1 &m) {
@@ -153,6 +761,31 @@ struct model1_video_test
 		m.m_ram_b[0x1138] = 0x07;
 		assert(!m.smooth_tile_slide(1, rows));
 		puts("Tile slide interpolation: fractional, wrapped, and discontinuous row scrolls checked");
+	}
+
+	static void tile_slide_compositor()
+	{
+		model1::regions regions;
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		m.set_smooth(true);
+		m.set_render_scale(2);
+		m.m_frame = 10;
+		m.m_ram_b[0x1138] = 0x1c;
+		m.m_tiles.tile_w(0x5000, 0x8000, 0xffff);
+		m.m_tiles.tile_w(0x5004, 0x4000, 0xffff);
+		m.m_tiles.tile_w(0x4000, 4, 0xffff);
+		auto &previous = m.m_tile_slide_hist[8 % model1::SKY_HIST];
+		auto &latest = m.m_tile_slide_hist[9 % model1::SKY_HIST];
+		previous.frame = 8; previous.mode = 0x1c; previous.rows[0] = 0;
+		latest.frame = 9; latest.mode = 0x1c; latest.rows[0] = 4;
+		model1::gpu_parts parts;
+		assert(m.render_parts(9.5, parts) == 2);
+		assert(m.m_tiles.tile_r(0x4000) == 4 && !m.m_tile_slide_interpolating && !m.m_parts);
+		previous.rows[0] = 4;
+		assert(m.render_parts(9.5, parts) == 1);
+		assert(m.m_tiles.tile_r(0x4000) == 4 && !m.m_parts);
+		puts("Tile slide compositing: fractional fallback and stationary parts preserve scroll state");
 	}
 
 	static void free_camera_path()
@@ -1005,8 +1638,8 @@ struct model1_video_test
 					model1::gpu_parts parts;
 					render_passes = 0;
 					const int kind = m.render_parts(now, parts, false);
-					assert(kind == (m.m_above_hud_seen ? 2 : 1));
-					assert(render_passes == (m.m_above_hud_seen ? 2u : 1u));
+					assert(kind == 1 || (kind == 2 && m.m_above_hud_seen));
+					assert(render_passes == (kind == 2 ? 4u : m.m_above_hud_seen ? 2u : 1u));
 					hud_frames += m.m_above_hud_seen;
 					std::vector<uint32_t> pixels;
 					if (kind == 1) model1::compose_cpu(parts, m.frame_w(), m.frame_h(), pixels);
@@ -1020,7 +1653,7 @@ struct model1_video_test
 		}
 		assert(hud_frames > 0);
 		if (native) assert(rec::fallback_count() == 0);
-		printf("SWA %s LOD %s: smooth parts match whole frames at 1x/3x; above-HUD scenes render once\n",
+		printf("SWA %s LOD %s: smooth parts match whole frames at 1x/3x\n",
 			native ? "native" : "interpreter", lod ? "on" : "off");
 	}
 	static void copy_bounds_and_sort()
@@ -1050,7 +1683,7 @@ struct model1_video_test
 		view.translation[9] = 20;
 		assert(!view.outside(bounds));   // scaled bounds still intersect
 
-		for (int count : { 0, 1, 255, 256, 4096, 32768 }) {
+		for (const bool narrow : { false, true }) for (int count : { 0, 1, 255, 256, 4096, 32768 }) {
 			std::vector<model1::quad_t *> expected;
 			uint32_t random = 12345;
 			for (int i = 0; i < count; i++) {
@@ -1060,6 +1693,7 @@ struct model1_video_test
 				if (i % 23 == 0) q.z = 0.0f;
 				if (i % 29 == 0) q.z = -0.0f;
 				q.foreground = i % 17 == 0;
+				if (narrow) { q.z = 1000.0f + float(random % 7); q.foreground = false; }   // (passes skipped: high bytes the same)
 				expected.push_back(&q);
 			}
 			m.m_quadpt = m.m_quaddb.get() + expected.size();
@@ -1327,6 +1961,83 @@ struct model1_video_test
 			}
 		}
 		puts("Free camera: above-HUD radar objects hidden, world objects retained, restored on exit in regular/replayed lists");
+	}
+
+	static void swa_overlay_parts()
+	{
+		for (const char *title : { "swa", "vr" }) {
+			model1::regions regions;
+			regions.title = game::id{ title };
+			regions.polygons.resize(12 * sizeof(uint32_t));
+			model1 m(std::move(regions));
+			m.set_aspect(16.0f / 9);
+			const std::array<uint32_t, 5> commands{ 0x41, 0x40000, 0, 1, 0xf };
+			for (size_t i = 0; i < commands.size(); i++) {
+				m.m_display_list0[2 * i] = uint16_t(commands[i]);
+				m.m_display_list0[2 * i + 1] = uint16_t(commands[i] >> 16);
+			}
+			m.m_listctl[1] = 0x1f;
+			m.m_gameplay.object = [](uint32_t, uint32_t, uint32_t, uint32_t, const float *) {
+				game::object_effects effect;
+				effect.hidden = true;
+				return effect;
+			};
+			model1::gpu_parts parts;
+			m.m_parts = &parts;
+			m.screen_update(m.m_bitmap, m.m_bitmap.cliprect());
+			assert(m.m_above_hud_seen);
+			if (std::string(title) == "swa") {
+				assert(!m.m_parts_whole);
+				assert(m.m_overlay_bounds.max_x < m.m_overlay_bounds.min_x);
+				const auto top = std::find_if(parts.ops.begin(), parts.ops.end(),
+					[](const auto &op) { return op.tex == model1::TEX_TOP; });
+				const auto overlay = std::find_if(parts.ops.begin(), parts.ops.end(),
+					[](const auto &op) { return op.tex == model1::TEX_OVERLAY; });
+				assert(top != parts.ops.end() && overlay != parts.ops.end() && top < overlay);
+				assert(parts.img[model1::TEX_OVERLAY].px);
+
+				m.m_overlay_separate = true;
+				m.m_quadind[0] = m.m_quaddb.get();
+				model1::point_t point;
+				for (auto &p : m.m_quaddb[0].p) p = &point;
+				m.m_quaddb[0].col = 0xff;
+				m.m_quadpt = m.m_quaddb.get() + 1;
+				m.m_view->x1 = 10; m.m_view->x2 = 30;
+				m.m_view->y1 = 20; m.m_view->y2 = 40;
+				m.draw_quads(m.m_overlay, rectangle(15, 50, 25, 50));
+				assert(m.m_overlay_bounds.min_x == 15 && m.m_overlay_bounds.max_x == 30);
+				assert(m.m_overlay_bounds.min_y == 25 && m.m_overlay_bounds.max_y == 40);
+				m.m_view->x1 = 40; m.m_view->x2 = 60;
+				m.m_view->y1 = 5; m.m_view->y2 = 30;
+				m.draw_quads(m.m_overlay, rectangle(0, 100, 0, 100));
+				assert(m.m_overlay_bounds.min_x == 15 && m.m_overlay_bounds.max_x == 60);
+				assert(m.m_overlay_bounds.min_y == 5 && m.m_overlay_bounds.max_y == 40);
+				m.m_quadpt = m.m_quaddb.get();
+				m.m_view->x1 = 0; m.m_view->x2 = 100;
+				m.m_view->y1 = 0; m.m_view->y2 = 100;
+				m.draw_quads(m.m_overlay, rectangle(0, 100, 0, 100));
+				assert(m.m_overlay_bounds.min_x == 15 && m.m_overlay_bounds.max_x == 60);
+				assert(m.m_overlay_bounds.min_y == 5 && m.m_overlay_bounds.max_y == 40);
+
+				m.m_quaddb[0].col = 0x01000000;
+				m.m_quadpt = m.m_quaddb.get() + 1;
+				m.draw_quads(m.m_overlay, m.m_overlay.cliprect());
+				assert(m.m_parts_whole);
+				m.m_overlay_separate = false;
+				m.m_quadpt = m.m_quaddb.get();
+				m.m_parts_whole = false;
+				m.screen_update(m.m_bitmap, m.m_bitmap.cliprect());
+				assert(m.m_overlay_bounds.max_x < m.m_overlay_bounds.min_x);
+			} else {
+				assert(m.m_parts_whole);
+			}
+			m.m_parts = nullptr;
+			m.set_smooth(true);
+			m.m_logic[1].list.assign(m.m_display_list0, m.m_display_list0 + 2 * commands.size());
+			m.index_objects(m.m_logic[1]);
+			assert(m.m_logic[1].above_hud);
+			assert(m.render_parts(3, parts) == (std::string(title) == "swa" ? 1 : 2));
+		}
 	}
 
 	static void swa_name_entry(const char *dir)
@@ -2169,7 +2880,8 @@ struct model1_video_test
 				std::array<uint16_t, model1::SCREEN_H> scroll_before;
 				for (int y = 0; y < model1::SCREEN_H; y++) scroll_before[y] = m.m_tiles.tile_r(0x4000 + y);
 				model1::gpu_parts parts;
-				assert(m.render_parts(double(m.m_frame - 1) + 0.5, parts) == 2);
+				const int rendered = m.render_parts(double(m.m_frame - 1) + 0.5, parts);
+				assert(rendered == 1 || rendered == 2);
 				for (int y = 0; y < model1::SCREEN_H; y++) assert(m.m_tiles.tile_r(0x4000 + y) == scroll_before[y]);
 			}
 			if ((result_frame - 1) % 5) continue;
@@ -3050,6 +3762,25 @@ struct model1_video_test
 		assert(lit != 0 && none == 0);
 		for (int sh = 0; sh <= 16; sh += 8)
 			assert(std::abs(int((half >> sh) & 0xff) - int(std::lround(((lit >> sh) & 0xff) * .5f))) <= 1);
+
+		const float front[12]{1, 0, 0, 0, 1, 0, 0, 0, 1};
+		const float back[12]{1, 0, 0, 0, 1, 0, 0, 0, -1};
+		const float shade_light[4]{};
+		m.m_view->light = glm::vec3(0, 0, -1);
+		std::copy_n(front, 12, m.m_view->translation);
+		m.m_view->set_lightparam(0, 1, 0, 0, 0);
+		m.m_shade_from = front;
+		m.m_shade_to = back;
+		m.m_shade_light = shade_light;
+		m.m_alpha = .5f;
+		assert(colour(1) == 0xffffff);  // Unlit material ignores both endpoint shades.
+		m.m_tgp_ram[0] = 1;
+		for (int channel : {0, 0x2000, 0x4000}) m.m_color_xlat[(31 << 8) | channel] = 0;
+		assert(colour(1) == 0x808080);  // White and black endpoints; the current pose is white.
+		m.m_view->set_lightparam(0, 1.25f, -.25f, 0, 0);
+		m.m_shade_from = back;
+		m.m_shade_to = front;
+		assert(colour(1) == 0xffffff);  // A negative starting shade uses the current pose.
 	}
 
 	static void foreground_order()
@@ -4280,11 +5011,74 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	if (argc > 1 && std::string(argv[1]) == "--wingwar-arcade-parts") {
+		model1_video_test::wingwar_arcade_parts();
+		puts("Wing War arcade parts tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--gpu-replay-geometry") {
+		model1_video_test::gpu_replay_geometry();
+		puts("GPU replay geometry tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--object-lighting") {
+		model1_video_test::backface_specular();
+		model1_video_test::object_fade();
+		puts("Object lighting tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--vr-tile-layer-reuse") {
+		model1_video_test::vr_tile_layer_reuse();
+#if defined(__ANDROID__) || defined(__APPLE__)
+		model1_video_test::vr_partial_hud_tracking();
+#endif
+		puts("VR tile layer cache tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--swa-tile-layer-reuse") {
+		model1_video_test::swa_tile_layer_reuse();
+		puts("SWA tile layer cache tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--wingwar-tile-layer-reuse") {
+		model1_video_test::wingwar_tile_layer_reuse();
+		model1_video_test::wingwar_arcade_parts();
+		puts("Wing War tile layer cache tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--backdrop-colour") {
+		model1_video_test::backdrop_colour_threshold();
+		puts("Backdrop colour threshold tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--swa-overlay-parts") {
+		model1_video_test::swa_overlay_parts();
+		puts("SWA overlay parts tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--swa-cockpit-side-reuse") {
+		model1_video_test::swa_cockpit_side_reuse();
+		puts("SWA cockpit side cache tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--frustum-clipping") {
+		model1_video_test::gpu_replay_geometry();
+		model1_video_test::frustum_clipping();
+		model1_video_test::deferred_object_projection();
+		model1_video_test::early_face_rejection();
+		model1_video_test::object_vertex_reuse();
+		puts("Frustum clipping tests passed");
+		return 0;
+	}
 	if (argc > 1 && std::string(argv[1]) == "--record-interpolation") {
 		model1_video_test::scenery_records();
 		model1_video_test::swaying_camera();
 		model1_video_test::culled_records();
 		puts("Record interpolation metadata tests passed");
+		return 0;
+	}
+	if (argc > 1 && std::string(argv[1]) == "--tile-slide-compositor") {
+		model1_video_test::tile_slide_compositor();
 		return 0;
 	}
 	if (argc > 2 && std::string(argv[2]) == "--vr-menu-backdrops") {
@@ -4293,8 +5087,16 @@ int main(int argc, char **argv)
 	}
 	if (argc > 2 && std::string(argv[2]) == "--tile-slide-interpolation") {
 		model1_video_test::tile_slide_interpolation();
+		model1_video_test::tile_slide_compositor();
 		return 0;
 	}
+	model1_video_test::frustum_clipping();
+	model1_video_test::early_face_rejection();
+	model1_video_test::vr_tile_layer_reuse();
+	model1_video_test::swa_tile_layer_reuse();
+	model1_video_test::wingwar_tile_layer_reuse();
+	model1_video_test::backdrop_colour_threshold();
+	model1_video_test::swa_cockpit_side_reuse();
 	model1_video_test::cockpit_coverage();
 	model1_video_test::tile_slide_interpolation();
 	model1_video_test::free_camera_path();
@@ -4396,6 +5198,7 @@ int main(int argc, char **argv)
 	}
 	model1_video_test::overlay_priority();
 	model1_video_test::free_camera_above_hud();
+	model1_video_test::swa_overlay_parts();
 	if (argc > 2 && std::string(argv[2]) == "--swa-priority") {
 		model1_video_test::swa_name_entry(argv[1]);
 		return 0;

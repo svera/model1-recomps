@@ -185,6 +185,8 @@ struct gameplay_callbacks
 	// backdrop); true when it did.
 	// Side pixels may use inverse alpha (0 opaque, 255 transparent) for edge coverage.
 	std::function<bool(int layer, uint32_t *pixels, int width, int height, int ext)> layer_sides;
+	// Non-tile state used by layer_sides; equal revisions must produce the same side treatment.
+	std::function<uint64_t(int layer)> layer_sides_revision;
 };
 
 // What the shared video code (src/machine) needs to know about a game's own data: none of it is

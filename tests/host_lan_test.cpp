@@ -1,10 +1,22 @@
 #include "../src/host/lan_session.h"
 #include "../src/host/lan_name.h"
 #include <cassert>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 
 int main()
 {
+	lan_picture_grace picture_wait;
+	assert(!picture_wait.defer(false, 0));
+	assert(picture_wait.defer(true, 10000000));
+	assert(picture_wait.defer(true, 11999999));
+	assert(!picture_wait.defer(true, 12000000));
+	assert(!picture_wait.defer(true, 43000000));
+	assert(!picture_wait.defer(false, 44000000));
+	assert(picture_wait.defer(true, 45000000));
+	picture_wait.reset();
+	assert(picture_wait.defer(true, 47000000));
 	lan_name_editor edit{"RACER-123", true};
 	assert(edit.append("svera") && edit.text == "SVERA");
 	assert(edit.append(" 2") && edit.text == "SVERA 2" && valid_lan_name(edit.text));
@@ -50,7 +62,11 @@ int main()
 	assert(!guest.started(received, size));
 	const std::array<uint8_t, 3> block{5, 6, 7};
 	host.publish(block);
-	for (int i = 0; i < 60 && guest.block(0).empty(); i++) update();
+	// Receiving between scheduled protocol ticks must not need another 60 Hz update.
+	for (int i = 0; i < 100 && guest.block(0).empty(); i++) {
+		guest.update(now);
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 	assert(guest.block(0) == std::vector<uint8_t>(block.begin(), block.end()));
 	assert(host.members(true).size() == 2 && guest.members(true).size() == 2);
 	host.close();

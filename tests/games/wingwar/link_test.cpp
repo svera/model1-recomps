@@ -239,6 +239,19 @@ int main(int argc, char **argv)
 		return false;
 	};
 	reset_machines();
+	int host_waiting_frames = 0;
+	for (int frame = 1; frame <= 5400; frame++) {
+		for (int p = 0; p < 2; p++)
+			each_machine(p, [&](model1 &m) {
+				m.m_inputs[0] = uint8_t(~(p == 1 && frame >= 1000 && frame < 1008 ? 0x10 : 0));
+			});
+		run_linked_frame();
+		if (machines[0]->read8(0x40f006) == 0x09 && machines[1]->read8(0x40f006) == 0x0c)
+			host_waiting_frames++;
+	}
+	assert(host_waiting_frames > 1500);
+	check_native();
+	reset_machines();
 	assert(start_linked_play());
 	check_native();
 	reset_machines();

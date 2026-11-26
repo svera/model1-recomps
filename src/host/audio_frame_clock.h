@@ -49,6 +49,7 @@ public:
 	}
 
 	bool due() const { return pending >= 1; }
+	bool defer_picture(bool peer_can_block) const { return !peer_can_block && pending >= 2; }
 	void advance() { pending -= 1; }
 	double fraction() const { return std::clamp(pending, 0.0, 1.0); }
 	double until_next() const { return std::max(0.0, 1 - pending) / hz; }

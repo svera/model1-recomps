@@ -20,11 +20,23 @@ struct side_cell {
 	bool operator==(const side_cell &) const = default;
 };
 
+struct cockpit_sides_cache {
+	struct entry {
+		int ext = -1, height = 0;
+		unsigned sides = 0;
+		std::vector<uint32_t> edges, left, right;
+	};
+	std::array<entry, 4> entries;
+	uint64_t builds = 0;
+	bool draw(uint32_t *pixels, int width, int height, int ext);
+};
+
 struct gameplay_state : game::gameplay_state
 {
 	bool lod = true;   // the arcade's distance-based models (the host's setting turns it off)
 	bool full_distance = false;    // the Death Star's surface drawn past the arcade's last band (Draw distance Full)
 	bool wide_cockpit = true;      // widescreen: the cockpit's art continued across the sides (Widescreen cockpit)
+	cockpit_sides_cache cockpit_sides;
 	uint64_t nearest = 0;          // detail results replaced by the nearest level's (LOD off)
 	uint64_t destroyers_near = 0;  // Star Destroyers drawn with their near model (LOD off)
 	bool fleet_stern = false;      // (LOD off) a fleet ship given the full hull: its stern to add

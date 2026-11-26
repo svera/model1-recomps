@@ -133,6 +133,9 @@ bool game_menu::init(SDL_Window *win, SDL_Renderer *ren, const std::string &asse
 	m->doc = m->ctx->LoadDocument(assets + "/ui/menu.rml");
 	if (!m->doc) return false;
 	m->overlay = m->ctx->LoadDocument(assets + "/ui/overlay.rml");   // optional
+#ifdef __ANDROID__
+	if (m->overlay) m->overlay->SetClass("android", true);
+#endif
 	m->listener.menu = this;
 	m->doc->AddEventListener(Rml::EventId::Mouseover, &m->listener);
 	m->doc->AddEventListener(Rml::EventId::Click, &m->listener);

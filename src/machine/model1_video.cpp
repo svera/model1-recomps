@@ -1,8 +1,10 @@
 #include "model1.h"
+#include "android_frame_trace.h"
 #include <set>
 #include <mutex>
 #include "parallel.h"
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 // license:BSD-3-Clause
@@ -676,12 +678,13 @@ int model1::quad_t::compare(const model1::quad_t* other) const
 
 void model1::sort_quads() const
 {
-	const int count = m_quadpt - &m_quaddb[0];
+	android_frame_trace trace("M1 3D sort");
+	const int count = m_quadpt - m_quadbase;
 	bool finite = true;
 	for (int i = 0; i < count; i++)
 	{
-		m_quadind[i] = &m_quaddb[i];
-		finite = finite && std::isfinite(m_quaddb[i].z);
+		m_quadind[i] = &m_quadbase[i];
+		finite = finite && std::isfinite(m_quadbase[i].z);
 	}
 	if (count < 256 || !finite) {
 		std::sort(m_quadind.get(), m_quadind.get() + count, [](const quad_t *a, const quad_t *b) {
@@ -694,31 +697,46 @@ void model1::sort_quads() const
 		const uint32_t bits = q->z == 0 ? 0 : std::bit_cast<uint32_t>(q->z);
 		return bits & 0x80000000u ? bits : bits ^ 0x7fffffffu;
 	};
-	m_quadsort.resize(count);
-	auto *from = m_quadind.get(), *to = m_quadsort.data();
-	for (int shift = 0; shift < 32; shift += 8) {
-		std::array<size_t, 512> offsets{};
-		const auto bucket = [&](const quad_t *q) {
-			return ((key(q) >> shift) & 255) | (shift == 24 && q->foreground ? 256 : 0);
+	// The keys read once, side by side; every pass's counts in one go, and a pass whose byte is the
+	// same for every quad (the depths' high bytes, often) skipped: the order as before.
+	m_quadsort[0].resize(count);
+	m_quadsort[1].resize(count);
+	sort_item *from = m_quadsort[0].data(), *to = m_quadsort[1].data();
+	std::array<std::array<uint32_t, 512>, 4> counts{};
+	for (int i = 0; i < count; i++) {
+		const quad_t &q = m_quadbase[i];
+		const uint32_t k = key(&q), fg = q.foreground ? 1u : 0u;
+		from[i] = { k, uint32_t(i) | (fg << 31) };
+		counts[0][k & 255]++;
+		counts[1][(k >> 8) & 255]++;
+		counts[2][(k >> 16) & 255]++;
+		counts[3][(k >> 24) | (fg << 8)]++;
+	}
+	for (int pass = 0; pass < 4; pass++) {
+		auto &offsets = counts[pass];
+		const int shift = pass * 8;
+		const auto bucket = [&](const sort_item &s) {
+			return ((s.key >> shift) & 255) | (pass == 3 ? (s.index >> 31) << 8 : 0);
 		};
-		for (int i = 0; i < count; i++) offsets[bucket(from[i])]++;
-		size_t next = 0;
+		if (offsets[bucket(from[0])] == uint32_t(count)) continue;
+		uint32_t next = 0;
 		for (auto &offset : offsets) {
-			const size_t size = offset;
+			const uint32_t size = offset;
 			offset = next;
 			next += size;
 		}
 		for (int i = 0; i < count; i++) to[offsets[bucket(from[i])]++] = from[i];
 		std::swap(from, to);
 	}
+	for (int i = 0; i < count; i++) m_quadind[i] = &m_quadbase[from[i].index & 0x7fffffffu];
 }
 
 void model1::unsort_quads() const
 {
-	const int count = m_quadpt - &m_quaddb[0];
+	const int count = m_quadpt - m_quadbase;
 	for (int i = 0; i < count; i++)
 	{
-		m_quadind[i] = &m_quaddb[i];
+		m_quadind[i] = &m_quadbase[i];
 	}
 }
 
@@ -726,7 +744,10 @@ void model1::unsort_quads() const
 void model1::draw_quads(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
 	view_t *view = m_view.get();
-	int count = m_quadpt - &m_quaddb[0];
+	int count = m_quadpt - m_quadbase;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) benchmark_geometry->quads += count;
+#endif
 	m_frame_quads += count;
 	if (count > 0) {                                 // the rows the 3D may draw in (the GPU's parts)
 		m_d3_y0 = std::min(m_d3_y0, std::max(view->y1, cliprect.min_y));
@@ -743,10 +764,27 @@ void model1::draw_quads(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 	view->y1 = std::max(view->y1, cliprect.min_y);
 	view->y2 = std::min(view->y2, cliprect.max_y);
 
+	// The clipped view bounds every pixel this batch can draw, including wireframes.
+	if (m_overlay_separate && !m_rec && count > 0 && view->x1 <= view->x2 && view->y1 <= view->y2) {
+		if (m_overlay_bounds.max_x < m_overlay_bounds.min_x)
+			m_overlay_bounds = rectangle(view->x1, view->x2, view->y1, view->y2);
+		else {
+			m_overlay_bounds.min_x = std::min(m_overlay_bounds.min_x, view->x1);
+			m_overlay_bounds.max_x = std::max(m_overlay_bounds.max_x, view->x2);
+			m_overlay_bounds.min_y = std::min(m_overlay_bounds.min_y, view->y1);
+			m_overlay_bounds.max_y = std::max(m_overlay_bounds.max_y, view->y2);
+		}
+	}
+
 	if (m_rec) { if (count > 0) record_quads(view, count); }
 	else {
 		const uint64_t t0 = trace_ns();
-		raster_quads(bitmap, view, count);
+		// Shadows can depend on the picture beneath the overlay, which is on the GPU.
+		if (m_overlay_separate && std::any_of(m_quadind.get(), m_quadind.get() + count,
+			[](const quad_t *q) { return q->col & MOIRE; }))
+			m_parts_whole = true;
+		else if (!m_overlay_separate || !m_parts_whole)
+			raster_quads(bitmap, view, count);
 		m_raster_ms += (trace_ns() - t0) / 1e6;
 	}
 
@@ -959,10 +997,37 @@ void model1::require_geometry_space(int points, int quads) const
 	}
 }
 
-void model1::fclip_push_quad(int level, quad_t& q)
+unsigned model1::fclip_classify(int &level, const quad_t &q) const
 {
 	view_t *view = m_view.get();
+	unsigned out = 0;
+	auto classify = [&]<auto outside> {
+		return unsigned(outside(view, q.p[0])) | (unsigned(outside(view, q.p[1])) << 1) |
+			(unsigned(outside(view, q.p[2])) << 2) | (unsigned(outside(view, q.p[3])) << 3);
+	};
+	// Most faces pass each plane intact. Classify them inline without an indirect call per vertex
+	// or a recursive call per plane; only a crossing needs the intersection routine.
+	for (; level < 4; ++level) {
+		switch (level) {
+		case 0: out = classify.operator()<fclip_isc_bottom>(); break;
+		case 1: out = classify.operator()<fclip_isc_top>(); break;
+		case 2: out = classify.operator()<fclip_isc_left>(); break;
+		case 3: out = classify.operator()<fclip_isc_right>(); break;
+		}
+		M1_LOG(LOG_TGP, "VIDEOCQ %d", level);
+		for (int i = 0; i < 4; i++)
+			M1_LOG(LOG_TGP, " (%f, %f, %f, %d)", q.p[i]->x, q.p[i]->y, q.p[i]->z, int(out >> i & 1));
+		M1_LOG(LOG_TGP, "\n");
+		if (out) break;
+	}
 
+	return out;
+}
+
+void model1::fclip_push_quad(int level, quad_t& q, unsigned out)
+{
+	view_t *view = m_view.get();
+	if (!out) out = fclip_classify(level, q);
 	if (level == 4)
 	{
 		require_geometry_space(0, 1);
@@ -975,32 +1040,17 @@ void model1::fclip_push_quad(int level, quad_t& q)
 		return;
 	}
 
-	bool is_out[4];
-	for (int i = 0; i < 4; i++)
-	{
-		is_out[i] = m_clipfn[level].m_isclipped(view, q.p[i]);
-	}
-
-	M1_LOG(LOG_TGP, "VIDEOCQ %d", level);
-	for (int i = 0; i < 4; i++)
-		M1_LOG(LOG_TGP, " (%f, %f, %f, %d)", q.p[i]->x, q.p[i]->y, q.p[i]->z, is_out[i]);
-	M1_LOG(LOG_TGP, "\n");
-
-	// No clipping
-	if(!is_out[0] && !is_out[1] && !is_out[2] && !is_out[3])
-	{
-		fclip_push_quad(level+1, q);
-		return;
-	}
-
-	// Full clipping
-	if(is_out[0] && is_out[1] && is_out[2] && is_out[3])
-		return;
+	if (out == 15) return;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) ++benchmark_geometry->clip_crossings;
+#endif
+	static constexpr auto clips = std::array{ fclip_clip_bottom, fclip_clip_top, fclip_clip_left, fclip_clip_right };
+	const auto clip = clips[level];
 
 	// Find n so that point n is clipped and n-1 isn't
 	int i;
 	for (i = 0; i < 4; i++)
-		if(is_out[i] && !is_out[(i-1)&3])
+		if ((out & (1u << i)) && !(out & (1u << ((i - 1) & 3))))
 			break;
 
 	point_t* pt[4];
@@ -1009,7 +1059,7 @@ void model1::fclip_push_quad(int level, quad_t& q)
 	for (int j = 0; j < 4; j++)
 	{
 		pt[j] = q.p[(i + j) & 3];
-		is_out2[j] = is_out[(i + j) & 3];
+		is_out2[j] = (out >> ((i + j) & 3)) & 1;
 	}
 
 	// At this point, pt[0] is clipped out and pt[3] isn't.  Test for the 4 possible cases
@@ -1018,18 +1068,18 @@ void model1::fclip_push_quad(int level, quad_t& q)
 		if (is_out2[2])
 		{
 			// pt 0,1,2 clipped out, one triangle left
-			m_clipfn[level].m_clip(view, m_pointpt, pt[2], pt[3]);
+			clip(view, m_pointpt, pt[2], pt[3]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[3], pi2, pi2);
 		}
 		else
 		{
 			// pt 0,1 clipped out, one quad left
-			m_clipfn[level].m_clip(view, m_pointpt, pt[1], pt[2]);
+			clip(view, m_pointpt, pt[1], pt[2]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[2], pt[3], pi2);
 		}
@@ -1039,23 +1089,23 @@ void model1::fclip_push_quad(int level, quad_t& q)
 		if (is_out2[2])
 		{
 			// pt 0,2 clipped out, shouldn't happen, two triangles
-			m_clipfn[level].m_clip(view, m_pointpt, pt[0], pt[1]);
+			clip(view, m_pointpt, pt[0], pt[1]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[1], pt[2]);
+			clip(view, m_pointpt, pt[1], pt[2]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[1], pi2, pi2);
-			m_clipfn[level].m_clip(view, m_pointpt, pt[2], pt[3]);
+			clip(view, m_pointpt, pt[2], pt[3]);
 			pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[3], pi2, pi2);
 		}
 		else
 		{
 			// pt 0 clipped out, one decagon left, split in quad+tri
-			m_clipfn[level].m_clip(view, m_pointpt, pt[0], pt[1]);
+			clip(view, m_pointpt, pt[0], pt[1]);
 			point_t* pi1 = m_pointpt++;
-			m_clipfn[level].m_clip(view, m_pointpt, pt[3], pt[0]);
+			clip(view, m_pointpt, pt[3], pt[0]);
 			point_t* pi2 = m_pointpt++;
 			fclip_push_quad_next(level, q, pi1, pt[1], pt[2], pt[3]);
 			fclip_push_quad_next(level, q, pt[3], pi2, pi1, pi1);
@@ -1356,6 +1406,10 @@ void model1::free_cam_point(point_t *p, bool rear) const
 // through the wall.
 void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, float &old_z, uint32_t owner, const game::model_bounds *bounds, bool rear)
 {
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	auto *counts = m_probing ? nullptr : benchmark_geometry;
+	if (counts) ++counts->objects;
+#endif
 	const uint32_t object_texture = tex_adr, object_polygon = poly_adr, object_size = size;
 	auto invalid = [&](const char *reason, uint32_t polygon) {
 		fprintf(stderr, "Model 1 renderer: %s (frame %llu, object texture %08x polygon %08x size %08x, cursor texture %08x polygon %08x)\n",
@@ -1512,6 +1566,46 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		p->eye_move = glm::length(to - from);
 		p->passes_eye = glm::length(crossing) < 16 * p->eye_move;
 	};
+	const auto transform_uncached = [&](point_t *p) {
+		pose_depths(p);
+		m_view->transform_point(p);
+		free_cam_point(p, rear);
+	};
+#if !defined(__ANDROID__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+	// Scope view-space coordinates to this object invocation; keep each point's
+	// projection and clipping state in its original, separate storage.
+	struct transformed_vertex {
+		std::array<uint32_t, 3> key;
+		std::array<float, 3> xyz;
+	};
+	std::array<transformed_vertex, 64> transformed;
+	uint64_t occupied_vertices = 0;
+	const bool reuse_vertices = benchmark_vertex_reuse && !(object_polygon & 0x800000) &&
+		!effect.point && !eye_from && !m_probing && !m_free_cam && !rear;
+	const auto transform = [&](point_t *p) {
+		if (!reuse_vertices) {
+			transform_uncached(p);
+			return;
+		}
+		const std::array key{std::bit_cast<uint32_t>(p->x), std::bit_cast<uint32_t>(p->y),
+			std::bit_cast<uint32_t>(p->z)};
+		uint32_t hash = key[0] ^ std::rotl(key[1], 11) ^ std::rotl(key[2], 22);
+		hash ^= hash >> 16;
+		hash *= 0x9e3779b1u;
+		const unsigned slot = hash >> 26;
+		const uint64_t bit = uint64_t{1} << slot;
+		auto &entry = transformed[slot];
+		if ((occupied_vertices & bit) && entry.key == key) {
+			p->x = entry.xyz[0]; p->y = entry.xyz[1]; p->z = entry.xyz[2];
+		} else {
+			m_view->transform_point(p);
+			entry = {key, {p->x, p->y, p->z}};
+			occupied_vertices |= bit;
+		}
+	};
+#else
+	const auto &transform = transform_uncached;
+#endif
 	require_geometry_space(2, 0);
 	point_t *old_p0 = m_pointpt++;
 	point_t *old_p1 = m_pointpt++;
@@ -1526,32 +1620,22 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		effect.point(old_p0->x, old_p0->y, old_p0->z);
 		effect.point(old_p1->x, old_p1->y, old_p1->z);
 	}
-	pose_depths(old_p0);
-	pose_depths(old_p1);
-	m_view->transform_point(old_p0);
-	m_view->transform_point(old_p1);
-	free_cam_point(old_p0, rear);
-	free_cam_point(old_p1, rear);
+	transform(old_p0);
+	transform(old_p1);
 
-	if (old_p0->z > 0)
-	{
-		m_view->project_point(old_p0);
-	}
-	else
-	{
-		old_p0->s.x = old_p0->s.y = 0; old_p0->fx = old_p0->fy = 0;
-	}
-
-	if (old_p1->z > 0)
-	{
-		m_view->project_point(old_p1);
-	}
-	else
-	{
-		old_p1->s.x = old_p1->s.y = 0; old_p1->fx = old_p1->fy = 0;
-	}
+	const auto project = [&](point_t *p) {
+		if (p->z > 0)
+			m_view->project_point(p);
+		else {
+			p->s.x = p->s.y = 0; p->fx = p->fy = 0;
+		}
+	};
+	bool old_p0_projected = false, old_p1_projected = false;
 
 	poly_adr += 6;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const uint32_t first_face = poly_adr;
+#endif
 
 	for (int i = 0; i < size; i++)
 	{
@@ -1608,37 +1692,15 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		const glm::vec3 vn_model = vn;
 		if (effect.lightmode >= 0) lightmode = effect.lightmode;
 
-		if (type == 2)
-		{
-			p1->x = p0->x;
-			p1->y = p0->y;
-			p1->z = p0->z;
-		}
-
 		int link = (flags >> 8) & 3;
 
-		pose_depths(p0);
-		pose_depths(p1);
-		m_view->transform_point(p0);
-		m_view->transform_point(p1);
-		free_cam_point(p0, rear);
-		free_cam_point(p1, rear);
-		if (p0->z > 0)
-		{
-			m_view->project_point(p0);
-		}
-		else
-		{
-			p0->s.x = p0->s.y = 0; p0->fx = p0->fy = 0;
-		}
+		transform(p0);
 
-		if (p1->z > 0)
-		{
-			m_view->project_point(p1);
-		}
-		else
-		{
-			p1->s.x = p1->s.y = 0; p1->fx = p1->fy = 0;
+		if (type == 2) {
+			// This triangle duplicates the first vertex. Keep separate storage for later clipping.
+			*p1 = *p0;
+		} else {
+			transform(p1);
 		}
 
 #if 0
@@ -1647,13 +1709,6 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 				*(uint32_t *)(poly_data + poly_adr),
 				p0->x, p0->y, p0->z,
 				p1->x, p1->y, p1->z);
-
-			M1_LOG(LOG_TGP, "VIDEO:     %08x (%d, %d) (%d, %d) (%d, %d) (%d, %d)\n",
-				*(uint32_t *)(poly_data + poly_adr),
-				old_p0->s.x, old_p0->s.y,
-				old_p1->s.x, old_p1->s.y,
-				p0->s.x, p0->s.y,
-				p1->s.x, p1->s.y);
 		}
 #endif
 
@@ -1661,6 +1716,11 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		cquad.foreground = foreground;
 		int appearance = 0;
 		int clip_level = 0;
+		unsigned clip_out = 0;
+		bool projected = false;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		unsigned lighting_evaluations = 0;
+#endif
 
 		if (!link)
 			goto next;
@@ -1719,39 +1779,9 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		if (colours && size_t(i) < colours->size() && (*colours)[i] != UINT32_MAX)
 			cquad.col = (*colours)[i];
 		else {
-			m_view->transform_vector(vn);
-			vn = glm::normalize(vn);
-#if 0
-			float dif = mult_vector(&vn, &view->light);
-			float ln = view->lightparams[lightmode].a + view->lightparams[lightmode].d*MAX(0.0, dif);
-			cquad.col = scale_color(m_pens[0x1000 | (m_tgp_ram[tex_adr - 0x40000] & 0x3ff)], MIN(1.0, ln));
-			cquad.col = scale_color(m_pens[0x1000 | (m_tgp_ram[tex_adr - 0x40000] & 0x3ff)], MIN(1.0, ln));
-#endif
-
 			if (effect.polygon) {
 				appearance = effect.polygon(i);
 				if (appearance < 0) goto next;
-			}
-			// the shade: from the normal turned by the object's matrix and the light
-			auto lum_of = [&](glm::vec3 n, glm::vec3 light) {
-				float dif = glm::dot(n, light);
-				float spec = compute_specular(n, light, dif, lightmode);
-				float ln = m_view->lightparams[lightmode].a + m_view->lightparams[lightmode].d * std::max(0.0f, dif) + spec;
-				return int(255.0f * std::min(1.0f, ln));
-			};
-			int lumval = lum_of(vn, m_view->light);
-			// Smooth motion, an object blended between two frames: its shade too. Lit as at each frame
-			// (that frame's matrix and light) and the two colours mixed, so a turning model's shades
-			// glide instead of stepping from one frame's to the next's partway, exact at each frame.
-			int lum_from = -1, lum_to = -1;
-			if (m_shade_from && m_alpha < 1) {
-				auto turned = [&](const float *t) {
-					const glm::vec3 r1(t[0], t[3], t[6]), r2(t[1], t[4], t[7]), r3(t[2], t[5], t[8]);
-					return glm::normalize(glm::vec3(glm::dot(vn_model, r1), glm::dot(vn_model, r2), glm::dot(vn_model, r3)));
-				};
-				const glm::vec3 light_from = m_shade_light[3] > 0 ? glm::vec3(m_shade_light[0], m_shade_light[1], m_shade_light[2]) : m_view->light;
-				lum_from = lum_of(turned(m_shade_from), light_from);
-				lum_to = lum_of(turned(m_shade_to), m_view->light);
 			}
 			// bits [11:10] of the tile word select a colour mode: bit 10 marks a
 			// flat UI element (radar blips, HUD text) drawn unlit, and mode 01
@@ -1763,6 +1793,37 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			uint16_t tex_data = m_tgp_ram[tex_adr - 0x40000];
 			if (unset_pen && tex_data == 0xffff) tex_data = uint16_t(0xfc00 | unset_pen);   // (see above; still unlit)
 			if (effect.material) tex_data = effect.material(tex_data);
+			// Unlit materials use full intensity; an interpolated face only needs its two endpoint shades.
+			int lumval = 255, lum_from = -1, lum_to = -1;
+			if (!(tex_data & 0x400)) {
+				if (early_face_rejection && !colours && !open && !effect.colour) {
+					clip_out = fclip_classify(clip_level, cquad);
+					if (clip_out == 15) goto next;
+				}
+				auto lum_of = [&](glm::vec3 n, glm::vec3 light) {
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+					if (benchmark_face_lighting) ++lighting_evaluations;
+#endif
+					float dif = glm::dot(n, light);
+					float spec = compute_specular(n, light, dif, lightmode);
+					float ln = m_view->lightparams[lightmode].a + m_view->lightparams[lightmode].d * std::max(0.0f, dif) + spec;
+					return int(255.0f * std::min(1.0f, ln));
+				};
+				if (m_shade_from && m_alpha < 1) {
+					auto turned = [&](const float *t) {
+						const glm::vec3 r1(t[0], t[3], t[6]), r2(t[1], t[4], t[7]), r3(t[2], t[5], t[8]);
+						return glm::normalize(glm::vec3(glm::dot(vn_model, r1), glm::dot(vn_model, r2), glm::dot(vn_model, r3)));
+					};
+					const glm::vec3 light_from = m_shade_light[3] > 0 ? glm::vec3(m_shade_light[0], m_shade_light[1], m_shade_light[2]) : m_view->light;
+					lum_from = lum_of(turned(m_shade_from), light_from);
+					if (lum_from >= 0)
+						lum_to = lum_of(turned(m_shade_to), m_view->light);
+				}
+				if (lum_from < 0) {
+					m_view->transform_vector(vn);
+					lumval = lum_of(glm::normalize(vn), m_view->light);
+				}
+			}
 			int color = m_paletteram16[0x1000 | (tex_data & 0x3ff)];
 			int r = (color >> 0x0) & 0x1f;
 			int g = (color >> 0x5) & 0x1f;
@@ -1783,10 +1844,6 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 					lum = 0x3f;
 				else if (lum < 0)
 					lum = 0;
-
-				// flat UI element: draw unlit at full intensity instead of shading it
-				if (tex_data & 0x400)
-					lum = 0x3f;
 
 				const int rr = (m_color_xlat[(r << 8) | lum | 0x0] >> 3) & 0x1f;
 				const int gg = (m_color_xlat[(g << 8) | lum | 0x2000] >> 3) & 0x1f;
@@ -1819,7 +1876,49 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 		if (flags & 0x00002000)
 			cquad.col |= MOIRE;
 
-		fclip_push_quad(clip_level, cquad);
+		// Early rejection only uses view-space coordinates. A skipped face can still
+		// supply either vertex to the next face, so carry projection state with each link.
+		if (!old_p0_projected) project(old_p0);
+		if (!old_p1_projected) project(old_p1);
+		old_p0_projected = old_p1_projected = true;
+		project(p0);
+		if (type == 2) {
+			p1->xx = p0->xx; p1->yy = p0->yy;
+			p1->fx = p0->fx; p1->fy = p0->fy;
+			p1->s = p0->s;
+		} else {
+			project(p1);
+		}
+		projected = true;
+		{
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		const auto before_clip = m_quadpt;
+#endif
+		fclip_push_quad(clip_level, cquad, clip_out);
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		if (lighting_evaluations) {
+			auto &counts = *benchmark_face_lighting;
+			++counts.lit;
+			counts.evaluations += lighting_evaluations;
+			if (m_quadpt == before_clip) {
+				++counts.rejected;
+				counts.rejected_evaluations += lighting_evaluations;
+				static constexpr auto planes = std::array{fclip_isc_bottom, fclip_isc_top, fclip_isc_left, fclip_isc_right};
+				bool crossing = false;
+				for (const auto outside : planes) {
+					int n = 0;
+					for (auto *p : cquad.p) n += outside(m_view.get(), p);
+					if (n == 4) {
+						++counts.shared_plane;
+						counts.before_crossing += !crossing;
+						break;
+					}
+					crossing |= n != 0;
+				}
+			}
+		}
+#endif
+		}
 
 	next:
 		poly_adr += 10;
@@ -1828,15 +1927,22 @@ void model1::push_object(uint32_t tex_adr, uint32_t poly_adr, uint32_t size, flo
 			case 2:
 				old_p0 = p0;
 				old_p1 = p1;
+				old_p0_projected = old_p1_projected = projected;
 				break;
 			case 1:
 				old_p1 = p0;
+				old_p1_projected = projected;
 				break;
 			case 3:
 				old_p0 = p1;
+				old_p0_projected = projected;
 				break;
 		}
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	// Each completed face advances the ROM cursor even when it emits no geometry.
+	if (counts) counts->faces += (poly_adr - first_face) / 10;
+#endif
 	if (open) {
 		const auto view_of = [&](glm::vec3 m) {
 			point_t p;
@@ -1896,6 +2002,9 @@ int model1::push_direct(int list_offset) {
 
 	list_offset += 18;
 
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	uint64_t direct_faces = 0;
+#endif
 	for (;;) {
 		uint32_t flags = readi(list_offset + 2);
 
@@ -1903,6 +2012,9 @@ int model1::push_direct(int list_offset) {
 		if (!type)
 			break;
 
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		++direct_faces;
+#endif
 		if (flags & 0x00001000)
 			tex_adr++;
 
@@ -2035,6 +2147,9 @@ int model1::push_direct(int list_offset) {
 			break;
 		}
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) benchmark_geometry->direct_faces += direct_faces;
+#endif
 	widen_direct(first_point, first_quad);
 	pin_hud_direct(first_point, first_quad);
 	list_offset += 4;
@@ -2117,26 +2232,49 @@ int model1::skip_direct(int list_offset) const
 	return list_offset;
 }
 
+// The objects in the list tgp_render would draw (as index_objects counts them), without drawing
+int model1::list_objects()
+{
+	if ((m_listctl[1] & 0x1f) != 0x1f) return 0;
+	set_current_render_list();
+	int objects = 0, off = 0;
+	for (int guard = 0; guard < 0x10000; guard++) {
+		switch (readi(off)) {
+		case 0: off += 2; break;
+		case 1: case 0x41: objects++; off += 8; break;
+		case 2: off = skip_direct(off); break;
+		case 3: off += 16; break;
+		case 4: off += 6 + (readi(off + 4) + 1) * 2; break;
+		case 5: case 6: off += 6 + readi(off + 4) * 2; break;
+		case 7: case 8: off += 4; break;
+		case 9: case 0xc: off += 6; break;
+		case 0xa: off += 8; break;
+		case 0xb: off += 26; break;
+		default: return objects;
+		}
+	}
+	return objects;
+}
+
 void model1::draw_objects(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
 	if (m_probing) {
-		m_quadpt = &m_quaddb[0];
-		m_pointpt = &m_pointdb[0];
+		m_quadpt = m_quadbase;
+		m_pointpt = m_pointbase;
 		return;
 	}
 	if (!m_seen_edges.empty()) {
 		if (m_replaying) close_steps();
 		else m_seen_edges.clear();
 	}
-	if (m_quadpt != &m_quaddb[0])
+	if (m_quadpt != m_quadbase)
 	{
 		M1_LOG(LOG_TGP, "VIDEO: sort&draw\n");
 		sort_quads();
 		draw_quads(bitmap, cliprect);
 	}
 
-	m_quadpt = &m_quaddb[0];
-	m_pointpt = &m_pointdb[0];
+	next_batch();
 }
 
 
@@ -2151,10 +2289,22 @@ int model1::draw_direct(bitmap_rgb32 &bitmap, const rectangle &cliprect, int lis
 	unsort_quads();
 	draw_quads(bitmap, cliprect);
 
-	m_quadpt = &m_quaddb[0];
-	m_pointpt = &m_pointdb[0];
+	next_batch();
 
 	return list_offset;
+}
+
+// A batch drawn: its storage taken again for the next, or kept, recorded for the GPU, till the
+// picture ends (gpu3d_end), its replay reading the quads and points where they are.
+void model1::next_batch()
+{
+	if (m_rec) {
+		m_quadbase = m_quadpt;
+		m_pointbase = m_pointpt;
+	} else {
+		m_quadpt = m_quadbase;
+		m_pointpt = m_pointbase;
+	}
 }
 
 
@@ -2346,6 +2496,7 @@ void model1::update_rear_view_origin()
 
 void model1::tgp_render(bitmap_rgb32 &bitmap, const rectangle &cliprect, render_pass pass)
 {
+	android_frame_trace trace(m_probing ? nullptr : "M1 3D display list");
 	m_render_done = 1;
 	if (m_replaying || (m_listctl[1] & 0x1f) == 0x1f)
 	{
@@ -2753,24 +2904,23 @@ void model1::video_start()
 
 	m_pointpt = &m_pointdb[0];
 	m_quadpt = &m_quaddb[0];
+	m_pointbase = m_pointpt;
+	m_quadbase = m_quadpt;
 	m_listctl[0] = m_listctl[1] = 0;
 
-	m_clipfn[0].m_isclipped = &model1::fclip_isc_bottom;
-	m_clipfn[0].m_clip = &model1::fclip_clip_bottom;
-	m_clipfn[1].m_isclipped = &model1::fclip_isc_top;
-	m_clipfn[1].m_clip = &model1::fclip_clip_top;
-	m_clipfn[2].m_isclipped = &model1::fclip_isc_left;
-	m_clipfn[2].m_clip = &model1::fclip_clip_left;
-	m_clipfn[3].m_isclipped = &model1::fclip_isc_right;
-	m_clipfn[3].m_clip = &model1::fclip_clip_right;
+}
 
+static bool overlay_blocked(uint32_t argb)
+{
+	constexpr int feature_level = 8;
+	return argb != model1::KEY && (((argb >> 16) & 0xff) > feature_level ||
+		((argb >> 8) & 0xff) > feature_level || (argb & 0xff) > feature_level);
 }
 
 // Only cat1 HUD features can mask the above-HUD pass. Sampling the whole picture
 // also masks SWA's name-entry letters with the photograph in the cat0 backdrop.
 void model1::build_overlay_mask(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 {
-	constexpr int feature_level = 8; // anything darker counts as HUD background
 	parts_composite(m_top, m_top_key, m_top_gen, { 7, 5, 3, 1 });
 	if (!m_overlay_block) {
 		m_overlay_block = std::make_unique<uint8_t[]>(size_t(bitmap.width()) * bitmap.height());
@@ -2780,14 +2930,36 @@ void model1::build_overlay_mask(bitmap_rgb32 &bitmap, const rectangle &cliprect)
 		for (int y = cliprect.min_y + begin; y < cliprect.min_y + end; y++) {
 			const uint32_t *const hud = &m_top.pix(y / m_scale);
 			for (int x = cliprect.min_x; x <= cliprect.max_x; x++) {
-				const uint32_t argb = hud[x / m_scale];
-				int r = (argb >> 16) & 0xff, g = (argb >> 8) & 0xff, b = argb & 0xff;
 				int i = y * m_overlay_stride + x;
-				m_overlay_block[i] = argb != KEY && (r > feature_level || g > feature_level || b > feature_level);
+				m_overlay_block[i] = overlay_blocked(hud[x / m_scale]);
 				m_overlay_hud_snapshot[i] = bitmap.pix(y, x);
 			}
 		}
 	});
+}
+
+void model1::add_overlay_parts(const rectangle &cliprect)
+{
+	android_frame_trace trace("M1 overlay mask");
+	const int x0 = std::max(cliprect.min_x, m_overlay_bounds.min_x);
+	const int x1 = std::min(cliprect.max_x, m_overlay_bounds.max_x);
+	const int y0 = std::max(cliprect.min_y, m_overlay_bounds.min_y);
+	const int y1 = std::min(cliprect.max_y, m_overlay_bounds.max_y);
+	if (x0 <= x1 && y0 <= y1) parallel_rows(y1 - y0 + 1, [&](int begin, int end) {
+		for (int y = y0 + begin; y < y0 + end; y++) {
+			const uint32_t *hud = &m_top.pix(y / m_scale);
+			uint32_t *dst = &m_overlay.pix(y);
+			for (int x = x0; x <= x1; x++)
+				if (overlay_blocked(hud[x / m_scale])) dst[x] = KEY;
+		}
+	});
+	m_parts->img[TEX_OVERLAY] = { m_overlay.data(), m_overlay.width(), m_overlay.height(),
+		size_t(m_overlay.width()), ++m_overlay_gen };
+	gpu_op o;
+	o.tex = TEX_OVERLAY;
+	o.sw = o.dw = float(m_overlay.width());
+	o.sh = o.dh = float(m_overlay.height());
+	m_parts->ops.push_back(o);
 }
 
 // Restore the bright HUD features over the above-HUD blip pass, so blips only
@@ -2823,15 +2995,28 @@ void model1::screen_vblank_model1(int state)
 // if the GPU can't)
 void model1::record_quads(view_t *view, int count)
 {
+	android_frame_trace trace("M1 3D record");
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	const size_t spans_before = m_rec_spans.size();
+	const auto rows_before = m_rec_rows;
+#endif
 	const uint64_t t0 = trace_ns();
 	static const bool no_depth = getenv("M1_NO_SHADOW_DEPTH") != nullptr;
 	const bool depth = s_hd_raster && s_moire_blend && !no_depth && m_video->scenery_polys_end;
 	const uint32_t batch = uint32_t(m_rec_batches.size());
 	m_rec_batches.push_back({ view->x1, view->x2, view->y1, view->y2, m_rec_quads.size(), size_t(count) });
+	m_rec_quads.insert(m_rec_quads.end(), m_quadind.get(), m_quadind.get() + count);
+	// Depth order visits quads and their points scattered across the picture's storage: fetch a
+	// quad ahead, and its points once its pointers are in.
+	constexpr int quad_ahead = 16, points_ahead = 8;
 	for (int i = 0; i < count; i++) {
+		if (i + quad_ahead < count) __builtin_prefetch(m_quadind[i + quad_ahead]);
+		if (i + points_ahead < count)
+			for (const point_t *p : m_quadind[i + points_ahead]->p) {
+				__builtin_prefetch(p);
+				__builtin_prefetch(reinterpret_cast<const char *>(p + 1) - 1);
+			}
 		const quad_t &q = *m_quadind[i];
-		m_rec_quads.push_back(q);
-		for (int k = 0; k < 4; k++) m_rec_points.push_back(*q.p[k]);
 		if (m_rec_bad || view->y2 < view->y1) continue;
 		int color = q.col;
 		if (color < 0) color = -1 - color;
@@ -2853,10 +3038,20 @@ void model1::record_quads(view_t *view, int count)
 				g.batch = batch;
 				const uint32_t idx = uint32_t(m_rec_polys.size());
 				const size_t from = m_rec_spans.size();
+				// A row's run of the line's pixels, one span: the GPU fills a span's pixels (a moiré
+				// line's every other one, by G3_CHECKER) as it did the pixels one by one
+				const int step = (color & MOIRE) ? 2 : 1;
 				line_pixels(rectangle(view->x1, view->x2, view->y1, view->y2), m_bitmap_rec_w, m_bitmap_rec_h, ax, ay, bx, by, (color & MOIRE) != 0,
-							[&](int x, int y) { m_rec_spans.push_back({ idx, y, x, x }); });
+							[&](int x, int y) {
+								if (m_rec_spans.size() > from) {
+									gpu3d_span &s = m_rec_spans.back();
+									if (s.y == y && x == s.xb + step) { s.xb = x; return; }
+									if (s.y == y && x == s.xa - step) { s.xa = x; return; }
+								}
+								m_rec_spans.push_back({ idx, y, x, x });
+								m_rec_y0 = std::min(m_rec_y0, y); m_rec_y1 = std::max(m_rec_y1, y);
+							});
 				if (m_rec_spans.size() == from) continue;
-				for (size_t k = from; k < m_rec_spans.size(); k++) { m_rec_y0 = std::min(m_rec_y0, m_rec_spans[k].y); m_rec_y1 = std::max(m_rec_y1, m_rec_spans[k].y); }
 				m_rec_polys.push_back(g);
 				continue;
 			}
@@ -2901,6 +3096,12 @@ void model1::record_quads(view_t *view, int count)
 		if (g.flags & G3_SHADOW) { m_rec_m0 = std::min(m_rec_m0, ya); m_rec_m1 = std::max(m_rec_m1, yb); }
 		m_rec_polys.push_back(g);
 	}
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	if (benchmark_geometry && !m_probing) {
+		benchmark_geometry->spans += m_rec_spans.size() - spans_before;
+		benchmark_geometry->rows += m_rec_rows - rows_before;
+	}
+#endif
 	m_rec_ms += (trace_ns() - t0) / 1e6;
 }
 
@@ -2909,7 +3110,9 @@ void model1::gpu3d_begin(const bitmap_rgb32 &bitmap)
 	m_bitmap_rec_w = bitmap.width(); m_bitmap_rec_h = bitmap.height();
 	m_rec = true;
 	m_rec_bad = bool(m_gameplay.wireframe);
-	m_rec_batches.clear(); m_rec_quads.clear(); m_rec_points.clear(); m_rec_polys.clear(); m_rec_spans.clear();
+	m_rec_batches.clear(); m_rec_quads.clear(); m_rec_polys.clear(); m_rec_spans.clear();
+	m_quadpt = m_quadbase = m_quaddb.get();
+	m_pointpt = m_pointbase = m_pointdb.get();
 	m_rec_rows = 0;
 	m_rec_y0 = m_rec_m0 = 1 << 30;
 	m_rec_y1 = m_rec_m1 = -1;
@@ -2923,11 +3126,7 @@ void model1::rec_replay(bitmap_rgb32 &bitmap)
 	const int sx1 = view->x1, sx2 = view->x2, sy1 = view->y1, sy2 = view->y2;
 	for (const rec_batch &b : m_rec_batches) {
 		view->x1 = b.x1; view->x2 = b.x2; view->y1 = b.y1; view->y2 = b.y2;
-		for (size_t i = 0; i < b.count; i++) {
-			quad_t &q = m_rec_quads[b.first + i];
-			for (int k = 0; k < 4; k++) q.p[k] = &m_rec_points[(b.first + i) * 4 + k];
-			m_quadind[i] = &q;
-		}
+		std::copy_n(m_rec_quads.begin() + b.first, b.count, m_quadind.get());
 		raster_quads(bitmap, view, int(b.count));
 	}
 	view->x1 = sx1; view->x2 = sx2; view->y1 = sy1; view->y2 = sy2;
@@ -2935,7 +3134,12 @@ void model1::rec_replay(bitmap_rgb32 &bitmap)
 
 void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 {
+	android_frame_trace trace("M1 3D draw submission");
 	m_rec = false;
+	struct rewind {   // (the picture's batches, kept for the replay, let go)
+		model1 &m;
+		~rewind() { m.m_rec_quads.clear(); m.m_quadpt = m.m_quadbase = m.m_quaddb.get(); m.m_pointpt = m.m_pointbase = m.m_pointdb.get(); }
+	} rewind_{*this};
 	const uint64_t t0 = trace_ns();
 	bool ok = true;
 	double gms = 0;
@@ -2963,7 +3167,6 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 			m_g3.polys = int(m_rec_polys.size());
 			m_g3.ms = m_rec_ms + (trace_ns() - t0) / 1e6;
 			m_g3.handed++;
-			m_rec_quads.clear();
 			return;
 		}
 		fprintf(stderr, "the 3D on the GPU: drawing into the renderer's texture failed: the pictures come back to the CPU from now on\n");
@@ -2997,7 +3200,7 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 			if (diff) {
 				m_g3.differ++;
 				fprintf(stderr, "gpu3d check: frame %llu %dx%d: %zu pixels differ (first at %zu,%zu: cpu %08x gpu %08x)\n",
-						(unsigned long long)m_frame, bitmap.width(), bitmap.height(), diff, first % bitmap.width(), first / bitmap.width(), a[first], g[first]);
+						(unsigned long long)m_picture_frame, bitmap.width(), bitmap.height(), diff, first % bitmap.width(), first / bitmap.width(), a[first], g[first]);
 			}
 			if (verify) {
 				if (diff && gpu_diff_ok(dd, (long long)n)) {   // (rounding: the GPU's kept)
@@ -3022,7 +3225,6 @@ void model1::gpu3d_end(bitmap_rgb32 &bitmap)
 	m_g3.rec_ms = m_rec_ms;
 	m_g3.polys = int(m_rec_polys.size());
 	m_g3.ms = ms;
-	m_rec_quads.clear();   // (the points' copies stay allocated)
 }
 
 void model1::recheck_gpu3d()

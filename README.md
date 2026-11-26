@@ -1,14 +1,14 @@
 # Model 1 Recomps
 
-<p align="center"><b>SEGA classic arcade games on your computer, with sharper graphics,
+<p align="center"><b>SEGA classic arcade games on your computer or Android device, with sharper graphics,
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
-This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes: *Virtua Racing*, *Star Wars Arcade* and *Wing War*.
+This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native runtimes for multiple systems: *Virtua Racing*, *Star Wars Arcade* and *Wing War*.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-blue"></a>
-  <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Steam%20Deck%20%2F%20Linux-informational">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Steam%20Deck%20%2F%20Linux%20%7C%20Android-informational">
 </p>
 
 <p align="center">
@@ -44,9 +44,10 @@ Every game includes:
 - **Game > Play style:** PC starts without coins; Arcade uses the cabinet's coin settings.
 - **Sound:** adjust the audio levels.
 - Saved settings and the arcade's own difficulty options.
-- Packages for macOS, Windows and Steam Deck / Linux.
+- Packages for macOS, Windows and Steam Deck / Linux; experimental Android builds.
 
-Open the menu with **Esc** or **View / Select**. Higher graphics settings need a faster computer;
+Open the menu with **Esc**, **View / Select**, or the Android **Menu** touch button.
+Higher graphics settings need a faster system;
 if play feels slow, lower the render scale or frame rate.
 
 Each game's section below lists what is specific to that game.
@@ -73,12 +74,14 @@ Each game's section below lists what is specific to that game.
 
 - All three courses, four camera views, and the original arcade racing.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
-- Experimental LAN rooms for two to four computers: create a room or find and join one without entering IP addresses.
+- Experimental LAN rooms for two to four systems: create a room or find and join one without entering IP addresses.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
 - Saved high scores.
 - Car color, language, and course settings.
 
 ### Getting started
+
+On macOS, Windows and Linux:
 
 1. [Download](https://github.com/svera/model1-recomp/releases) the package for your system and extract it.
 2. Keep **`vr.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
@@ -104,6 +107,9 @@ disappear in the Live Monitor, as in the original.
 **VirtuaRacing.sh** instead of using a file picker. On Steam Deck, add the launcher as a
 Non-Steam Game and set **Start In** to the extracted **VirtuaRacing** folder.
 
+**Android:** install the APK, import both ROM archives in the launcher, then use
+the on-screen **Start** button or press **Start** on a controller.
+
 ### Controls
 
 | Action | Keyboard | Gamepad |
@@ -123,6 +129,7 @@ Pad buttons**.
 External rear views swing around the car so it stays visible; the onboard view turns in place.
 Release the look-back control to return to the selected camera. The keyboard binding can
 be changed in Controls; the right stick's look-back axis is not remappable.
+On Android, hold the on-screen stick down to look back.
 
 Under **Controls > Player 1 > Analog axes > Steering curve**, **Arcade** (formerly
 Linear) keeps the original response. **Standard** (the default) replaces Exponential with a nonlinear
@@ -227,6 +234,8 @@ Online multiplayer is not supported.
 
 ### Getting started
 
+On macOS, Windows and Linux:
+
 1. [Download](https://github.com/svera/model1-recomp/releases) the package for your system and extract it.
 2. Keep **`swa.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
 3. Start the game and select **`swa.zip`** when asked. It remembers your files for next time.
@@ -241,6 +250,9 @@ Online multiplayer is not supported.
 **Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
 **StarWarsArcade.sh** instead of using a file picker. On Steam Deck, add the launcher as a
 Non-Steam Game and set **Start In** to the extracted **StarWarsArcade** folder.
+
+**Android:** install the APK, import both ROM archives in the launcher, then use
+the on-screen **Start** button or press **Start** on a controller.
 
 ### Controls
 
@@ -314,6 +326,8 @@ fast-forward, including through attract mode;
 
 ### Getting started
 
+On macOS, Windows and Linux:
+
 1. [Download](https://github.com/svera/model1-recomps/releases) the package for your system and extract it.
 2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the same folder. Leave them zipped.
 3. Start the game and select **`wingwar.zip`** when asked. It remembers your files for next time.
@@ -327,6 +341,9 @@ fast-forward, including through attract mode;
 **Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
 **WingWar.sh** instead of using a file picker. On Steam Deck, add the launcher as a
 Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
+
+**Android:** install the APK, import both ROM archives in the launcher, then use
+the on-screen **Start** button or press **Start** on a controller.
 
 ### Controls
 

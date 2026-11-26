@@ -11,6 +11,39 @@ SHA-256-verified source as release packages. It can also be run manually from th
 New updates cancel an older run for the same pull request. ROM-backed checks remain local: CI does
 not download game ROMs or require secrets.
 
+## Android releases
+
+When a GitHub release is published, the release workflow builds signed ARM64 APKs for Virtua Racing,
+Star Wars Arcade and Wing War alongside the desktop packages. The APKs contain no game ROMs.
+The Android job needs these repository Actions secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: the base64-encoded keystore file.
+- `ANDROID_KEYSTORE_PASSWORD`: its password.
+- `ANDROID_KEY_ALIAS`: the signing key alias.
+- `ANDROID_KEY_PASSWORD`: the key password.
+
+For a new signing key, `keytool -genkeypair -keystore model1-release.p12 -storetype PKCS12
+-alias model1 -keyalg RSA -keysize 3072 -validity 10000` prompts for the credentials. Encode
+the file with `base64 < model1-release.p12 | tr -d '\n'` for the first secret; treat the output
+as sensitive and do not commit the keystore or print its contents in CI. PKCS12 uses the same
+password for the keystore and key.
+
+Keep the keystore and its credentials backed up securely and use the same signing key for every
+release: Android only accepts an update signed by the same key. The locally signed debug and
+diagnostics builds normally have a different key; replacing them with a release may require
+uninstalling first, which removes their imported ROMs and saves.
+
+The release tag becomes Android's version name and the version in the game log; it must contain
+only letters, digits, dot, underscore, plus and hyphen. The release workflow run number is the
+version code, so later workflow runs have higher codes; rerunning the same run keeps its code. Do not
+recreate the workflow or distribute builds with larger version codes without coordinating the
+sequence. The job checks APK signatures and 16 KB native-library alignment before uploading them.
+To build the same packages locally, set the four signing variables above plus
+`ANDROID_VERSION_NAME` and a positive `ANDROID_VERSION_CODE`, then run `sh tools/android/package.sh`.
+The three release variants were also built locally and their signatures and
+16 KB alignment checked using the local release key; this does not verify the
+values of the GitHub secrets or a published-release workflow run.
+
 ## The approach
 
 Virtua Fighter (1993) runs on Sega's Model 1 board. Its game logic is a program for the main CPU, an NEC V60. Around
@@ -137,6 +170,11 @@ menu (RmlUi), saves, the first-launch file picker, and the parts that go beyond 
   ahead of the clock. That allowance recovers at the 1% trim's rate, so the device gets a moment of silence
   instead. `M1_EVENTS_AT=400:gulp` simulates that device for 2 seconds; the trace's last column, `queued_ms`,
   shows the sound queue.
+  On Android, a screen-off EGL reset previously disabled direct 3D texture sharing even when SDL's
+  Vulkan device survived, forcing GPU readback for every picture. The host now rewraps the shared
+  textures when the Vulkan device is unchanged; other resets retain the readback fallback. On a
+  Pixel 9a, two screen-off cycles restored sharing, and the user reported normal performance and
+  correct graphics after both.
 - **Scene sync.** VF builds a new scene over several frames. The host holds the last complete picture until the new
   3D has settled, so scene changes don't show half-built frames.
 
@@ -1986,8 +2024,10 @@ budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and
 The desktop's on-demand VR session also supports an experimental two-to-four-computer
 linked session. `src/host/lan_session.h` wraps a pinned BSD-licensed arcade-lan
 revision (provenance and local changes in `third_party/arcade-lan`). It owns
-discovery, membership and transport, polling the library at its expected 60 Hz
-independently of rendering and simulation. The library's small `max_devices`
+discovery, membership and transport, advancing the library's protocol clock at its
+expected 60 Hz independently of rendering and simulation. Pending datagrams are
+also received between those ticks so a cabinet waiting for its peers need not
+wait another full protocol period. The library's small `max_devices`
 extension limits admission to four devices, one racer on each.
 The vendored linked transport also learns not-yet-direct peer addresses from later
 room lists: START can precede the list containing another newly joined guest.
@@ -2021,7 +2061,110 @@ cabinets by their stable IDs.
 Each packet also carries the board-frame counter. Simulation waits for every
 active peer to reach its current board frame, rather than allowing slower machines
 to lag through race initialization with uninitialized car-model pointers.
-New frame data publishes immediately; empty library heartbeats protect the roster
+Waiting for peer data does not reset the simulation clock or discard queued audio;
+both can worsen stalls and sound cuts in a linked session.
+Each completed frame publishes before display presentation, and brief waits for
+peer frames defer presentation so vsync does not repeatedly delay network polling.
+In an experimental Android-to-Mac CPU-rendered VR session, this raised simulation
+from roughly 32 to 57-58 frames/s.
+The Android multiplayer host also skips unshown arcade pictures and
+uses GPU parts where available. During solo catch-up it draws only the last due
+frame, but in a LAN session it cannot assume that the next due frame will be
+allowed by the peer: it draws at the next picture opportunity instead. In manual
+CPU-rendered 30 FPS tests VR played correctly, while heavy Wing War scenes still
+showed roughly 19-23 presentations/s despite often reaching 57-58 simulation
+frames/s. In smooth-motion mode the Android multiplayer
+host can now run the next frame on a worker during presentation, both solo and
+over LAN. It checks peer readiness first, joins the worker before accessing the
+machine again, and handles audio and publication on the host thread. It remains
+synchronous for 30 FPS, linked local cabinets and the Live Monitor. Nonvisual
+CPU-rendered desktop LAN tests exercised the worker for both VR and Wing War,
+including pause and disconnect handling; they do not establish Android performance
+or visual correctness. In a manual CPU-only Wing War test at 120 FPS and 2x,
+the user reported poor performance: heavy scenes produced roughly 9-20
+presentations/s, with picture preparation averaging about 35-100 ms. Simulation
+was usually much cheaper, and the worker ran 607 frames during that session.
+In a separate manual GPU-enabled Wing War test at 60 FPS and 2x, the user
+reported performance close to 60 FPS; sampled windows showed roughly 50-60
+presentations/s. This test used Vulkan and GPU composition, with automatic
+pixel comparisons disabled for manual visual testing. The sessions were not
+matched, and the report did not establish visual correctness or LAN performance.
+When GPU parts are available, the worker can also start mid-picture after
+`machine_free` releases the machine; a capture needed by that frame is
+deferred until the worker has joined and the picture has been submitted.
+The Wing War LAN test exercises this handoff without inspecting pixels.
+In manual Android-to-Mac LAN sessions with GPU checks temporarily disabled,
+the user reported that VR and Wing War gameplay, graphics, controls and audio
+worked, including pause and reconnect. Backgrounding a phone in a two-player
+session ended the race as expected. The Android shutdown logs recorded 2,777
+VR and 2,778 Wing War LAN frames using the early worker. In a separate
+Android-to-Mac Wing War session, the user observed under 30 FPS on the Mac
+waiting screen. Phase `0x09` measurements showed about 57-58 simulation frames/s
+but only 26-27 presentations/s; emulation averaged about 2-3 ms/frame and picture
+preparation about 2-4 ms/view. Native fallbacks occurred in that session, but
+the presentation rate remained low even in windows where their count did not
+increase. The host had deferred pictures for up to 33 ms while waiting for LAN
+frames. It now polls briefly for a peer for up to 2 ms from the start of each
+wait, rather than delaying pictures based on the last presentation, without
+relaxing peer readiness. A repeat manual Mac/Android session with both changes
+showed about 60 presentations/s on the Mac waiting screen and zero fallbacks
+there; the user reported around 60 FPS. Both diagnostic sessions disabled
+automatic pixel comparisons, and they were not controlled single-change trials.
+After the pacing change, a manual VR Mac/Android LAN recheck completed with
+good reported performance and working pause/resume and disconnect. Sampled
+active windows showed about 60 presentations/s on the Mac and 84-118 on the
+phone at its 120 FPS setting; the phone logged 1,948 LAN ahead frames. GPU
+pixel comparisons were disabled in the temporary diagnostic builds. In the
+nonvisual VR desktop lifecycle test, macOS hidden-window presentations took
+about 140 ms each, delaying boot past the scripted Start events. The test now
+uses SDL's dummy video driver and CPU composition; it reaches the race and
+passes the LAN lifecycle without pixel comparisons.
+The linked cabinets previously booted at game speed even though their pictures
+and audio were suppressed. A Wing War Mac diagnostic showed roughly 12 seconds
+of preparation. The host now runs linked boot frames in small batches as fast
+as it can, polling the network and retaining the peer-frame readiness check. Once
+boot completes, it resets the audio frame clock and returns to normal pacing.
+In the nonvisual VR four-player desktop lifecycle test, all four cabinets
+completed boot in about 0.70 seconds, compared with about 4.81 seconds before
+acceleration. The test staggers room searches: simultaneous searches on one
+Mac share a discovery port and some guests may not receive the room.
+A manual VR Mac/Android session logged 1.94 seconds of linked boot on both
+devices. The user reported slow, interrupted game-over sound and a slow title
+on both while linked. A repeat with the startup acceleration disabled produced
+the same reported slowdown: in results phase `0x1c`, the phone's diagnostic
+logged whole-picture rendering at roughly 43-65 ms per picture and both
+cabinets slowed to about 35 simulation frames/s. This comparison does not yet
+identify which whole-picture fallback is responsible. Both diagnostic builds
+disabled automated pixel comparisons; the original phone app and settings were
+restored. An Android trace from the baseline run contained 225 3D draw
+submission slices over 30 ms, peaking at 64 ms, in a roughly 13-second interval.
+The trace suggests that submission is expensive during the slowdown, but does
+not by itself identify the whole-picture fallback.
+
+The line-scroll fallback had applied to the entire results screen, even when
+its interpolated slide could be composed from the 2D layers. It now uses GPU
+parts in that case, retaining whole-picture rendering when a slide needs
+per-row render-resolution positioning. A nonvisual linked-ROM test exercised
+both moving and stationary results slides without changing their scroll state.
+In a manual Mac/Android LAN repeat, the user reported smooth game-over sound
+and correct results graphics. Sampled phone results pictures used GPU parts
+and took about 4-7 ms to prepare, versus 43-65 ms in the baseline; adjacent
+phone simulation windows ran at about 57-58 frames/s. The temporary diagnostics
+disabled automated pixel comparisons, and the original phone app and settings
+were restored.
+In a nonvisual dummy-video test, both Wing War cabinets completed 596 boot
+frames in about 0.75 seconds. A manual Mac/Android session logged 2.01 seconds
+on the Mac and 1.99 seconds on the phone; the user reported about three seconds
+overall and gameplay was fine. The temporary diagnostics disabled automated
+pixel comparisons.
+An extended nonvisual linked-ROM test reproduces the prolonged wait and later
+start sequence for both cabinets. With the additional native entry hints it
+matches the interpreter for 26,184 frames without fallbacks.
+Android now uses the multiplayer host by default for supported VR and Wing War
+modes, with the single host retained for incompatible modes. The user checked
+gameplay and the Game, Controls and LAN menus in marker-free Android diagnostic
+builds, again with automated GPU checks disabled for manual visual testing.
+Empty library heartbeats protect the roster
 while the ROM is still enabling its communication board, and heartbeats and pause
 control continue while waiting. The host can retire a guest stalled behind it for three seconds even when
 that guest's networking still responds.
@@ -2441,6 +2584,1299 @@ Repeating the solo and joined runs produced steady-window rates of 59.9-60.0 and
 presentations/s respectively; the first joined window includes transition overhead and is
 excluded from that comparison. Performance reports now show presentations/s explicitly,
 separately from game-frame throughput.
+
+## VR's Android frame pacing
+
+The Pixel 9a's 120 FPS setting is a target, not a measured frame rate. At 1x
+with antialiasing off, the logged widescreen scene rendered at 662x384 and
+was then scaled to the 2424x1080 window. Reducing the internal scale from 2x
+helped, but at 1x most of the measured frame time was in scene preparation,
+not the call to present the picture.
+
+Build the opt-in APK with `tools/android/build.sh assembleVrDiagnostics`. Its
+`frame phases` line reports average and peak wall times per pass for picture
+preparation, composition, work before presenting, `SDL_RenderPresent`, and
+game-thread waits. The `scene phases` line separates the 3D path, other
+screen work, and time outside the screen update, including interpolation.
+The 3D timing includes CPU preparation and submission; it is not GPU
+execution time.
+
+For Perfetto, enable `ftrace/print`, app tracing
+(`atrace_apps: "recomp.vr1.android:game"`), and scheduler events in the
+`linux.ftrace` data source. The `timing window` line records the window
+duration and end time on Android's boot clock for alignment with the trace.
+Use `M1 new picture submitted` to measure submission gaps, not display
+scanout. The trace separates tile decoding, individual layer rebuilds, and
+the render thread's wait for tile workers after it finishes its own jobs.
+Rebuilds can overlap across threads. Within `M1 tile rebuild 1`, the
+`M1 layer 1 tile drawing`, `M1 layer 1 span scan`, and `M1 HUD pinning`
+slices distinguish the main costs.
+
+CPU samples pointed to tile drawing and geometry preparation. Tile drawing
+now skips masked runs and scans transparent padding in blocks. VR reuses
+unchanged non-sky layers across game ticks, invalidating them when tile
+graphics, scrolling, masks, the tile palette, or relevant display state
+changes. A dirty transparent layer clears only its previous row spans.
+The geometry path transforms and projects a triangle's duplicate vertex
+once, with separate storage for clipping. Frustum clipping classifies
+vertices inline and skips fully visible planes without recursion; crossings
+retain the same intersection math. Rejected faces skip screen projection
+unless a later face reuses their vertices. Unlit faces skip shading, and
+interpolated faces only calculate the current-pose shade when they cannot
+use a blend of the two endpoints.
+
+With deferred projection, median submission rate rose from 46 to 49 new
+pictures/s across the sampled runs, and median 3D time dropped from 6.46
+to 6.14 ms per pass. The 37 pictures/s dips still recurred. In a separate
+24-second trace at 1x, AA off, Vulkan, and a 120 FPS target, layer 1 finished
+last in 10 of the 11 tile batches that took at least 8 ms. In those 10
+rebuilds, median CPU time was 2.99 ms for HUD pinning, 1.67 ms for scanning
+transparent spans, and 1.63 ms for drawing tiles. Across the trace, 162 of
+1,118 submission gaps (14.5%) exceeded 30 ms, with a 95th-percentile gap
+of about 35 ms. These are short gameplay samples, not controlled benchmarks.
+
+HUD pinning now checks occupancy in eight-pixel runs, looks up artwork
+groups only for occupied cells, and reuses the group buffer. It copies the
+source only when a group needs to move. In a follow-up 24-second capture
+at the same settings, 130 of 1,146 submission gaps (11.3%) exceeded 30 ms,
+down from 14.5%. The 95th-percentile gap fell from 35.0 to 33.2 ms.
+However, median HUD pinning CPU time rose from 1.02 to 1.35 ms across all
+HUD slices. When layer 1 finished last in a batch of at least 8 ms, its
+median HUD CPU time was 3.16 ms, versus 2.99 ms in the baseline. This pair
+of live captures does not establish a HUD speedup or show that the code
+change caused the improvement in submission gaps.
+
+A second 24-second capture on the same updated build, with the player
+repeating the same race segment, had 153 of 1,099
+submission gaps (13.9%) over 30 ms, with a 95th-percentile gap of 34.5 ms.
+Median HUD pinning CPU time was 1.61 ms overall and 2.75 ms in the 12 slow
+batches where layer 1 finished last. The variation between captures on
+the same build makes the first pacing improvement inconclusive. To isolate
+the code change, alternate the baseline and updated builds using identical
+recorded inputs and start each capture at the same in-game point.
+
+For the controlled comparison, one diagnostics APK exposed both HUD paths
+and fed them the same built-in VR script (not a recording of the player's
+laps). The runs were ordered baseline, updated, updated, baseline, at 1x,
+AA off, Vulkan, and a 120 FPS target. Perfetto measurements were restricted
+to approximately emulated frames 3850-4850; one run's boundaries occurred
+one frame later. A private `files/hud-benchmark` marker selects `baseline`
+or `updated` on launch. An optional second token selects the FPS target
+(`60` or `120`, default `120`). Removing the marker restores normal play.
+
+| Run | Median HUD CPU time | Submission gaps over 30 ms | Submission gap p95 |
+| --- | ---: | ---: | ---: |
+| Baseline 1 | 1.784 ms | 85 / 865 (9.83%) | 33.27 ms |
+| Updated 1 | 1.764 ms | 84 / 878 (9.57%) | 34.10 ms |
+| Updated 2 | 1.752 ms | 85 / 899 (9.45%) | 33.05 ms |
+| Baseline 2 | 1.663 ms | 103 / 879 (11.72%) | 34.76 ms |
+
+Both updated runs had fewer long submission gaps, but neither beat both
+baseline runs on HUD CPU time. The pacing difference was comparable to
+the variation between the two baseline runs, so this test does not
+establish a useful HUD speedup or a reliable pacing improvement.
+
+The same diagnostics build then compared FPS targets with the updated HUD
+path fixed. Runs were ordered 120, 60, 60, 120, at 1x, AA off, and Vulkan
+on the 120 Hz display. Each measurement used approximately emulated frames
+3850-4850. Both targets fell short of their requested picture rate.
+
+| Target | New pictures/s | Submission gaps over 30 ms | Submission gap p95 |
+| --- | ---: | ---: | ---: |
+| 120, first run | 48.42 | 128 / 840 (15.24%) | 35.04 ms |
+| 60, first run | 47.42 | 105 / 827 (12.70%) | 35.11 ms |
+| 60, second run | 47.70 | 92 / 828 (11.11%) | 33.73 ms |
+| 120, second run | 50.98 | 88 / 884 (9.95%) | 33.36 ms |
+
+Pooling both runs per target, 60 FPS produced 47.56 new pictures/s versus
+49.70 at 120 FPS. Gaps over 30 ms were 11.90% versus 12.53%, and the 95th
+percentile was about 34.2 ms at both targets. The small change in long gaps
+was within run-to-run variation, so lowering the target did not reliably
+improve submission pacing in this segment.
+
+The next trace measures what makes VR rebuild layer 1. In the Android
+diagnostics build, `M1 layer 1 inv` appears inside actual rebuilds, not cache
+checks. It counts distinct primary-map entries affected since the last rebuild
+by map writes or changes to the graphics those entries reference. The two
+counts can overlap; their union is the entry count. It separately flags a
+split-window dependency on the paired map, scroll/control, active line scroll,
+mask, full decode, palette, game mode, and cache layout or reset. A full decode
+counts the whole primary map, not 4,096 individually changed entries. The counts
+track map state, not visible pixels or the HUD groups that would have to move.
+
+On the Pixel 9a, the fixed-input run at 1x, AA off, Vulkan, and a 120 FPS
+target recorded 509 layer 1 rebuilds between emulated frames 3850 and 4850.
+Every rebuild was triggered by direct writes to the primary map, with none
+of the other invalidation flags set. The median was 8 entries out of 4,096;
+the largest change covered 81.
+
+| Distinct changed entries | All layer 1 rebuilds | Layer 1 rebuilds in tile batches taking at least 8 ms |
+| --- | ---: | ---: |
+| 1-8 | 401 | 13 |
+| 9-32 | 99 | 7 |
+| 33-128 | 9 | 0 |
+
+Layer 1 finished last in all 20 slow batches, and even there the largest
+change was only 18 entries. The app submitted 880 new pictures in 17.38 s
+(50.65/s); 89 of 879 submission gaps exceeded 30 ms and the p95 was
+32.18 ms. This was an invalidation measurement, not an optimization A/B.
+It supports prototyping partial layer 1 updates for sparse map writes,
+keeping full rebuilds as a fallback. The prototype must account for old and
+new HUD group coverage: changing one entry can change how a whole group
+is placed, so patching only the changed tile rectangles is not sufficient.
+
+The first partial-update prototype expanded dirty bands to neighboring
+occupied rows, but on this segment the expansion always exceeded its
+half-layer budget. The revised prototype instead saves the ordered HUD
+clear-and-move operations from a full rebuild. For direct map writes with
+unchanged scroll, mask, palette, and layout, it draws the affected
+eight-pixel bands into scratch space. It checks that every cell in those
+bands still has the same occupancy and artwork group. If so, it replays the
+saved operations from the fresh source pixels and updates only those row
+spans. Replaying in order preserves overlaps between moved groups; a change
+in group membership falls back to rebuilding the full layer.
+
+The same diagnostics APK ran four scripted trials in partial, full, full,
+partial order, at 1x, AA off, Vulkan, and a 120 FPS target. Measurements use
+the boot-clock boundaries near emulated frames 3850-4850. Rebuild timings
+are wall time, and picture gaps are app submissions, not panel scanout.
+
+| Layer 1 path | New pictures/s | Submission gaps over 30 ms | Submission gap p95 | Median layer 1 rebuild |
+| --- | ---: | ---: | ---: | ---: |
+| Partial, first run | 66.65 | 21 / 1156 (1.82%) | 24.88 ms | 0.58 ms |
+| Full, first run | 56.28 | 53 / 977 (5.42%) | 30.16 ms | 4.42 ms |
+| Full, second run | 52.24 | 82 / 907 (9.04%) | 32.54 ms | 4.36 ms |
+| Partial, second run | 65.34 | 23 / 1133 (2.03%) | 26.21 ms | 0.61 ms |
+
+Pooling both runs, submissions rose from 54.26 to 65.99 new pictures/s
+(22%), gaps over 30 ms fell from 7.17% to 1.92%, and the p95 fell from
+31.62 to 25.55 ms. Tile worker batches taking at least 8 ms fell from 27 to
+2. The partial path handled 991 of 1,023 layer 1 rebuilds, redrawing 2-6 of
+48 bands; the other 32 changed group membership. At the time of this test
+the prototype was diagnostics-only: `partial 120` selected it for the
+scripted run and `partial-play` selected it for manual validation.
+
+A 20-second manual-play trace on the Pixel 9a confirmed that the prototype
+also ran with live inputs at 1x, AA off, Auto (GPU), and a 120 FPS target.
+It handled 586 of 607 layer 1 rebuilds; the other 21 changed group
+membership. Median layer 1 rebuild wall time was 0.50 ms. The app submitted
+58.43 new pictures/s, with 33 of 1,157 submission gaps over 30 ms (2.85%)
+and a p95 of 27.67 ms. This was not a matched A/B. Separately, the player
+reported that the HUD looked good during this manual session.
+
+Partial layer 1 updates are now the default for Virtua Racing on Android
+and macOS, without a marker or a diagnostics build. Other platforms and
+layers keep their existing paths. A full rebuild still handles changes to group
+membership or global layer state. The diagnostics benchmark retains
+`updated 120` as the full-rebuild control and `partial 120` as the
+partial-update trial.
+
+With partial HUD updates enabled, a fresh Pixel 9a Perfetto capture sampled
+CPU stacks and scheduler activity during the same fixed-input Vulkan run
+(1x, AA off, 120 FPS target, emulated frames 3850-4850). In that 17.37 s
+window, the app submitted 1,159 new pictures, with 24 of 1,158 gaps over
+30 ms. The render thread spent 11.55 s running and about 0.31 s runnable
+but not running. Tile decode averaged 0.02 ms per call; picture preparation
+averaged 9.30 ms per submission. This was a profiling run, not an A/B.
+
+Of the render thread's 761 samples whose leaf mapped to the game's native
+library, 285 were in `push_object` (including inlined work), 65 in
+`record_quads`, and 24 in `sort_quads`. Within `push_object`, vertex
+transforms, face rejection, and lighting stood out. Only 35 samples mapped
+to the whole face setup region before the first vertex transform; that
+region includes more than ROM reads, and some addresses had no line
+information. The profile does not make a strong case for caching decoded
+ROM data. A more promising experiment is reusing transformed vertices
+within an eligible ROM-backed object, preserving face order and leaving
+per-face lighting and effect callbacks unchanged.
+
+The prototype used a 64-slot cache of exact model-space coordinate bits
+and their transformed XYZ values, scoped to one ROM-backed object draw.
+Projection, clipping, and face state still use separate point storage.
+The prototype bypasses dynamic polygon RAM, point effects, and special
+camera and eye-crossing paths.
+
+Four Pixel 9a trials on one diagnostics APK compared `partial 120` with
+`vertices 120` (partial HUD on in both), in off/on/on/off order. The
+fixed-input Vulkan run used 1x, AA off, and the same measured emulated
+frame interval. These are app submissions, not panel scanout.
+
+| Vertex reuse | New pictures/s | Submission gaps over 30 ms | Submission gap p95 |
+| --- | ---: | ---: | ---: |
+| Off, first run | 63.26 | 29 / 1098 | 26.62 ms |
+| On, first run | 60.91 | 28 / 1057 | 27.08 ms |
+| On, second run | 68.02 | 22 / 1181 | 24.97 ms |
+| Off, second run | 65.63 | 28 / 1138 | 26.37 ms |
+
+Pooled throughput was 64.44 pictures/s without reuse and 64.46 with it.
+Long gaps went from 2.55% to 2.23% and the p95 from 26.55 to 26.36 ms;
+both differences were small relative to run-to-run variation. Median
+picture preparation was 9.26 ms without reuse and 9.34 ms with it. This
+prototype showed no reliable gain and is not enabled for ordinary play.
+
+The `lighting 120` diagnostics run measured 16,863,226 lit faces in the
+same scripted segment. The final clipper emitted no geometry for 10,179,956
+of them (60.4%). For 9,991,604 faces (59.3% of all lit faces), the first
+plane with any outside vertex rejected the entire face, so no clip
+intersection was needed. These are counts of face visits, not unique faces.
+
+The `early-clip 120` prototype runs that same classification before
+lighting. It preserves texture and depth updates and face links, excludes
+paths that need a colour callback or retain face colours, and passes the
+classification on to the clipper for faces that survive. Four trials on
+the same APK compared `partial 120` and `early-clip 120` in off/on/on/off
+order. Partial HUD updates were on and vertex reuse was off in both.
+
+| Early rejection | New pictures/s | Submission gaps over 30 ms | Submission gap p95 | Median picture preparation |
+| --- | ---: | ---: | ---: | ---: |
+| Off, first run | 62.03 | 18 / 1076 | 26.97 ms | 9.65 ms |
+| On, first run | 67.35 | 12 / 1171 | 24.44 ms | 8.89 ms |
+| On, second run | 66.56 | 22 / 1154 | 25.73 ms | 8.92 ms |
+| Off, second run | 61.78 | 42 / 1072 | 27.62 ms | 9.60 ms |
+
+Pooled throughput rose from 61.91 to 66.95 new pictures/s (+8.2%).
+Median preparation fell from 9.63 to 8.90 ms, and the submission gap p95
+fell from 27.21 to 24.92 ms. Gaps over 30 ms fell from 2.79% to 1.46%
+when pooled, though the individual runs overlapped on that metric. During
+validation, `early-clip-play` in the private `files/hud-benchmark` marker
+enabled early rejection without scripted inputs or settings overrides.
+
+A 20-second manual-play trace on the Pixel 9a, with early rejection
+enabled at 1x, AA off, Auto (GPU), and a 120 FPS target, measured 65.36
+new pictures/s and 9.06 ms median picture preparation. The 95th-percentile
+submission gap was 25.41 ms, and 18 of 1,300 gaps exceeded 30 ms (1.38%).
+This was a live sample, not a matched A/B. Separately, the player
+reported no visible anomalies during the manual widescreen race.
+
+Early face rejection became the default for Virtua Racing on Android and
+macOS, without a marker or a diagnostics build. It was later generalized to
+other games and platforms as described below. The diagnostics benchmark retains `partial 120` as
+the early-rejection-off control and `early-clip 120` as the on trial.
+
+With both optimizations on, three fixed-input Pixel 9a traces (1x, AA
+off, Vulkan, 120 FPS target) covered 52.09 s across the measured
+3850-4850 frame intervals. The app submitted 70.30 new pictures/s, with
+61 of 3,659 submission gaps over 30 ms (1.67%) and a 24.79 ms p95.
+For each within-run gap, the trace contained one complete picture
+preparation slice. The phase medians below are separate and do not
+necessarily add up to the median gap.
+
+| Median time | Gaps at most 30 ms | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Previous submission to preparation start | 4.47 ms | 18.81 ms |
+| Picture preparation | 8.10 ms | 14.00 ms |
+| Tile-worker wait within preparation | 0.00 ms | 2.54 ms |
+| Preparation end to next submission | 0.87 ms | 1.29 ms |
+| Render thread sleeping before preparation | 3.28 ms | 14.50 ms |
+
+The largest difference was before preparation. The render thread was
+mostly asleep in that extra time, not runnable and waiting for a core.
+Preparation also took longer, including more CPU time and tile-worker
+wait. The trace did not identify what the thread was waiting for before
+preparation, and SurfaceFlinger did not expose a matching game-surface
+timeline in these intervals. These are app submissions, not display
+scanout. The next measurement should distinguish intentional pacing,
+game-thread handoff, and renderer or GPU synchronization before changing
+the pacing logic.
+
+Two follow-up scripted traces added markers for present, pacing sleeps,
+synchronous simulation, and the ahead-frame simulation and its handoff.
+With both optimizations on, 41 of 2,296 submission gaps exceeded 30 ms
+(1.79%); the p95 was 25.32 ms. Waiting for the ahead frame was the longest
+marked pre-preparation phase in 38 of those 41 gaps. Median handoff time
+was 14.54 ms in the long gaps versus 2.79 ms across all other gaps, including
+those with no handoff. No long gap included an intervening present without
+a new picture, and explicit pacing sleeps contributed a median of zero.
+
+Among gaps with a matched handoff and worker slice, the ahead simulation
+took a median of 14.95 ms wall time and 14.53 ms on CPU in the long gaps,
+versus 5.58 ms wall and 5.49 ms on CPU in the other gaps. The worker began
+about 0.71 ms before the handoff wait in both groups. The render thread was
+waiting for a more expensive game frame, not primarily for the worker to
+be scheduled. Picture preparation also rose from 8.99 to 14.04 ms in the
+long gaps. The next profile should break down simulation CPU time in those
+slow frames before changing pacing or thread scheduling.
+
+### What the simulation worker does in slow frames
+
+Two more fixed-input Pixel 9a traces put diagnostics-only markers around
+the still-state copy, vblank display-list work, and end-of-frame capture.
+There were 43 gaps over 30 ms out of 2,377 picture-submission gaps. For the
+42 long gaps and 1,300 other gaps with a matched handoff and worker frame,
+median simulation CPU time was 15.08 ms versus 5.58 ms. Intersecting each
+marker with the worker's running intervals gave this breakdown:
+
+| Worker phase (median CPU time) | Gaps at most 30 ms | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Still-state copy | 0.21 ms | 0.40 ms |
+| Vblank display-list work | 0.009 ms | 0.012 ms |
+| End-of-frame capture | 0.21 ms | 0.24 ms |
+| Outside those three phases | 5.11 ms | 14.27 ms |
+
+The extra time was overwhelmingly outside the three marked phases, in the
+part of the frame that includes scanline CPU execution and device stepping.
+The first two traces did not yield app call stacks. A third run, targeting
+the already-running game PID, yielded 13 worker samples across nine
+matched long gaps and 437 across 432 other sampled frames. Four of the
+13 long-gap samples included the MB86233 geometry processor's execution
+loop. The samples also included main CPU memory access, audio, and I/O
+work. Many stacks were incomplete, and the long-gap sample is too small
+to identify which subsystem explains the extra CPU time.
+
+#### Separating V60, TGP, sound, and I/O
+
+The first per-phase timers read the thread CPU clock around every TGP sync.
+There are thousands of syncs per frame; the timed builds submitted only
+35.93–36.40 new pictures/s, so those captures were discarded for attribution.
+The replacement uses monotonic elapsed time, emits one summary per frame,
+and is active only for Virtua Racing in an Android diagnostics trace. It
+still perturbs the run: 59.39–61.15 new pictures/s versus 67.59–69.30 in
+the preceding two captures. This is a cross-run comparison, not a
+controlled measurement of timer overhead.
+
+All 62 gaps over 30 ms in the two replacement captures (out of 2,092
+submission gaps) had a matched ahead frame, as did 1,120 shorter gaps.
+The median worker time off CPU was 0.04 ms in the long gaps and below
+0.01 ms in the shorter ones, so off-CPU time does not explain the typical
+increase in these elapsed phase timings:
+
+| Median time per matched worker frame | Gaps at most 30 ms | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Worker on CPU (scheduler) | 6.38 ms | 10.01 ms |
+| V60 path excluding nested TGP sync (elapsed) | 2.56 ms | 4.26 ms |
+| TGP sync (elapsed) | 1.65 ms | 2.09 ms |
+| Sound stepping (elapsed) | 1.43 ms | 2.15 ms |
+| Timer, UART and I/O stepping (elapsed) | 0.25 ms | 0.37 ms |
+
+The V60 path showed the largest increase in both runs. But among 387
+emulated frame numbers with a matched handoff in both runs, just one
+landed in a long gap both times, while 28 did so in only one run. All 387
+pairs had identical emulated TGP cycle counts. Across the 28 pairs that
+changed gap group, median elapsed time rose by 2.18 ms in the V60 path,
+0.74 ms in sound, and 0.52 ms in TGP sync. The TGP did not execute more
+emulated cycles in those pairs; this is not evidence that extra geometry
+work caused the stutter. Capture CPU placement and frequencies in the
+same handoff windows without the per-phase timers to check for a shared
+host-side slowdown before selecting an optimization.
+
+#### CPU placement and frequency during handoff stalls
+
+The per-phase timers are now opt-in (`sim-timing 120`). The lighter
+`early-clip 120` trace records the emulated frame number, allowing the
+same worker frame to be compared across captures. Two runs that traced
+every CPU frequency change dropped to 28.63 and 29.18 new pictures/s.
+Do not use those runs to characterize ordinary stutter: the same APK
+managed 64.05 with scheduler events alone and 63.40 when polling frequency
+every 10 ms. The poll estimates the reported frequency over a slice; it
+can miss short transitions.
+
+| Worker metric | Scheduler only, short / long | 10 ms polling, short / long |
+| --- | ---: | ---: |
+| Matched gaps (long means over 30 ms) | 598 / 20 | 554 / 37 |
+| Median on-CPU time | 5.63 / 13.26 ms | 5.70 / 13.23 ms |
+| Share of worker CPU time on efficiency cores | 1.8% / 61.8% | 4.6% / 67.8% |
+| Median frequency weighted by worker running time | not recorded | 1.65 / 1.17 GHz |
+
+Of 400 emulated frames matched across both lighter runs, one was in a
+long gap both times and 22 were in a long gap only once. In 16 of those
+22 pairs the worker spent a greater share of its CPU time on efficiency
+cores in the long-gap run. Its median on-CPU time rose by 8.67 ms across
+those pairs. The renderer also slowed: in the polled run it generally
+stayed on the mid cluster, but its reported median frequency during
+picture preparation fell from 1.65 to 1.36 GHz in long gaps.
+
+Core placement and lower reported frequency are associated with the
+stalls, but not every long gap moved the worker to an efficiency core,
+and the traces do not establish causality. A controlled next experiment
+is to compare default scheduling against keeping only the simulation
+worker off the efficiency cores on this Pixel, with scheduler-only
+tracing. Compare the long-gap rate, picture throughput, and preparation
+time so that a faster handoff is not mistaken for an overall gain if the
+worker ends up competing with the renderer.
+
+#### Keeping the simulation worker off the efficiency cores
+
+The Android diagnostics-only `worker-4-7 120` benchmark uses the same
+race and renderer settings as `early-clip 120` but restricts the ahead
+simulation worker to available CPUs 4–7. On the Pixel 9a, these are the
+mid and prime cores. Both treatment runs logged an effective mask of
+`0xf0`; scheduler traces confirmed zero worker time on CPUs 0–3. The
+renderer, tile workers, and ordinary gameplay scheduling were unchanged
+by the setting.
+
+Four scheduler-only captures ran in control, treatment, treatment,
+control order, each over emulated frames 3850–4850:
+
+| Metric | Default scheduling | Worker restricted to CPUs 4–7 |
+| --- | ---: | ---: |
+| New pictures submitted per second | 65.53 | 65.77 |
+| Submission gaps over 30 ms | 55/2,274 (2.42%) | 20/2,283 (0.88%) |
+| Submission gap p95 | 26.67 ms | 25.02 ms |
+| Median picture preparation | 8.80 ms | 8.99 ms |
+| Median matched handoff in remaining long gaps | 12.32 ms | 6.33 ms |
+| Median picture preparation in remaining matched long gaps | 15.92 ms | 16.97 ms |
+
+Both treatment runs had fewer long gaps (0.87–0.88%) than either
+control (1.12–3.76%), though the controls varied considerably. This is
+evidence that worker placement contributes to the stalls on this Pixel,
+not evidence of a throughput gain. The residual long gaps had shorter
+handoffs but still had expensive picture preparation. Keep the CPU mask
+diagnostics-only: the numbering is device-specific, and these short
+captures do not establish sustained thermal or battery impact.
+
+#### What still makes picture preparation slow
+
+Two more scripted traces kept the worker restriction and added
+diagnostics-only markers for the 3D path, scene preparation, and SDL
+composition. All 13 gaps over 30 ms (out of 2,381 submission gaps)
+included a tile-worker batch. To separate the cost of having a batch
+from the cost of a slow batch, compare the long gaps with both all
+shorter gaps and the shorter gaps that also had a batch:
+
+| Median time | Short gaps (2,368) | Short gaps with a batch (1,033) | Long gaps (13) |
+| --- | ---: | ---: | ---: |
+| Picture preparation, elapsed | 8.39 ms | 11.12 ms | 16.98 ms |
+| Render thread on CPU during preparation | 7.08 ms | 8.22 ms | 12.18 ms |
+| 3D path, render thread on CPU | 4.76 ms | 5.15 ms | 7.60 ms |
+| Tile-worker wait, elapsed | 0.00 ms | 1.78 ms | 2.79 ms |
+| SDL composition, elapsed | 0.46 ms | 0.61 ms | 1.10 ms |
+
+The 3D path was the largest measured increase in render-thread CPU
+time. It includes CPU geometry and GPU command preparation; it is not
+a measurement of GPU execution. Median render-thread runnable delay
+across preparation was only 0.17 ms in the long gaps. Tile waits also
+grew, but layer 1 finished last in only one of the 13 long-gap batches.
+Across the two earlier restricted-worker captures, layers 0 and 5
+finished last in all 20 long-gap batches. There is no evidence here
+that HUD layer 1 is the main remaining bottleneck.
+
+The next profile should split the 3D path into object processing,
+quad sorting/recording, and draw submission in the same gap groups,
+before choosing another renderer change. The long-gap sample remains
+small, so the phase timings prioritize investigation rather than
+establishing a single cause.
+
+#### Splitting the 3D preparation cost
+
+Two further `worker-4-7 120` captures added markers for display-list
+processing, quad sorting and recording, and draw submission. All 18 of
+2,279 submission gaps over 30 ms included a tile-worker batch. The table
+compares those gaps with the 1,031 shorter gaps that also had a batch.
+Each value is median render-thread CPU time; nested sorting and recording
+are subtracted from the display-list phase to avoid double counting.
+
+| 3D phase | Short gaps with a batch | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Total 3D preparation | 5.35 ms | 7.70 ms |
+| Display-list processing, excluding sorting and recording | 2.88 ms | 4.04 ms |
+| Quad recording | 1.70 ms | 2.45 ms |
+| Quad sorting | 0.26 ms | 0.40 ms |
+| Draw submission | 0.52 ms | 0.70 ms |
+
+Display-list processing, which includes object transforms, lighting,
+and clipping, grew the most in both captures. Recording was the
+second-largest increase. Draw submission measures CPU-side work, not
+GPU execution. The timings do not tell us whether slow pictures contain
+more geometry or whether the same work takes longer. The next measurement
+should count objects, visited faces, and emitted quads per picture to
+separate those cases before changing the renderer.
+
+#### Counting geometry per picture
+
+Two more `worker-4-7 120` captures counted object requests, completed
+face visits, and quads sent to the draw path. These counters ran only
+in the traced Android benchmark and excluded probe passes. All 17 gaps
+over 30 ms (out of 2,326) had a tile-worker batch; the comparison group
+was the 1,029 shorter gaps that also had a batch.
+
+| Median per picture | Short gaps with a batch | Gaps over 30 ms |
+| --- | ---: | ---: |
+| Object requests | 352 | 348 |
+| Object face visits | 30,293 | 30,150 |
+| Quads sent to the draw path | 6,711 | 7,709 |
+| Display-list CPU time, excluding sorting and recording | 2.82 ms | 3.88 ms |
+| Display-list CPU time divided by face visits | 93 ns | 128 ns |
+| Quad recording CPU time | 1.74 ms | 2.66 ms |
+| Quad recording CPU time divided by emitted quads | 275 ns | 351 ns |
+
+No direct faces were processed in the matched interval. The long-gap
+pictures did not visit more object faces, but emitted about 15% more
+quads. The higher cost per face and per quad means counts alone do not
+explain the slowdown. Matching 12 long-gap pictures to shorter ones
+from the same emulated frame in the other run gave median paired
+differences of zero object face visits and three emitted quads, but
+0.82 ms more list processing and 0.72 ms more recording in the long
+gaps. The interpolation fractions could differ. Only one of the 12
+same-frame pairs matched every count; matching by counts instead of
+frame number found two pairs. Neither comparison proves identical work.
+
+#### Render-thread placement in the slow pictures
+
+Intersecting the 3D preparation slices with scheduler running intervals
+showed that **both pictures in all 12 same-frame pairs ran their entire
+3D phase on the mid cluster (CPUs 4–6)**. The median paired increase of
+2.04 ms of 3D CPU time was entirely on that cluster. All 17 long-gap
+pictures ran their 3D phase on the mid cluster. Unlike the simulation
+worker, the renderer was not doing this work on efficiency cores.
+
+The geometry-count traces did not record frequencies. In the earlier
+10 ms polling trace, restricting the comparison to pictures that had
+a tile batch and ran all preparation CPU time on CPUs 4–6 still showed
+a lower estimated median frequency in long gaps: 1.34 GHz across 36
+long gaps versus 1.58 GHz across 409 shorter gaps. This is a separate
+capture and cannot attribute the extra time in the 12 matched pairs.
+Collect the geometry counts and coarse frequency polling together, with
+clipping and span-work counters, to distinguish a lower clock rate from
+more expensive work per face or quad.
+
+#### Measuring geometry work and CPU frequency together
+
+Two `worker-4-7 120` captures added counts for partial frustum-plane
+crossings and generated spans, with CPU frequency polled every 10 ms.
+There were 19 gaps over 30 ms out of 2,239. The table compares the
+18 long and 961 shorter gaps that had a tile batch and ran all their
+3D CPU time on CPUs 4–6.
+
+| Median per picture | Short gaps | Gaps over 30 ms |
+| --- | ---: | ---: |
+| 3D CPU time | 5.50 ms | 7.77 ms |
+| Reported frequency, weighted by 3D CPU time | 1.55 GHz | 1.25 GHz |
+| Object faces visited | 30,293 | 30,459 |
+| Partial frustum-plane crossings | 303 | 303 |
+| Generated spans | 39,742 | 42,505 |
+| Estimated quad-recording cycles per generated span | 73.5 | 73.2 |
+
+Across 10 pairs from the same emulated frame in opposite runs, the
+median long-minus-short difference was +1.65 ms of 3D CPU time and
+-0.40 GHz of reported frequency. Eight of the ten long-gap pictures
+had a lower frequency estimate. Median paired changes in work were
+zero object faces, two partial crossings, and about 140 spans. Span
+counts varied between runs; the pooled increase did not repeat in
+both. Estimated cycles use reported frequency times scheduled CPU
+time, not hardware cycle counters. Polling can miss transitions,
+interpolation can differ between paired pictures, and the sample is
+small. The evidence favors lower clocks over extra clipping or span
+work as an explanation for these stalls; it does not prove that clock
+changes caused them. A controlled test of an Android performance hint
+is a better next experiment than another clipping or span rewrite.
+
+#### Trying an Android render-thread performance hint
+
+The diagnostics-only `render-hint 120` benchmark keeps the same worker
+affinity as `worker-4-7 120` and adds an Android Performance Hint session
+for the render thread alone. It uses an 8.33 ms target and reports
+elapsed picture preparation, including tile waits but excluding present.
+The session is optional in the diagnostics build (Android 13 or later
+and device support are required), and the regular APK has no hint calls.
+
+Four Pixel 9a trials ran in control, hint, hint, control order. Both
+hint sessions reported successfully, and the logged thread IDs matched
+the render thread in Perfetto. Each measured window covered emulated
+frames 3850–4850 with 10 ms frequency polling.
+
+| Metric | No hint | Render-thread hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 66.25 | 83.91 |
+| Submission gaps over 30 ms | 11/2,299 (0.48%) | 2/2,906 (0.07%) |
+| Submission gap p95 | 24.95 ms | 21.64 ms |
+| Median picture preparation | 8.99 ms | 5.66 ms |
+| Median 3D CPU time | 4.95 ms | 2.91 ms |
+| Median reported frequency during 3D CPU work | 1.80 GHz | 2.29 GHz |
+
+Both hint runs exceeded 83 new pictures/s, while neither control reached
+67. The long-gap counts are small, but the throughput and preparation
+improvements repeated. Higher reported frequency accompanied the gain;
+the polling does not isolate frequency from other scheduler changes.
+The result applies with the worker restriction in place. These short
+runs do not establish sustained throughput, thermals, or battery cost.
+Before enabling the hint for ordinary play, repeat the comparison over
+longer sessions with default worker scheduling and monitor thermals and
+power where the device exposes reliable readings.
+
+#### Repeating the hint test with default worker scheduling
+
+The diagnostics-only `sustained-base 120` and `sustained-hint 120` modes
+leave the simulation worker on Android's default scheduler. The second
+mode adds the same 8.33 ms render-thread hint. Four Pixel 9a trials ran
+in control, hint, hint, control order. Each script ran from boot to
+emulated frame 13850. Race-state markers identified matching active
+windows (frames 3850–7820 and 9058–13220), totaling about 141 seconds
+per trial. Menus, results, and attract footage were excluded, and gaps
+were counted only within a race. Perfetto captured app markers without
+scheduler or frequency polling. Both hint sessions reported
+successfully on the traced render thread. A spot check in the second
+trial of each arm confirmed the simulation worker could run on CPUs 0–7.
+
+| Metric across both active race windows | No hint | Render-thread hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 63.69 | 84.24 |
+| Submission gaps over 30 ms | 509/18,004 (2.83%) | 78/23,783 (0.33%) |
+| Submission gap p95 | 27.42 ms | 22.07 ms |
+| Median picture preparation | 9.04 ms | 5.66 ms |
+
+Both hint runs (81.91 and 86.57 pictures/s) beat both controls (62.94
+and 64.45). The gain persisted in the final half of the second race:
+87.27 vs. 66.94 pictures/s and 5.45 vs. 8.64 ms median preparation.
+Submissions measure app output, not panel scanout.
+
+The phone remained externally powered. Android thermal status stayed at
+0 in all samples. Starting battery temperatures varied from 28.7 to
+33.2 °C across runs; peak reported skin temperature was 31.0 and
+33.6 °C in the controls, and 34.3 and 34.8 °C with the hint. The small
+number of runs, unequal starting temperatures, and short cooldowns
+prevent a clean estimate of the hint's thermal cost. The battery current
+sensor does not isolate app power while charging, so this test does not
+establish a battery-life cost. At this stage the hint remained
+diagnostics-only pending an explicit decision about the trade-off.
+
+A USB-staged battery pilot captured both scripted control races, but did
+not produce a valid battery baseline. Android's battery history did not
+record an unplug event during the race windows. Perfetto's charge counter
+stayed fixed and current samples hovered around zero. A lost ADB
+connection alone does not prove the phone is off external power. Before
+comparing hint and control on battery, verify the power-source state
+during the measured windows and confirm that the charge counter tracks
+discharge.
+
+A follow-up USB-only preflight verified both checks without launching
+the game. Android battery history recorded the transition to
+`discharging` and the later USB reconnection. During 74 seconds of
+unplugged Perfetto samples, the charge counter dropped from 4,002.5 to
+4,000.0 mAh and all 75 current readings were negative. This validates
+the capture method, not the hint's battery cost.
+
+#### Measuring battery use in unplugged race runs
+
+The four-run control, hint, hint, control comparison was repeated with
+the phone unplugged during both measured race windows. Each trial used
+the same 120 FPS fixed-input script, default worker scheduling, and two
+matched race windows totaling about 141 seconds. Android battery history
+recorded unplugging before the first race and reconnection after the
+second in every trial; Perfetto captured charge and current at one-second
+intervals. Both hint sessions reported successfully to the render thread.
+
+| Metric across the two race windows | No hint | Render-thread hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 65.45 | 86.00 |
+| Submission gaps over 30 ms | 395/18,505 (2.13%) | 71/24,290 (0.29%) |
+| Median picture preparation, per-run range | 8.68–9.16 ms | 5.30–5.76 ms |
+| Charge-counter decrease per active minute | 9.01 mAh | 13.30 mAh |
+| Mean battery current while racing | 537 mA discharge | 818 mA discharge |
+
+Both hint runs outperformed both controls (82.32–91.05 vs.
+64.41–66.51 pictures/s). At the matched 28.8 °C starting battery
+temperature of the second pair, the hint run drew about 56% more charge
+per active minute than its control. Across all four runs the charge
+rate was about 48% higher with the hint; mean current was about 52%
+higher. The charge-counter resolution is 2.5 mAh, and the number of
+trials is small. These readings measure whole-device drain during the
+script, not power attributable to the hint alone.
+
+Battery temperatures measured at setup and USB reconnection were
+27.5–28.8 °C and 28.9–29.9 °C in the controls, and 28.8–28.9 °C and
+31.1–31.3 °C with the hint. Thermal status was 0 at the connected
+checks; temperature and thermal status were not sampled continuously
+while unplugged. This experiment establishes a repeatable performance
+gain alongside a material increase in whole-device drain, but not a
+long-session thermal limit or battery-life estimate. The hint therefore
+remains diagnostics-only pending an explicit decision about that
+performance-versus-battery trade-off.
+
+#### Capping the hinted run at 60 FPS
+
+To check whether limiting output to 60 FPS would reduce the hint's
+power cost, two more unplugged trials used the same sustained race
+script with both the app cap and Performance Hint target set to 60 FPS
+(16.67 ms). The render-thread hint remained enabled and worker
+scheduling remained at its default. Android battery history verified
+discharge throughout both race windows.
+
+| Metric across the two race windows | 120 FPS cap and hint | 60 FPS cap and hint |
+| --- | ---: | ---: |
+| New pictures submitted per second | 86.00 | 60.2 |
+| Submission gaps over 30 ms | 0.29% | 2.25% |
+| Median picture preparation, per-run range | 5.30–5.76 ms | 8.01–8.15 ms |
+| Charge-counter decrease per active minute | 13.30 mAh | 10.08 mAh |
+| Mean battery current while racing | 818 mA discharge | 626 mA discharge |
+
+The 60 FPS configuration used about 24% less charge per active minute
+than the 120 FPS hinted runs, but it gave up about 30% of submitted
+pictures per second and its rate of gaps over 30 ms was similar to the
+no-hint 120 FPS control (2.25% vs. 2.13%). It did not fully erase the
+power difference from that control: the measured rates were 10.08 vs.
+9.01 mAh/min. This comparison changes both the app cap and the hint
+target, and has only two trials per setting; it does not isolate the
+effect of either setting or quantify app-only power. The 60 FPS cap
+reduces, but does not remove, the battery trade-off. Battery temperature
+was 27.1 and 26.6 °C at setup and 29.6 and 28.6 °C at USB reconnection;
+thermal status was 0 at the connected checks but was not sampled
+continuously while unplugged. The regular APK's defaults were unchanged
+at the time of this comparison.
+
+#### Enabling the hint for Android VR
+
+After these measurements, the user asked to always use the hint. The
+regular Android build now attempts a Performance Hint session for VR's
+render thread on Android 13 or later, using the player's selected 30,
+60, or 120 FPS target and updating the session if that setting changes.
+Each picture's preparation duration is reported. The same Android hint is
+now attempted by all four game packages; other operating systems are
+unaffected. Its performance and battery effects for the other games have
+not been measured. If the OS or device cannot create a session,
+the game logs that it is continuing without the hint; a reporting error
+is logged and disables that session.
+
+#### SWA tile-layer reuse on Android
+
+An Android SWA gameplay trace showed tile-worker batches averaging 9.91 ms
+and 3D preparation averaging 6.81 ms. All seven prepared tile layers
+rebuilt 1,741 times in that capture. SWA now reuses a layer across game
+frames when its tile, palette, layout and side-treatment state are unchanged.
+The cockpit's wide-cockpit option is included in that state; its cockpit
+visibility test also depends on the tracked tile map and scroll state.
+
+An initial version still rebuilt the cockpit each frame. In a separate,
+unmatched gameplay capture, the other layers rebuilt less often, but the
+tile-worker batches still averaged 10.24 ms. The user reported that the
+subsequent version, which also reuses the cockpit layer, looked correct in
+manual play but performance felt about the same, with some places around
+15 FPS. A gameplay trace of that final version is still needed; these
+different manual runs do not establish a controlled speedup.
+
+With LOD On and Draw distance Arcade, the user reported an improvement but
+still saw FPS in the 20s. In a subsequent phone trace at 1x, a sustained
+37-second interval contained 952 picture preparations averaging 27.26 ms.
+There were 555 tile-worker batches averaging 11.79 ms and 540 cockpit-layer
+rebuilds averaging 10.66 ms. The interval also had 952 above-HUD overlay
+passes; the below-HUD GPU submission averaged 7.66 ms, while display-list
+walks averaged 0.47 ms. These timings overlap and must not be added as
+independent costs. Above-HUD objects force whole-picture rendering rather
+than direct GPU composition, including a GPU-to-CPU picture path. The trace
+does not count objects or establish which change would improve FPS.
+
+SWA's parts path now draws the above-HUD pass into a separate transparent
+image, masks it with the same bright-HUD rule, and composites it after the
+HUD. The main 3D can therefore remain on the GPU. An overlay containing
+shadows falls back to the whole picture because their blending may depend
+on the underlying scene; other games keep their existing fallback.
+
+The cockpit-side continuation also caches its generated sides. Its inputs
+are the edge and the column 12 pixels in on each side, plus the dimensions;
+changes elsewhere can rebuild the cockpit layer without repeating the
+costly continuation. Only sides the continuation actually drew are copied
+back, so an unchanged input with no continuation preserves the new layer.
+The cache retains the four most recently used input pairs, comparing their
+dimensions and edge columns exactly before reuse.
+
+In a subsequent manual phone replay with both changes, LOD On and Arcade
+distance, the user reported better performance and correct appearance.
+The trace recorded 1,830 continuation reuses and 59 builds, with cockpit
+layer rebuilds averaging 2.30 ms across the capture. The log showed windows
+around 49–63 shown FPS in the sampled gameplay. The previous run's slow
+windows were around 24–26 FPS, but the manually played runs were not
+identical, so those numbers are not a controlled comparison.
+
+Layer 6 was then instrumented during another manual replay at 1x, LOD On
+and Arcade distance. Of 1,605 rebuilds, 1,598 were caused only by the
+shared tile-palette revision; 1,536 rebuilds occurred while the layer was
+disabled. In those disabled rebuilds, tile drawing averaged 0.011 ms, but
+the side-processing section averaged 3.85 ms: it checks the empty backdrop
+for a dominant colour. SWA's disabled layer 6 now ignores palette-only
+changes; enable transitions, tile state, mode and layout changes still
+invalidate it, and an enabled layer uses the current palette.
+
+In another manual replay with this change, the user reported correct
+background and HUD appearance and performance about the same. Layer 6
+rebuilt 88 times for 7,492 prepared pictures, versus 1,605 for 6,854 in
+the preceding trace. The runs were not identical, so this confirms fewer
+rebuilds in the sampled play, not a controlled FPS improvement.
+
+The separate above-HUD overlay was then profiled by phase on the phone.
+Across 4,042 overlay passes, masking averaged 1.56 ms, clearing 0.07 ms,
+and drawing 0.02 ms; the separate texture upload averaged 0.23 ms.
+Masking is part of the overlay preparation time, so these measurements
+must not be added to that parent timing. The parts path now masks only
+the union of clipped viewports containing overlay quads. It still clears
+and uploads the full overlay, including when nothing is drawn, to avoid
+leaving stale pixels. Shadow-dependent overlays retain the whole-picture
+fallback.
+
+In a subsequent manual replay, masking averaged 0.53 ms over 4,604 passes.
+The user reported better performance and that the radar and HUD looked
+correct. The manually played runs were not identical, so this is not a
+controlled FPS or timing comparison.
+
+In that optimized overlay trace, 74 of 6,955 picture preparations exceeded
+16.67 ms; 72 contained a tile-worker batch. Of the 35 tile batches on the
+picture thread longer than 10 ms, 34 contained a cockpit-side build, and
+the longest batch took 20.17 ms with 17.91 ms in that build. These are
+nested wall times, not additive costs. The trace also recorded 584
+game-thread handoffs over 10 ms; all overlapped an ahead-simulation
+slice, and 565 overlapped for at least 90% of the wait. Among the 579
+whose ahead simulation had already started when the wait began, 49 had a
+frame-capture slice over 5 ms, so the remaining simulation work needs
+further breakdown. The capture has no scheduler events; it cannot tell
+how much of these wall-time spikes is CPU work versus descheduling.
+
+A later scheduler trace with detailed simulation instrumentation recorded
+287 ahead-simulation slices over 10 ms, averaging 11.46 ms wall time and
+11.25 ms scheduled on CPU. Within those slices, sampled V60 time excluding
+TGP averaged 5.00 ms, TGP 2.30 ms and sound 3.18 ms. These are wall-time
+samples, not exclusive CPU measurements; the thousands of TGP timing
+calls per frame add overhead, so these numbers do not establish normal
+gameplay costs or a controlled optimization result. That detailed SWA
+instrumentation was removed after the capture.
+
+An initial per-side cockpit cache did not help that replay: all 72 observed
+rebuilds changed both sides. A following input-fingerprint trace found five
+distinct edge-input pairs across 88 rebuilds, suggesting recent states recur.
+The final four-entry cache matches the actual inputs, not fingerprints.
+In another unmatched replay it built 11 times and reused 1,245 times,
+versus 88 builds and 1,120 reuses in the fingerprint replay. The user
+reported correct cockpit appearance and performance about the same. These
+different runs do not establish a controlled FPS improvement.
+
+A later 90-second Android `simpleperf` CPU sample, during gameplay at 2x,
+AA off and 60 FPS interpolated, contained 10,803 samples with none lost.
+The picture thread accounted for 50.6% of the samples. On that thread,
+8.0% were in a hash-table insertion called by backdrop-side colour counting;
+these are sampled CPU shares, not frame-time savings. The side check now
+tests the same 99% threshold without a hash table, using a majority-vote
+fallback when the first pixel is not the qualifying colour. This changes
+neither the threshold nor the side-fill decisions. After installation, the
+user reported that graphics looked correct and performance felt about the
+same. Recent diagnostic windows showed 42–51 shown FPS in the new session
+and 39–45 in the earlier sample; these manual runs are not controlled, so
+the difference does not establish an FPS improvement.
+
+A fresh 90-second sample of that build at 2x recorded 11,053 CPU samples
+with none lost. On the picture thread, 12.1% were in quad recording; the
+largest single sampled instruction copied a full vertex into the CPU
+fallback recording. Recording now keeps only the projected coordinates and
+depth needed by CPU replay, grouped by quad; fallback reconstructs the
+points before rasterization. A nonvisual test covers multiple batches,
+replay order and viewport restoration, including a failed GPU recording.
+
+An intermediate compact-vertex build still showed substantial individual
+vertex append overhead, so the final build batches the four vertices. In a
+separate 90-second sample it recorded 11,122 samples with none lost, with
+11.3% of picture-thread samples in quad recording. The user reported correct
+graphics and performance about the same for both builds. These were manual,
+unmatched runs; the sample shares do not establish a frame-time or FPS gain.
+
+#### Wing War tile-layer reuse on Android
+
+At 2x, AA off and 60 FPS interpolated, Wing War gameplay windows showed
+roughly 31–33 pictures per second, with about 10–11 ms in the 3D path and
+8–9 ms in other screen work per pass. A subsequent 60-second CPU sample
+contained 7,412 samples with none lost; tile drawing accounted for 9.7% of
+all samples, and span scanning also appeared prominently. These CPU shares
+are not frame-time savings.
+
+In wide scenes Wing War now reuses unchanged non-starfield tile layers across
+game frames, using the existing tile, palette, mode and layout revisions.
+Layers 4 and 5 retain per-frame rebuilding because the starfield repetition
+check has additional map inputs; narrow screens also retain the existing
+path. `--wingwar-tile-layer-reuse` checks invalidation and these fallbacks
+without inspecting rendered pixels. After installation, the user reported
+correct graphics and performance about the same. Some new gameplay windows
+showed 38–42 pictures per second and 5–6 ms of other screen work, but these
+unmatched play sessions do not establish an FPS improvement.
+
+At 30 FPS, an Android Wing War trace showed the whole-frame path submitting
+and reading back GPU 3D during each board frame: 82 frame captures averaged
+89 ms, including 62 ms in 3D submission. A CPU-only comparison also fell
+behind. Wing War on Android now captures non-interpolated frames in GPU
+parts when the shared 3D target and GPU composition are available; the
+board-frame capture and two-tick display cadence are unchanged. Above-HUD
+frames requiring whole-frame rendering and unavailable or failed GPU paths
+retain the existing fallback. The `--wingwar-arcade-parts` nonvisual test
+covers capture state, direct-target submission and the whole-frame fallback.
+In an unmatched 2x Auto GPU run, recent gameplay windows showed 28–29
+pictures per second without sound dropouts; the user reported much better
+performance and correct gameplay and pause/menu graphics. CPU rendering
+and other devices may still be slower.
+
+The user then reported severe slowdowns in attract mode at 30 FPS. A 40-second
+trace there showed no above-HUD overlay passes and cheap GPU submission
+(0.77 ms), but in the heaviest scenes each board-frame capture averaged
+20–23 ms, about 15 ms of it in the CPU display-list walk. With every board
+frame drawn, about 60 a second, the work exceeded real time; synchronous
+simulation passes reached 210 ms, and the log showed 6–10 pictures per second
+with hundreds of sound dropouts. At 30 FPS only the last board frame of a pass
+that reaches the next two-tick picture can be shown, so on Android Wing War
+without smooth motion the other frames are no longer drawn. Their list uploads
+are made at the next vblank by `tgp_scan`, as with smooth motion and MAME's
+frame skipping. In this mode `frame_quads()` reports the list's object count
+on every frame, drawn or skipped, as smooth motion does, so scene-change holds
+compare like with like; the shown picture is always a drawn frame. The
+`--wingwar-arcade-parts` test checks that a skipped frame is not drawn, that
+its uploads still land, and the object count, without inspecting pixels.
+
+Both 30 FPS changes, GPU-part capture and skipping frames that cannot be
+shown, were then enabled for every game on Android rather than Wing War
+alone; the 3D renderer's failure check now also runs after each 30 FPS
+frame in every game. SWA's above-HUD radar uses its separate overlay part;
+other games' above-HUD frames and unavailable GPU paths keep the whole-frame
+fallback. Tile changes accumulate until the next draw, as with smooth motion,
+so skipped frames lose none. Other platforms are unchanged.
+
+#### Where Wing War's picture time goes on Android
+
+Profiles on the Mac tested whether emulation was the limit. The emulated chips (TGP, sound
+CPUs and chips, I/O) took 0.1–8.5% of samples per game. A Wing War replay ran 40,896 frames in
+52 s, under 1.3 ms per frame for all emulation, so a TGP HLE was not pursued. In representative
+runs (1x, 60 FPS, GPU parts), the native 3D display-list walk was the largest renderer cost:
+58% in Wing War and 37% in VR. Tile layers were 7–17%.
+
+On a Pixel 9a (2x, AA off, Vulkan, 60 FPS), 60-second simpleperf captures of manual Wing War
+play (999 Hz, DWARF stacks) put about 55% of process samples on the render thread. Each shown
+picture does one walk, `render_parts` → `screen_update` → `tgp_render` → `push_object`, with no
+duplicate walk. Picture preparation was 13–25 ms against about 6 ms of game simulation.
+
+Two exact changes followed:
+- `sort_quads` now reads each quad's depth key and foreground flag once into a compact array.
+  It builds all four radix histograms in one sweep and skips a pass when every key shares that
+  byte. The stable order is unchanged.
+- `record_quads` now records a wireframe line's same-row pixel run as one span instead of one
+  span per pixel. The shaders fill spans inclusively and apply `G3_CHECKER` per pixel, so a moiré
+  line still covers every other pixel.
+
+Render-thread CPU per shown picture, before → after (the second play session's scene was heavier):
+
+| Function | Before | After |
+| --- | ---: | ---: |
+| `sort_quads` | 1.00 ms | 0.51 ms |
+| `record_quads` | 2.30 ms | 2.52 ms |
+| `push_object` | 5.14 ms | 5.41 ms |
+
+The span merge saved little in this play. The remaining walk cost is spread across transform,
+back-face, lighting and clipping lines with no single hotspot. The `rec_point` snapshot (the CPU
+fallback's copy) is where the scattered point reads first miss. The tests
+`--gpu-replay-geometry` (a line's spans against the CPU's pixels) and the sort-order check in
+`copy_bounds_and_sort` cover these changes without inspecting rendered output.
+
+#### Splitting the walk across threads (tried, removed)
+
+A parallel walk was tried next. Each display-list object was deferred with a copy of its view
+state, the objects were drawn into per-chunk arenas on the drawing threads, and the results were
+copied back in list order. The zmode 0 z each object inherits from the one before was patched in
+during that copy. A test compared every bit of the parallel output with the serial walk's, and
+the two matched. A Mac Wing War run had about 2–3 flushes per picture, with 180–600 objects each.
+
+It did not help on the Pixel 9a. The first version gave each thread an equal fixed share. A
+60-second profile of play dropped from about 43 to about 24 pictures shown per second. The render
+thread's CPU fell from about 37 s to 28 s, but the six drawing threads went from about 17 s to
+70 s. The phone's small in-order cores were several times slower at this float-heavy walk, and
+the big core waited for them. In unprofiled attract-mode runs, the same heavy scene ran at
+21 shown/s (38 ms a picture) parallel and 26–28 shown/s (30 ms) serial.
+
+With smaller chunks handed to whichever thread was free, the heavy scene ran at 29–31 shown/s
+(29 ms). That was within run-to-run noise of serial, while keeping six cores busy, so the
+parallel walk was removed.
+
+#### Compiler flags and the render thread's core
+
+The Android library is built with `-O2`. Wing War builds with `-O3` and ThinLTO, and then with
+`-march=armv8.2-a` added, were compared in alternating unprofiled attract-mode runs on the
+Pixel 9a. All three averaged 49–50 shown/s, and the heaviest five seconds ran at about 30 shown/s
+and 28 ms. That was within run-to-run noise, so `-O2` was kept.
+
+Sampling the render thread's core twice a second showed it on the X4 (core 7, 3.1 GHz) about 70%
+of the time, and on the 2.6 GHz A720 cores the rest. It never ran on the little cores. The app
+can't be pinned from outside (`taskset` is denied), so the host now pins its own render thread
+to the cores with the highest `cpuinfo_max_freq`. It does nothing when every core is as fast.
+Two runs each, alternating:
+
+| Render thread | Mean shown/s | Mean picture | Below-58 seconds | Heaviest 5 s |
+| --- | ---: | ---: | ---: | ---: |
+| Scheduler's choice | 49.3 | 15.8 ms | 17.6 ms | 28.9 ms |
+| Pinned to the X4 | 51.7 | 14.6 ms | 16.2 ms | 28.0 ms |
+
+Diagnostics builds skip the pin when the app's storage has a `no-pin-render` file.
+The experimental Android multiplayer host uses the same pinning policy; its
+performance impact has not yet been measured.
+
+#### Recording the heavy scene for the GPU
+
+The heaviest attract-mode pictures have 40,000–49,000 quads from about 100 models. A typical
+picture has 17,000–20,000. An 18-second simpleperf profile of the render thread across the heavy
+scene found these costs:
+
+- `record_quads`, which hands the sorted quads to the GPU, was the largest single function at
+  21.5% self time. `push_object`'s walk came next at 16.7%.
+- Nearly half of `record_quads`' samples were on copying each quad's four points into a snapshot.
+  These reads follow depth order, so they miss the cache.
+- The 3D picture's other work, such as `draw_tiles`, `parts_composite`, `prepare_layers`, the
+  backdrop and `gpu3d_end`, was about 14% in total, split into pieces of 1.5–3.5%.
+
+The snapshot existed so that the CPU could redraw the picture if the GPU failed, or for a check
+picture, after the next batch had reused the quad and point buffers. Two changes cut the recording
+time:
+
+- **Prefetching.** `record_quads` prefetches the quads and points a few entries ahead.
+- **No snapshot.** While a picture is being recorded for the GPU, each batch keeps its storage
+  until `gpu3d_end`, and the replay reads the original quads and points. Both buffers have a fixed
+  size and are never reallocated, so the pointers stay valid.
+
+The CPU can't simply run `tgp_render` again instead of keeping a snapshot. Its object hooks keep
+state, such as head detection and outfit tone statistics.
+
+The phone runs alternated the builds. Recording time per picture, by window:
+
+| Build | Heavy window | Lighter window |
+| --- | ---: | ---: |
+| Before | 5.84 / 6.37 ms | 1.73 / 1.61 ms |
+| Prefetching | 5.27 / 4.88 ms | 1.31 / 1.33 ms |
+
+A second pair of runs compared prefetching alone against prefetching with no snapshot:
+
+| Build | Heaviest window | Another window |
+| --- | ---: | ---: |
+| Prefetching | 3.62 / 3.65 ms | 1.73 / 1.76 ms |
+| No snapshot | 2.85 / 2.87 ms | 1.38 / 1.38 ms |
+
+Every run reported 0 differences. Frame rate and picture time stayed within run-to-run noise
+(heavy seconds at 26–27 ms), so the saving didn't show up in the frame rate.
+
+The GPU can't also take over transforming and lighting the points. The CPU still needs every
+transformed point for back-face culling, the depth-sort key and clipping. The GPU's float
+division also doesn't round exactly like the CPU's, so the pictures would no longer match.
+
+Preparing the recording in storage order was tried and rejected. The idea was to read each
+batch's points in the order they're stored, where a model's quads and points sit together, and
+then record in depth order from a small entry per quad. The output matched: 0 differences over
+more than 300 checked pictures per scale on macOS, and 0 differences on the phone. But
+preparing every quad first cost more than the scattered depth-order reads it saved. Four
+alternating phone runs per build, recording time per picture:
+
+| Build | Heaviest window | Lighter windows |
+| --- | ---: | ---: |
+| Depth order (kept) | 3.41 ms | 0.94 ms |
+| Storage order first | 3.83 ms | 1.14 ms |
+
+Frame rate and picture time didn't change.
+
+#### Drawing the 2D layers while the 3D is walked
+
+In the heavy scene each picture spent about 7 ms in screen work outside the 3D. A 20 s profile
+showed that most of it was the render thread waiting for the worker pool. Most of that work was
+rebuilding the changed tile layers (`prepare_layers`: drawing them, finding curtains), about
+5 ms of worker CPU per heavy picture. The 3D walk itself runs on the render thread alone, and the
+pool sits idle during it.
+
+The walk reads only the game's memory. It adds nothing to the GPU's list of parts before
+`gpu3d_end`. The layers, their images and the parts below the 3D don't depend on it either. So
+in parts mode, with the 3D recorded for the GPU, `screen_update` hands the whole 2D side to a
+thread of its own (`side_job` in `parallel.h`). That covers rebuilding the layers, the backdrop
+and sides, the middle layers' composite and the HUD's composite. The render thread walks the 3D
+at the same time and waits for the 2D before `gpu3d_end`. The 2D still splits its rows over the
+pool as before.
+
+Moving only the drawing and compositing, with the layers rebuilt before the walk, saved about
+0.3 ms and changed nothing measurable. Moving the rebuild as well cut the heavy scene's other
+screen work from about 7.3 ms to 3.1 ms per picture. On title and menu screens there's almost
+no 3D to hide behind, and the handover cost about 0.5 ms a picture. So the 2D goes beside the
+walk only when the last picture's walk took at least 1.5 ms. `M1_NO_LAYER_OVERLAP` turns it
+off.
+
+Alternating 70 s attract-mode runs on the phone at 2x (one baseline run was cut short and is
+left out):
+
+| Build | Mean shown/s | Mean picture | Worst second | Seconds at 24 ms or more |
+| --- | ---: | ---: | ---: | --- |
+| Before (3 runs) | 51.8 | 14.6 ms | 30–31 shown/s | in every run |
+| 2D beside the walk (4 runs) | 52.7 | 13.9 ms | 36–42 shown/s | none |
+
+Every run checked the GPU's 3D against the CPU's with 0 differences. On macOS, with every 7th
+picture checked, Wing War at 1x and 2x, VR and SWA also had 0 differences.
+
+#### Starting the next game frame mid-picture
+
+The host already ran the next game frame on a thread of its own, but only during
+`SDL_RenderPresent`. Present takes about 1.3 ms on the phone and a heavy-scene game frame about
+7 ms, so the render thread waited 3–4.6 ms per pass for that frame after every present.
+
+The game frame can't simply run beside the whole picture. The 3D walk reads the palette, the
+TGP and polygon RAM uploaded at vblank, the light parameters and the game's own RAM through its
+hooks. The 2D layers read the tile RAM. Copying all of that for every game was too large a
+first step. What can overlap is the end of the picture. Once the walk and the 2D are done,
+nothing else reads the game's state: the GPU's submission, the edge pass, the parts' change
+bands and the GPU composition all work on the picture's own buffers.
+
+So in parts mode, the host reads the next frame's inputs before the picture. It also sets
+`model1::machine_free`. `screen_update` calls that as soon as the walk, the 2D and the HUD's
+composite are done (for SWA, after the above-HUD pass). Pictures with objects above the HUD in
+the other games are drawn whole and don't qualify. Before the call, the HUD's composite moves
+ahead of `gpu3d_end` (its place in the list of parts is unchanged). `render_smooth`'s own
+bookkeeping also runs first, because the frame's start reads it (`keep_still`) or writes it
+(`m_render_done`). A frame with no 3D, which the frame's end normally draws on the game's
+thread, is drawn afterwards on the render thread (`finish_capture`). This is skipped for
+pictures checked against the CPU's, input recording, the HUD benchmark and `M1_CAPTURE`.
+`M1_NO_EARLY_FRAME` turns it off. On the Mac, at 120 passes a second and 60 pictures a second,
+about half of the game frames started mid-picture.
+
+Two pairs of 70 s attract-mode runs on the phone at 2x, in opposite order:
+
+| Build | Mean shown/s | Mean picture | Worst heavy-scene second | Game-thread wait |
+| --- | ---: | ---: | --- | ---: |
+| Present only (2 runs) | 51.6, 52.7 | 14.1, 13.8 ms | 36, 39 shown/s | 3.6, 3.5 ms |
+| Mid-picture start (2 runs) | 55.7, 54.9 | 12.5, 12.8 ms | 46, 42 shown/s | 2.5, 2.7 ms |
+
+Every run checked the GPU's 3D against the CPU's with 0 differences. On macOS, with every 7th
+picture checked, Wing War at 1x and 2x, VR and SWA had 0 differences, also with
+`M1_NO_GAME_THREAD`. Starting the frame before the walk would hide the rest of the game
+frame. That would need the state above double-buffered for each game, including each game's
+hook state (SWA's per-frame object lists, VR's scenery).
+
+### Making the boards' simulation cheaper
+
+A phone profile of Wing War's game thread put the sound board at 16% (the 68000 6.6%, the
+MultiPCMs 5.2%, the YM 2.8%) and the I/O board's Z80 at 10%. A temporary histogram of the
+68000's program counter showed where its time went:
+
+- Wing War and SWA spend about 80% of their instructions in two scans of 28 voice slots
+  (`btst #0,(0,A4); beq.w next; … next: adda.l #stride,A4; dbra D4,head`). The main loop runs
+  them between reads of the YM's status, and nearly all the slots are empty.
+- VR spends 94% in a spin on the YM's timer A
+  (`movea.l #$d00001,A0; move.b (A0),D0; lsr.w #1,D0; bcc.s`).
+
+These loops can be counted off instead of run, and the 68000 ends the slice exactly where it
+would have been. Within a slice (about one scanline) nothing outside the 68000 changes:
+
+- The chips run after the 68000, so the YM's status is frozen.
+- The UART's byte arrives before the slice.
+- Musashi only takes an interrupt when the slice starts, when SR changes, or when
+  `m68k_set_irq` is called (only at the start of `run` and on the UART's data read).
+
+`m1audio::find_idle_loops` finds both shapes in the ROM at reset. Musashi's instruction hook
+(`m68kconf.h`) calls `watch_hit` at a loop's head, through a byte map of watched addresses:
+
+- **Scan:** the hook learns the cycles of one pass over an empty slot. It then skips the
+  following empty slots by moving A4 and D4 on. The next `btst` sets the flags again.
+- **Spin:** a pass that comes back with every register and SR the same, and with nothing
+  written or read from the UART in between, repeats until the slice ends. It is skipped in whole
+  passes.
+
+In both cases at least one cycle is left, so the slice ends on a real instruction. The skipped
+cycles go through `m68k_modify_timeslice` and are added back to the slice's count.
+`M1_NO_SOUND_IDLE_SKIP=1` turns this off. About two-thirds of the 68000's cycles are skipped
+in Wing War and SWA and three-quarters in VR.
+
+Musashi also ran a `setjmp` on every `m68k_execute` (on macOS and Android this saves the signal
+mask, a system call). It also copied the 16 registers before every instruction. Both serve
+`m68k_pulse_bus_error`, which nothing here calls. They are now behind
+`M68K_EMULATE_BUS_ERROR`, which is off. On the Mac this `setjmp` was three-quarters of what
+remained of the 68000.
+
+The Z80 has no loop to skip: its hot helpers find their dual-port RAM bit ready on the first
+check. Its timers are checked only when one is due (`m_ctc_due`). Wing War runs CTC channel 2
+with no interrupt every 16 cycles, though, so that check still passes after most
+instructions. The exact count depends on each instruction's length, so `ctc_advance` was
+only made a single pass.
+
+The output is unchanged. With the harness (`tools/model1run.cpp`) the WAV and every frame's
+hash were identical to before for Wing War, VR and SWA:
+
+- 3,600 attract frames.
+- 5,400 scripted gameplay frames, with the skip on and off.
+
+`make test-m1audio-idle-skip` runs a small hand-assembled sound program with both loop shapes
+and a UART interrupt. It checks that the program sends the same bytes and plays the same
+samples with skipping on and off, and that skipping happened. On the Mac the harness ran at:
+
+| Game | Before | After |
+| --- | ---: | ---: |
+| Wing War | 287 frames/s | 294 frames/s |
+| VR | 505 frames/s | 527 frames/s |
+| SWA | 997 frames/s | 1,110 frames/s |
+
+There the 68000 dropped from 5.3% to 1.2% of a Wing War run (in `sample`). On the phone, two
+pairs of 70 s Wing War runs measured game time per frame of 6.76 → 6.57 ms and 7.16 → 7.11 ms.
+That is within the run-to-run noise, and pictures shown per second were unchanged, because the
+picture, not the game thread, limits the phone.
+
+## VR renderer optimizations on macOS
+
+The Android partial HUD update and early face rejection paths also run for
+VR on Apple builds, with the same full-rebuild fallback and face exclusions.
+The Android Performance Hint remains Android-specific.
+
+On an AC-powered MacBook Pro with an Apple M5 Max and 48 GB RAM, eight
+fixed-input trials used a hidden window, Metal 3D and GPU composition,
+1x, AA off, 16:9, and a 120 FPS target on a 120 Hz screen. Each measured
+game frames 3850–4850, about 17.38 seconds and 2,085–2,086 new pictures.
+The order was baseline, HUD, clip, both, both, clip, HUD, baseline.
+
+| Configuration | Preparation p50, runs 1 / 2 | Preparation p95, runs 1 / 2 |
+| --- | ---: | ---: |
+| Neither | 2.034 / 1.681 ms | 2.732 / 2.577 ms |
+| Partial HUD only | 1.956 / 2.027 ms | 2.542 / 2.665 ms |
+| Early rejection only | 1.932 / 1.821 ms | 2.704 / 2.579 ms |
+| Both | 1.599 / 1.867 ms | 2.212 / 2.553 ms |
+
+All trials reached 119.98–120.00 new pictures/s, with no pass-start
+gaps over 30 ms; per-run gap p95 was 8.425–8.453 ms. Preparation here
+is the trace's draw plus composition time. The preparation times varied
+between repeats, so these runs do not establish a consistent speedup
+or an FPS improvement on this already capped machine. These are app-side
+pass-start timings, not display scanout or exact submission timings.
+
+In a separate instrumented `both` run, the dispatcher was in active race
+mode `0x14` at both boundaries, and 499 successful partial updates with
+visible dirty bands occurred between them. The counter instrumentation
+was not part of the timing trials. The GPU reported no errors and no
+CPU/GPU picture checks were performed. These measurements do not validate
+appearance; manual macOS widescreen gameplay validation remains pending.
+
+For repeatable nonvisual measurements, `M1_VR_BENCHMARK` selects
+`baseline`, `hud`, `clip`, or `both` on the macOS VR host. With an
+isolated working directory and `M1_DATA` directory, `M1_ROMS` pointing to the ROM directory,
+`M1_HIDDEN=1`, `M1_G3_NO_VERIFY=1`, and `M1_TRACE` naming a trace file,
+run `vr-native --scale 1 --aspect 16:9 --arcade`. The benchmark forces
+the fixed inputs and settings above, logs its frame boundaries and game
+mode, and does not save ordinary game settings or state.
+
+### Early face rejection across games
+
+The early classification is now enabled in the shared renderer for all
+games and platforms. It retains the exclusions for cached face colours,
+open-edge processing, and colour callbacks, and preserves the original
+clipper's handling of crossing faces. A nonvisual regression test checks
+an off-screen face followed by linked visible geometry, depth and projected
+coordinates, and the colour-callback exclusion.
+
+On the same MacBook Pro, four Star Wars Arcade fixed-input runs compared
+early rejection off/on/on/off during game frames 3850–4850. Each used a
+fresh isolated data directory, hidden window, Metal 3D and GPU composition,
+1x, AA off, 16:9, and a 120 FPS target on a 120 Hz screen. Both
+boundaries were in sequence `0x0d`, with the same game timer values in
+every run.
+
+| Early rejection | New pictures/s | Preparation p50 | Preparation p95 |
+| --- | ---: | ---: | ---: |
+| Off, first | 120.00 | 5.059 ms | 6.216 ms |
+| On, first | 120.00 | 5.070 ms | 6.291 ms |
+| On, second | 119.98 | 5.094 ms | 6.218 ms |
+| Off, second | 120.00 | 5.093 ms | 6.202 ms |
+
+The windows contained 2,086–2,104 new pictures over 17.38–17.54 seconds.
+No pass-start gap exceeded 30 ms; per-run gap p95 was 8.376–8.425 ms.
+Preparation is draw plus composition, and pass-start gaps are not exact
+submission or scanout timing. These capped runs show no measurable
+performance improvement. In a separate instrumented on-run, about 5.50
+million of 11.91 million eligible face classifications in the interval
+were rejected early; the instrumentation was absent from the timing runs.
+No rendered-pixel comparisons were performed, and manual visual checks for
+the other games and measurements on other platforms remain pending.
+
+For the SWA comparison, start in an isolated working directory with
+`M1_DATA` pointing there and `M1_ROMS` pointing to the ROM directory; set
+`M1_HIDDEN=1`, `M1_G3_NO_VERIFY=1`, `M1_TRACE` to a trace file, and
+`M1_SWA_CLIP_BENCHMARK` to `off` or `on`. Run
+`swa-native --scale 1 --aspect 16:9 --arcade`. Like the VR benchmark,
+this uses fixed inputs, logs measurement boundaries and leaves ordinary
+saves and settings alone.
 
 ## The TGP's rounding
 

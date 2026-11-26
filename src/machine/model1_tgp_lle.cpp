@@ -42,6 +42,20 @@ struct model1::tgp_lle : mb86233_bus
 	// Runs the TGP until it waits on an empty input FIFO.
 	void sync()
 	{
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+		if (auto *sample = m.m_simulation_sample) {
+			const int64_t begin = sample->now();
+			run_until_input();
+			sample->tgp += sample->now() - begin;
+			++sample->tgp_calls;
+			return;
+		}
+#endif
+		run_until_input();
+	}
+
+	void run_until_input()
+	{
 		for (int guard = 0; guard < 64; guard++) {
 			m.m_tgp_cycles += cpu.run(100000);
 			if (cpu.stalled())

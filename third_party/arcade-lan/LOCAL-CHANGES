@@ -11,3 +11,6 @@ LAN_LINK: allow a confirmed peer to move to a loopback source address at the sam
 UDP port. Multiple clients on one machine can discover a mix of LAN and loopback
 routes, then permanently reject one another's blocks under strict IP pinning.
 Only a same-port loopback source can replace a direct address, not a new remote IP.
+
+lan_poll: receive pending datagrams without advancing the 60 Hz protocol clock.
+This lets a linked game observe peer frames between scheduled protocol updates.

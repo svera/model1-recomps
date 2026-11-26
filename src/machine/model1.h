@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include "../games/game.h"
@@ -54,14 +55,45 @@ public:
 	struct work_trace {
 		int tiles_full = 0, layers = 0, sky_build = 0, sky_scale = 0, sky_scale_sync = 0, padded = 0;
 		uint64_t tiles_ns = 0, layers_ns = 0, sky_build_ns = 0, sky_scale_ns = 0, padded_ns = 0, edge_ns = 0;
+		uint64_t screen_ns = 0, scene_3d_ns = 0;
 	} m_work;
+	bool benchmark_vertex_reuse = false;
+	bool early_face_rejection = true;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	struct face_lighting_counts {
+		uint64_t lit = 0, evaluations = 0, rejected = 0, rejected_evaluations = 0;
+		uint64_t shared_plane = 0, before_crossing = 0;
+	};
+	face_lighting_counts *benchmark_face_lighting = nullptr;
+	struct geometry_counts {
+		uint64_t objects = 0, faces = 0, direct_faces = 0, quads = 0;
+		uint64_t clip_crossings = 0, spans = 0, rows = 0;
+	};
+	geometry_counts *benchmark_geometry = nullptr;
+#endif
+#if defined(__ANDROID__) || defined(__APPLE__)
+	bool hud_partial_updates = true;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	bool hud_benchmark_baseline = false;
+#endif
+#endif
 	static uint64_t trace_ns();
+#ifdef M1_ALWAYS_FRAME_TIMINGS
+	struct work_timer {
+		uint64_t &total;
+		uint64_t start = trace_ns();
+		~work_timer() { total += trace_ns() - start; }
+	};
+#endif
 
 	explicit model1(regions &&r);
 	game::id title() const { return m_regions.title; }
 	void reset();
 	// One video frame: CPU time, the vblank IRQ, the display-list scan and the render.
 	void run_frame();
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	bool trace_simulation_phases = false;
+#endif
 	static constexpr int FRAME_LINES = 424, FRAME_VBLANK = 384;
 	// One scanline, including begin/end-of-frame work at the boundaries.
 	void run_scanline();
@@ -202,7 +234,7 @@ public:
 	// the CPU blends it with what's drawn (parts_below), if no polygon has covered it by then
 	static constexpr uint32_t SHADOW_KEY = 0xfd000000;
 	static constexpr int PAD = 32;                  // arcade pixels round a moved backdrop's image
-	enum { TEX_L6, TEX_L4, TEX_L6M, TEX_L4M, TEX_MID, TEX_TOP, TEX_SKY, TEX_3D, TEX_SIDES, TEX_COUNT };
+	enum { TEX_L6, TEX_L4, TEX_L6M, TEX_L4M, TEX_MID, TEX_TOP, TEX_SKY, TEX_3D, TEX_SIDES, TEX_OVERLAY, TEX_COUNT };
 	struct gpu_image { const uint32_t *px = nullptr; int w = 0, h = 0; size_t stride = 0; uint64_t gen = 0; };
 	struct gpu_op { int tex = -1; float sx = 0, sy = 0, sw = 0, sh = 0, dx = 0, dy = 0, dw = 0, dh = 0; int clip_x0 = 0, clip_x1 = 1 << 30; uint32_t colour = 0; };
 	struct gpu_parts {
@@ -227,6 +259,22 @@ public:
 	const gpu_parts *m_last_parts = nullptr;         // what frame() holds the 3D of, when in parts
 	// the host puts pictures together from parts: a frame with no 3D is drawn in parts too
 	void set_parts_mode(bool on) { m_parts_mode = on; }
+	// Called once, mid-picture (a picture in parts, drawn by render_parts), as soon as what's left
+	// of the picture no longer reads the game's state: the host starts the next game frame there,
+	// beside the rest of the picture. Cleared when called; the host clears it if not.
+	std::function<void()> machine_free;
+	// While set, a frame with no 3D isn't drawn as it ends (on the game's thread, beside a picture):
+	// finish_capture draws it afterwards, on the picture's thread.
+	void set_defer_capture(bool on) { m_defer_capture = on; }
+	void finish_capture();
+	// Opt in to capturing non-interpolated frames in parts at the end of the board tick.
+	void set_arcade_parts_mode(bool on) { m_arcade_parts_mode = on; }
+	const gpu_parts *arcade_parts() const { return m_frame_parts ? m_last_parts : nullptr; }
+	// Non-interpolated frames the host won't show aren't drawn: the list's uploads are then made at
+	// the next vblank (tgp_scan), as smooth motion's are. In this mode frame_quads() counts the
+	// list's objects on every frame, drawn or not, as smooth motion's does (scene_sync compares them).
+	void set_arcade_skip_mode(bool on) { m_arcade_skip_mode = on; }
+	void set_arcade_draw_next(bool on) { m_arcade_draw_next = on; }
 	// the host has the game stopped (paused, the menu): no frames run until it goes on
 	void set_stopped(bool on) { m_stopped = on; }
 	// testing (M1_TRACE): the last smooth picture's blend, and the two lists' frames it was between
@@ -235,6 +283,8 @@ public:
 	float m_pic_place[3] = { 0, 0, 0 };                // testing: the 3D's mean place in the picture last drawn (the trace)
 	bool m_stopped = false;
 	bool m_parts_mode = false;
+	bool m_arcade_parts_mode = false;
+	bool m_arcade_skip_mode = false, m_arcade_draw_next = true;
 	gpu_parts m_own_parts;
 	// The parts put together on the CPU, pixel by pixel, as the GPU must (for checking a renderer):
 	// out is w x h, 0x00rrggbb. `upto`: stop at the first op with that image (-1: all of them).
@@ -356,6 +406,15 @@ private:
 	std::unique_ptr<m1comm> m_comm;
 	bool m_comm_external_clock = false;
 	int m_scanline = 0;
+#if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
+	struct simulation_sample {
+		int64_t v60 = 0, tgp = 0, io = 0, audio = 0;
+		int tgp_calls = 0;
+		bool valid = true;
+		int64_t now();
+	};
+	simulation_sample *m_simulation_sample = nullptr;
+#endif
 	std::array<uint8_t, 3> m_frame_inputs{};
 	regions m_regions;
 	std::function<void()> m_tgp_hle_reset;
@@ -509,6 +568,7 @@ private:
 	void index_objects(logic_frame &lf);
 	void retain_culled_records(logic_frame &frame, const logic_frame &previous);
 	void record_frame();
+	void draw_capture();
 	bool smooth_matrix(uint32_t poly_adr, float *out);
 	void smooth_extra(size_t n, const std::array<float, 12> &local, float *out) const;
 	void smooth_sky_shift(float &dx, float &dy) const;
@@ -571,8 +631,17 @@ private:
 	void scale_sky(const sky_art &a);
 	void draw_sky(bitmap_rgb32 &bitmap, float dx, float dy);   // dx, dy: smooth motion's shift
 	bool m_draw = true;
+	void capture_arcade_frame();
+	void draw_arcade_frame();
+	int list_objects();
 	int m_frame_quads = 0, m_last_quads = 0;
 	bool m_above_hud_seen = false;   // this frame's list has objects drawn over the HUD (VF has none)
+	side_job m_layers_job;           // in parts, the 2D layers made while the 3D is walked (screen_update)
+	uint64_t m_walk_ns = 0;          // the last picture's walk of the 3D below the HUD
+	bool m_defer_capture = false, m_capture_pending = false;
+	std::function<void()> m_picture_tail;   // render_smooth's own after the picture, run before machine_free
+	uint64_t m_picture_frame = 0;    // the frame the picture is drawn in (m_frame moves on once machine_free runs)
+	bool let_machine_go();
 	float m_aspect = 4.0f / 3.0f;
 	void resize_frame();
 	bitmap_rgb32 m_tile_tmp;         // 2D layers at arcade resolution when rendering scaled
@@ -595,7 +664,11 @@ private:
 	// The GPU's parts (model1_gpu.cpp)
 	gpu_parts *m_parts = nullptr;                    // being drawn in parts
 	bool m_parts_whole = false;                     // this picture can't be: draw it whole
+	bool m_overlay_separate = false;
+	rectangle m_overlay_bounds{ 0, -1, 0, -1 };
 	bitmap_rgb32 m_mid, m_top, m_l6m, m_l4m;         // 1x: the 2D under the 3D, over it; backdrops padded
+	bitmap_rgb32 m_overlay;
+	uint64_t m_overlay_gen = 0;
 	// a backdrop stretched across a widescreen picture: its columns picked here, as draw_tiles picks
 	// them, at the render width (a GPU's sampling at a texel's very edge isn't the CPU's floor)
 	bitmap_rgb32 m_stretched[2];
@@ -628,6 +701,17 @@ private:
 	uint32_t parts_below(int x, int y) const;
 	void parts_end(bitmap_rgb32 &bitmap);
 	layer_cache m_layer_cache[8];
+	struct layer_revision {
+		uint64_t tiles = 0, palette = 0;
+		uint8_t mode = 0;
+		uint64_t sides = 0;
+		bool operator==(const layer_revision &) const = default;
+	};
+	layer_revision m_layer_revision[8]{};
+	uint64_t m_tile_palette_revision = 0;
+	bool layer_needs_redraw(int layer, int flags, double slide_time, const layer_revision &revision) const;
+	bool layer_layout_changed(int layer, int flags, double slide_time) const;
+	layer_revision current_layer_revision(int layer) const;
 	bool m_tile_slide_interpolating = false;
 	int m_tile_slide_layer = -1;
 	std::array<float, SCREEN_H> m_tile_slide_residual{};
@@ -636,7 +720,18 @@ private:
 	bool m_layers_together = false;               // prepare_layers: drawing several at once
 	uint64_t m_tiles_updated = ~0ull;   // the game frame the tile graphics were last decoded for
 	bool hud_edge_pinning_active() const;
-	void pin_hud_tiles(bitmap_rgb32 &pixels, int layer) const;
+	struct hud_move { int x, offset; bool clear; };
+	struct hud_plan {
+		std::array<size_t, (SCREEN_W / 8) * (SCREEN_H / 8)> cells{};
+		std::array<std::vector<hud_move>, SCREEN_H / 8> moves;
+	};
+	size_t hud_cell(const bitmap_rgb32 &pixels, int cx, int cy, int map_row, int scroll) const;
+	void pin_hud_tiles(bitmap_rgb32 &pixels, int layer, hud_plan *plan = nullptr) const;
+#if defined(__ANDROID__) || defined(__APPLE__)
+	bitmap_rgb32 m_hud_band_scratch;
+	hud_plan m_hud_plan;
+	bool rebuild_hud_bands(layer_cache &c, uint64_t bands);
+#endif
 	float hud_edge_offset(float left, float right) const;
 	float hud_view_offset(float x, float y, bool viewport = false) const;
 	void pin_hud_point(point_t *point, float offset) const;
@@ -654,6 +749,7 @@ private:
 			y < m_video->centered_scroll_y0 || y >= m_video->centered_scroll_y1;
 	}
 	void clip_scrolling_sides(bitmap_rgb32 &pixels, int layer, int flags);
+	static std::optional<uint32_t> backdrop_colour(const bitmap_rgb32 &pixels, int x0, int x1, uint32_t colour);
 	void fill_backdrop_sides(bitmap_rgb32 &pixels, int layer = -1, int flags = 0);
 	bitmap_rgb32 m_wrap_tmp;                 // fill_backdrop_sides: a layer drawn wrapping across the sides
 public:
@@ -996,23 +1092,19 @@ private:
 		bool spec_enable = false;
 	};
 
-	class clipper_t
-	{
-	public:
-		clipper_t() : m_isclipped(nullptr), m_clip(nullptr) {}
-		clipper_t(std::function<bool(view_t*, point_t*)> isclipped, std::function<void(view_t*, point_t*, point_t*, point_t*)> clip)
-			: m_isclipped(isclipped), m_clip(clip) {}
-		std::function<bool(view_t*, point_t*)> m_isclipped;
-		std::function<void(view_t*, point_t*, point_t*, point_t*)> m_clip;
-	};
-
 	std::unique_ptr<view_t> m_view;
 	std::unique_ptr<point_t[]> m_pointdb;
 	point_t *m_pointpt = nullptr;
 	std::unique_ptr<quad_t[]> m_quaddb;
 	quad_t      *m_quadpt = nullptr;
+	// The current batch's first quad and point. A batch recorded for the GPU stays where it is until
+	// the picture ends (its replay reads it there), so the next one starts after it.
+	quad_t *m_quadbase = nullptr;
+	point_t *m_pointbase = nullptr;
+	void next_batch();
 	std::unique_ptr<quad_t *[]> m_quadind;
-	mutable std::vector<quad_t *> m_quadsort;
+	struct sort_item { uint32_t key, index; };       // (sort_quads: a quad's depth key and place, foreground in index's top bit)
+	mutable std::vector<sort_item> m_quadsort[2];
 
 	uint16_t  m_listctl[2]{};
 	uint16_t  *m_glist = nullptr;
@@ -1051,8 +1143,7 @@ private:
 	bool m_gpu3d_on = false, m_rec = false, m_rec_bad = false;
 	struct rec_batch { int x1, x2, y1, y2; size_t first, count; };
 	std::vector<rec_batch> m_rec_batches;
-	std::vector<quad_t> m_rec_quads;
-	std::vector<point_t> m_rec_points;
+	std::vector<quad_t *> m_rec_quads;   // (in drawing order, where their batches left them: next_batch)
 	std::map<std::array<uint32_t, 12>, std::vector<uint32_t>> m_extra_colours;
 	// A surface model's top edges that no other face of it shares and no wall of it stands on
 	// (push_object, close_steps): a step down or up with no face between, in model space.
@@ -1085,7 +1176,8 @@ private:
 	void        draw_line(bitmap_rgb32 &bitmap, view_t *view, int color, int x1, int y1, int x2, int y2) const;
 
 	void    fclip_push_quad_next(int level, quad_t& q, point_t *p1, point_t *p2, point_t *p3, point_t *p4);
-	void    fclip_push_quad(int level, quad_t& q);
+	unsigned fclip_classify(int &level, const quad_t &q) const;
+	void    fclip_push_quad(int level, quad_t& q, unsigned out = 0);
 	void require_geometry_space(int points, int quads) const;
 
 	static float    min4f(float a, float b, float c, float d);
@@ -1128,7 +1220,6 @@ private:
 		int sky_base = 0, sky_last_tx0 = 0;
 	} m_still;
 
-	clipper_t m_clipfn[4];
 	uint16_t* m_display_list_current = nullptr;
 
 	int m_overlay_stride = 0;
@@ -1136,6 +1227,7 @@ private:
 	std::unique_ptr<uint32_t[]> m_overlay_hud_snapshot;
 	void build_overlay_mask(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 	void apply_overlay_stencil(bitmap_rgb32 &bitmap, const rectangle &cliprect);
+	void add_overlay_parts(const rectangle &cliprect);
 	void clear_moire_marks(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 	void screen_update(bitmap_rgb32 &bitmap, const rectangle &cliprect);
 
@@ -1145,7 +1237,12 @@ private:
 		model1 &m;
 		uint32_t pen(int i) const { return m.m_pens[i & 0x1fff]; }
 		uint32_t black_pen() const { return 0; }
-		void set_pen_color(int i, int r, int g, int b) { m.m_pens[i & 0x1fff] = (r << 16) | (g << 8) | b; }
+		void set_pen_color(int i, int r, int g, int b) {
+			i &= 0x1fff;
+			const uint32_t colour = (r << 16) | (g << 8) | b;
+			if (i < 0x1000 && m.m_pens[i] != colour) ++m.m_tile_palette_revision;
+			m.m_pens[i] = colour;
+		}
 	} m_palette_obj{*this};
 	palette_t *m_palette = &m_palette_obj;
 	struct screen_t

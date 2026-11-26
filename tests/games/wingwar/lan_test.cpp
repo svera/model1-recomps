@@ -2,6 +2,7 @@
 #include "../../../src/games/wingwar/profile.h"
 #include "../../../src/host/model1_lan.h"
 #include "../../../src/host/regions.h"
+#include "../../../src/machine/parallel.h"
 #include "../../../src/rt/native.h"
 #include <cassert>
 #include <cstring>
@@ -85,4 +86,36 @@ int main(int argc, char **argv)
 		adapters[p].stop(*machines[p]);
 	}
 	puts("Wing War LAN: both ROMs entered play and exchanged changing aircraft positions");
+
+	auto &machine = *machines[0];
+	machine.set_drawing(true);
+	machine.set_render_scale(2);
+	machine.set_aspect(16.0f / 9);
+	machine.set_smooth(true);
+	machine.set_parts_mode(true);
+	model1::gpu_parts parts;
+	side_job worker;
+	int early_frames = 0;
+	for (int frame = 0; frame < 300 && !early_frames; frame++) {
+		machine.run_frame();
+		machine.m_audio_out.clear();
+		const uint64_t before = machine.frame_number();
+		machine.machine_free = [&] {
+			++early_frames;
+			worker.start([&] {
+				machine.set_defer_capture(true);
+				machine.run_frame();
+				machine.set_defer_capture(false);
+			});
+		};
+		machine.render_parts(double(before) - 0.5, parts);
+		machine.machine_free = nullptr;
+		worker.wait();
+		if (early_frames) {
+			machine.finish_capture();
+			assert(machine.frame_number() == before + 1);
+		}
+	}
+	assert(early_frames == 1);
+	puts("Wing War: mid-picture worker handoff completed without inspecting pixels");
 }

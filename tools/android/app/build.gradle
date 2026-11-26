@@ -1,0 +1,141 @@
+plugins {
+    id 'com.android.application'
+}
+
+def repo = file('../../..')
+def sdl = new File(repo, 'build/deps/SDL3-3.4.18')
+def generatedAssets = new File(repo, 'build/android/common-assets')
+def generatedGameAssets = new File(repo, 'build/android/game-assets')
+def androidVersionCode = System.getenv('ANDROID_VERSION_CODE')
+def androidVersionName = System.getenv('ANDROID_VERSION_NAME')
+if ((androidVersionCode == null) != (androidVersionName == null)) {
+    throw new GradleException('ANDROID_VERSION_CODE and ANDROID_VERSION_NAME must be set together')
+}
+if (androidVersionCode != null &&
+        (!(androidVersionCode ==~ /[1-9][0-9]*/) || androidVersionCode.toBigInteger() > 2100000000)) {
+    throw new GradleException('ANDROID_VERSION_CODE must be an integer from 1 to 2100000000')
+}
+if (androidVersionName != null && !(androidVersionName ==~ /[A-Za-z0-9._+-]+/)) {
+    throw new GradleException('ANDROID_VERSION_NAME may contain only letters, digits, dot, underscore, plus and hyphen')
+}
+def gitOutput = { List<String> args ->
+    providers.exec {
+        workingDir repo
+        commandLine(['git'] + args)
+    }.standardOutput.asText.get().trim()
+}
+def nativeVersion = androidVersionName == null ? gitOutput(['describe', '--tags', '--always']) : androidVersionName
+def nativeCommit = gitOutput(['rev-parse', '--short', 'HEAD'])
+def games = [
+    vr:      [title: 'Virtua Racing', applicationId: 'recomp.vr1.android', io: 'model1io.zip', log: 'virtua-racing-log.txt'],
+    swa:     [title: 'Star Wars Arcade', applicationId: 'recomp.swa.android', io: 'model1io.zip', log: 'swa-log.txt'],
+    wingwar: [title: 'Wing War', applicationId: 'recomp.wingwar.android', io: 'model1io2.zip', log: 'wingwar-log.txt'],
+]
+
+tasks.register('prepareLicenses', Exec) {
+    workingDir repo
+    commandLine 'sh', 'tools/release/licenses.sh'
+}
+
+tasks.register('prepareGameAssets', Sync) {
+    dependsOn tasks.named('prepareLicenses')
+    into generatedAssets
+    from new File(repo, 'LICENSE')
+    from new File(repo, 'build/LICENSES.txt')
+    into('assets/ui') { from new File(repo, 'assets/ui') }
+    into('assets/fonts') { from new File(repo, 'assets/fonts') }
+}
+
+def gameAssets = []
+games.each { id, game ->
+    gameAssets << tasks.register("prepare${id.capitalize()}Assets", Sync) {
+        into new File(generatedGameAssets, id)
+        into("assets/games/${id}") { from new File(repo, "assets/games/${id}/${id}_map.txt") }
+        into("assets/games/${id}/icon") { from new File(repo, "assets/games/${id}/icon/icon.png") }
+    }
+}
+
+android {
+    namespace 'recomp.vr1.android'
+    compileSdk 35
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        minSdk 26
+        targetSdk 35
+        versionCode androidVersionCode == null ? 1 : androidVersionCode.toInteger()
+        versionName androidVersionName == null ? '0.1-dev' : androidVersionName
+        buildConfigField 'boolean', 'AUTO_START_GAME', 'false'
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+                arguments "-DM1_ANDROID_VERSION=${nativeVersion}", "-DM1_ANDROID_COMMIT=${nativeCommit}"
+                targets 'main'
+            }
+        }
+    }
+    flavorDimensions 'game'
+    productFlavors {
+        games.each { id, game ->
+            create(id) {
+                dimension 'game'
+                applicationId game.applicationId
+                manifestPlaceholders = [appLabel: "${game.title} Recomp"]
+                buildConfigField 'String', 'GAME_TITLE', "\"${game.title}\""
+                buildConfigField 'String', 'GAME_ARCHIVE', "\"${id}.zip\""
+                buildConfigField 'String', 'IO_ARCHIVE', "\"${game.io}\""
+                buildConfigField 'String', 'LOG_NAME', "\"${game.log}\""
+                externalNativeBuild {
+                    cmake { arguments "-DM1_GAME=${id}" }
+                }
+            }
+        }
+    }
+    buildFeatures { buildConfig true }
+    buildTypes {
+        release {
+            buildConfigField 'boolean', 'AUTO_START_GAME', 'true'
+        }
+        diagnostics {
+            initWith debug
+            versionNameSuffix '-diagnostics'
+            externalNativeBuild {
+                cmake {
+                    arguments '-DM1_ALWAYS_FRAME_TIMINGS=ON'
+                }
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path 'CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+    sourceSets {
+        main.java.srcDir new File(sdl, 'android-project/app/src/main/java')
+        main.assets.srcDir generatedAssets
+        games.each { id, game ->
+            maybeCreate(id).assets.srcDir new File(generatedGameAssets, id)
+        }
+    }
+}
+
+tasks.named('prepareGameAssets') {
+    from(android.ndkDirectory) {
+        include 'NOTICE', 'NOTICE.toolchain'
+        rename { "NDK-${it}.txt" }
+    }
+}
+
+tasks.configureEach {
+    if ((name.startsWith('merge') && name.endsWith('Assets'))
+            || name.startsWith('lint')
+            || (name.startsWith('generate') && name.contains('Lint') && name.endsWith('Model'))) {
+        dependsOn tasks.named('prepareGameAssets')
+        dependsOn gameAssets
+    }
+}

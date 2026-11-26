@@ -1397,7 +1397,7 @@ static void stop_searching(lan_device *device)
 	device->room_count = 0;
 }
 
-void lan_update(lan_device *device)
+void lan_poll(lan_device *device)
 {
 	uint8_t bytes[PACKET_MOST];
 	lan_address from;
@@ -1405,13 +1405,20 @@ void lan_update(lan_device *device)
 
 	if (!device)
 		return;
-	device->clock++;
 	while ((size = lan_udp_receive(device->socket, bytes, sizeof(bytes), &from)) > 0)
 		take_datagram(device, bytes, size, from, AT_OWN);
 	while ((size = lan_udp_receive(device->beacon_socket, bytes, sizeof(bytes), &from)) > 0)
 		take_datagram(device, bytes, size, from, AT_BEACONS);
 	while ((size = lan_udp_receive(device->seek_socket, bytes, sizeof(bytes), &from)) > 0)
 		take_datagram(device, bytes, size, from, AT_SEEKS);
+}
+
+void lan_update(lan_device *device)
+{
+	if (!device)
+		return;
+	device->clock++;
+	lan_poll(device);
 
 	switch (device->role)
 	{

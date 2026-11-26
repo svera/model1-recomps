@@ -22,6 +22,31 @@ static void test_frame_clock()
 	assert(run_due() == 0);
 	clock.update(1.0 / hz);
 	assert(run_due() == 1);
+	clock.update(4.0 / hz);
+	int picture_opportunities = 0;
+	while (clock.due()) {
+		if (!clock.defer_picture(false)) ++picture_opportunities;
+		clock.advance();
+	}
+	assert(picture_opportunities == 1);
+	clock.reset();
+	clock.update(4.0 / hz);
+	// A peer may block the next frame, even when the clock has more work due.
+	assert(clock.defer_picture(false));
+	assert(!clock.defer_picture(true));
+	clock.advance();
+	assert(!clock.defer_picture(true));
+	clock.reset();
+	clock.update(0.75 / hz);
+	assert(clock.fraction() >= 0.5);
+	clock.advance();
+	assert(!clock.due());
+	assert(std::fabs(clock.until_next() - 1.25 / hz) < 1e-9);
+	clock.update(0.25 / hz);
+	assert(!clock.due());
+	clock.update(1.0 / hz);
+	assert(run_due() == 1);
+	clock.reset();
 	clock.update(10);
 	assert(run_due() == 4);
 	clock.reset();

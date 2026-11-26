@@ -13,6 +13,13 @@
 			color: #ffd23f;
 			font-effect: outline(2dp #0b1430);
 		}
+		/* Android: below the status bar (the battery), and larger on a phone's screen */
+		body.android #fps {
+			right: 28dp;
+			top: 52dp;
+			font-size: 34dp;
+			font-effect: outline(3dp #0b1430);
+		}
 		/* a notice that comes and goes, at the bottom right (out of the menu's way and the HUD's) */
 		#toast {
 			position: absolute;

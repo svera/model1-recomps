@@ -50,6 +50,8 @@ private:
 	};
 	ctc_channel m_ctc[4]{};
 	uint8_t m_ctc_vector = 0;
+	uint64_t m_ctc_due = UINT64_MAX;   // the soonest a running channel counts down (checked each instruction)
+	void ctc_schedule();
 	uint8_t port_input(int port);
 	void port_output(int port, uint8_t value);
 	void ctc_write(uint8_t channel, uint8_t value);

@@ -8,6 +8,21 @@
 #include <string>
 #include <vector>
 
+class lan_picture_grace
+{
+public:
+	bool defer(bool waiting, uint64_t now)
+	{
+		if (!waiting) { reset(); return false; }
+		if (!m_waiting) { m_waiting = true; m_started = now; }
+		return now - m_started < 2000000;
+	}
+	void reset() { m_waiting = false; }
+private:
+	uint64_t m_started = 0;
+	bool m_waiting = false;
+};
+
 class lan_session
 {
 public:
@@ -59,6 +74,7 @@ public:
 			m_next += 1000;
 		}
 		if (now >= m_next) m_next = now + 1000;
+		if (!polls) lan_poll(m_device.get());
 		if (const char *problem = lan_problem(m_device.get())) fail(std::string("LAN: ") + problem);
 	}
 	bool interrupted() { const bool value = m_interrupted; m_interrupted = false; return value; }

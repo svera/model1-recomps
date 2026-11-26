@@ -18,7 +18,7 @@ struct model1_video_test
 	{
 		model1 &machine;
 		std::vector<model1::quad_t> quads;
-		std::vector<model1::point_t> points;
+		std::vector<std::array<model1::rec_point, 4>> points;
 		explicit geometry_sink(model1 &m) : machine(m) {}
 		const char *name() const override { return "geometry only"; }
 		bool draw(const gpu3d_poly *, size_t, const gpu3d_span *, size_t, size_t,
@@ -91,7 +91,7 @@ struct model1_video_test
 						auto contains = [&](size_t index, double x, double y) {
 							bool inside = false;
 							for (int i = 0, j = 3; i < 4; j = i++) {
-								const auto &a = sink.points[index * 4 + i], &b = sink.points[index * 4 + j];
+								const auto &a = sink.points[index][i], &b = sink.points[index][j];
 								if ((a.fy > y) != (b.fy > y) && x < (b.fx - a.fx) * (y - a.fy) / (b.fy - a.fy) + a.fx)
 									inside = !inside;
 							}

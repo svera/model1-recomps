@@ -165,7 +165,7 @@ static void network_board()
 		update();
 		if (!master.update(host, now, a)) break;
 	}
-	assert(host.error().find("Fewer than two racers") != std::string::npos);
+	assert(host.error() == "Fewer than two players remain. The linked game has ended.");
 	master.stop(a); slave.stop(b);
 	assert(!a.link() && !b.link() && !master.active() && !slave.active());
 	assert(host.host());
@@ -337,7 +337,8 @@ struct delivery
 	model1_link::packet bytes;
 };
 
-static int asynchronous(const char *dir, bool impaired, bool grand_prix, int count, bool dropout)
+static int asynchronous(const char *dir, bool impaired, bool grand_prix, int count, bool dropout,
+	bool results_compositor)
 {
 	std::array<std::unique_ptr<model1>, 4> machines;
 	std::array<rec::context, 4> runtimes;
@@ -374,6 +375,10 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix, int cou
 	std::array<int, 4> previous{-1, -1, -1, -1}, races{}, race_frames{}, results{};
 	std::array<bool, 4> saw_results{};
 	int start_at = 2400, completed = 0;
+	int results_frames = 0, moving_results = 0, still_results = 0;
+	bool results_prepared = false, slide_changed_since_picture = false;
+	std::array<uint16_t, model1::SCREEN_H> previous_scroll{};
+	model1::gpu_parts results_parts;
 	bool racing = false;
 	const int limit = grand_prix ? 1200000 : 180000;
 	for (int frames = 0; frames < limit * count; frames++) {
@@ -434,6 +439,38 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix, int cou
 			return 1;
 		}
 		const int phase = m.work_ram()[0x1138];
+		if (results_compositor && p == 0 && phase == 0x1b && !results_prepared) {
+			m.set_smooth(true);
+			m.set_drawing(true);
+			m.set_render_scale(2);
+			m.set_aspect(16.0f / 9);
+			results_prepared = true;
+		}
+		if (results_compositor && p == 0 && phase == 0x1c) {
+			++results_frames;
+			std::array<uint16_t, model1::SCREEN_H> scroll{};
+			for (int y = 0; y < model1::SCREEN_H; y++) scroll[y] = m.peek16(0x708000 + 2 * y);
+			if (results_frames > 1 && scroll != previous_scroll)
+				slide_changed_since_picture = true;
+			previous_scroll = scroll;
+			if (results_frames > 20 && results_frames % 10 == 0) {
+				assert(m.render_parts(double(m.frame_number() - 1) + 0.5, results_parts) == 1);
+				for (int y = 0; y < model1::SCREEN_H; y++)
+					assert(m.peek16(0x708000 + 2 * y) == scroll[y]);
+				if (slide_changed_since_picture) ++moving_results;
+				else ++still_results;
+				slide_changed_since_picture = false;
+			}
+			if (results_frames == 300) {
+				assert(moving_results && still_results);
+				puts("VR LAN results: moving and stationary slide frames use compositing without changing scroll state");
+				return 0;
+			}
+		}
+		if (results_compositor && p == 0 && results_frames && phase != 0x1c) {
+			fprintf(stderr, "VR LAN results: phase ended before compositing could be checked\n");
+			return 1;
+		}
 		if (phase != previous[p]) {
 			fprintf(stderr, "LAN proof: %s %s t=%d cabinet=%d phase=%02x ticks=%llu participants=%u\n",
 				impaired ? "impaired" : "clean", grand_prix ? "GP" : "normal", elapsed, p + 1, phase,
@@ -469,7 +506,13 @@ static int asynchronous(const char *dir, bool impaired, bool grand_prix, int cou
 				completed, races[0], races[1], results[0], results[1]);
 			for (int i = 0; i < count; i++)
 				if (connected(i) && (races[i] != completed || !saw_results[i])) return 1;
-			if (completed == (dropout ? 2 : 10)) return 0;
+			if (completed == (dropout ? 2 : 10)) {
+				if (results_compositor) {
+					fprintf(stderr, "VR LAN results: compositing check did not reach 300 frames\n");
+					return 1;
+				}
+				return 0;
+			}
 			racing = false;
 			saw_results = {};
 			for (int i = 0; i < count; i++)
@@ -498,19 +541,20 @@ int main(int argc, char **argv)
 	network_group(3, true, true);
 	if (argc == 1) return 0;
 	if (argc < 3 || strcmp(argv[1], "--roms")) {
-		fprintf(stderr, "usage: vr_lan_test [--roms <regions> [--impaired] [--grand-prix] [--players 2|3|4] [--dropout]]\n");
+		fprintf(stderr, "usage: vr_lan_test [--roms <regions> [--impaired] [--grand-prix] [--players 2|3|4] [--dropout] [--results-compositor]]\n");
 		return 2;
 	}
 	bool impaired = false, grand_prix = false;
-	bool dropout = false;
+	bool dropout = false, results_compositor = false;
 	int count = 2;
 	for (int i = 3; i < argc; i++) {
 		if (!strcmp(argv[i], "--impaired")) impaired = true;
 		else if (!strcmp(argv[i], "--grand-prix")) grand_prix = true;
 		else if (!strcmp(argv[i], "--dropout")) dropout = true;
+		else if (!strcmp(argv[i], "--results-compositor")) results_compositor = true;
 		else if (!strcmp(argv[i], "--players") && i + 1 < argc) count = atoi(argv[++i]);
 		else return 2;
 	}
 	if (count < 2 || count > 4 || (dropout && count < 3)) return 2;
-	return asynchronous(argv[2], impaired, grand_prix, count, dropout);
+	return asynchronous(argv[2], impaired, grand_prix, count, dropout, results_compositor);
 }

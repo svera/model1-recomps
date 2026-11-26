@@ -127,6 +127,9 @@ void lan_close(lan_device *device);
 /* Each frame of the game's, once, whether it runs one or holds: the datagrams taken and sent */
 void lan_update(lan_device *device);
 
+/* Receive pending datagrams without advancing the protocol's frame clock. */
+void lan_poll(lan_device *device);
+
 lan_role lan_role_of(const lan_device *device);
 bool lan_hosting(const lan_device *device);
 

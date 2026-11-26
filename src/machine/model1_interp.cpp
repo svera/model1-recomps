@@ -389,13 +389,29 @@ void model1::record_frame()
 		m_logic[0] = m_logic[1] = m_logic_prev = logic_frame{};
 		// (when the host puts pictures together on the GPU: drawn in parts, so the 2D screens and
 		// curtains don't cost a whole picture drawn at the render scale and uploaded every frame)
-		if (m_parts_mode) render_parts(double(m_frame), m_own_parts, false);
-		else {
-			screen_update(m_bitmap, m_bitmap.cliprect());
-			m_unshown = true;
-			m_frame_parts = false;
-		}
+		if (m_defer_capture) m_capture_pending = true;
+		else draw_capture();
 	}
+}
+
+void model1::draw_capture()
+{
+	if (m_parts_mode) render_parts(double(m_frame), m_own_parts, false);
+	else {
+		screen_update(m_bitmap, m_bitmap.cliprect());
+		m_unshown = true;
+		m_frame_parts = false;
+	}
+}
+
+// A frame with no 3D that ended beside a picture (set_defer_capture): drawn now, as it was then.
+void model1::finish_capture()
+{
+	if (!m_capture_pending) return;
+	m_capture_pending = false;
+	--m_frame;
+	draw_capture();
+	++m_frame;
 }
 
 bool model1::tile_slide_scroll(int row, uint8_t mode, double now, float &scroll) const
@@ -480,6 +496,11 @@ void model1::smooth_screen_update(double now)
 		screen_update(m_bitmap, m_bitmap.cliprect());
 		return;
 	}
+	if (m_parts) {
+		// This path positions individual rows at render resolution, not in the 1x parts.
+		m_parts = nullptr;
+		m_parts_whole = true;
+	}
 	m_tile_slide_interpolating = true;
 	m_tile_slide_layer = slide->layer;
 	screen_update(m_bitmap, m_bitmap.cliprect());
@@ -523,15 +544,26 @@ bool model1::render_smooth(double now, bool shown)
 		m_frame_parts = m_parts != nullptr;
 		if (shown) { m_shown = true; m_shown_now = now; m_shown_frame = m_frame; }
 	};
+	// The picture, then `tail`: run by machine_free's caller instead if the game's next frame
+	// starts mid-picture (the tail's state is the game's to read as it starts, or to change)
+	auto draw = [&](const std::function<void()> &tail) {
+		bool done = false;
+		auto once = [&] { if (!done) { done = true; tail(); } };
+		gpu_parts *const parts = m_parts;
+		m_picture_tail = once;
+		smooth_screen_update(now);
+		m_picture_tail = nullptr;
+		once();
+		m_parts = parts;
+	};
 	if (!m_video->smooth_frames) {
 		m_replaying = false;
 		m_replay_older = false;
 		m_replay_extra = false;
-		smooth_screen_update(now);
-		drawn();
+		draw(drawn);
 		return true;
 	}
-	if (m_logic[1].list.empty()) { smooth_screen_update(now); drawn(); return true; }
+	if (m_logic[1].list.empty()) { draw(drawn); return true; }
 	const logic_frame &a = m_logic[0], &b = m_logic[1];
 	double alpha = 1;
 	if (!a.list.empty() && b.frame > a.frame) {
@@ -633,18 +665,19 @@ bool model1::render_smooth(double now, bool shown)
 	const auto render_done = m_render_done;     // emulation state: drawing again mustn't touch it
 	const int quads = m_last_quads;
 	gpu_parts *const parts = m_parts;
-	if (parts && m_logic[m_replay_older ? 0 : 1].above_hud) {
+	if (parts && title().name != "swa" && m_logic[m_replay_older ? 0 : 1].above_hud) {
 		// Parts cannot composite above-HUD objects. Choose the whole picture before drawing its 3D.
 		m_parts = nullptr;
 		m_parts_whole = true;
 	}
-	smooth_screen_update(now);
-	m_render_done = render_done;
-	m_last_quads = quads;
-	m_replaying = false;
-	m_replay_older = false;
-	m_replay_extra = false;
-	drawn();
+	draw([&] {
+		m_render_done = render_done;
+		m_last_quads = quads;
+		m_replaying = false;
+		m_replay_older = false;
+		m_replay_extra = false;
+		drawn();
+	});
 	m_parts = parts;
 	static const bool log = getenv("M1_LOG_SMOOTH") != nullptr;
 	if (log && alpha < 1)

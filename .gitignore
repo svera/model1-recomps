@@ -1,6 +1,9 @@
 # nothing from the game: bring your own MAME "vf" set
 roms/
 build/
+/tools/android/.gradle/
+/tools/android/local.properties
+/tools/android/app/.cxx/
 refs/
 *.zip
 *.bin

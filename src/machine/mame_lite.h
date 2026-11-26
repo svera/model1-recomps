@@ -34,6 +34,9 @@ template <class T> struct page_allocator
 	{
 #ifdef _WIN32
 		void *p = _aligned_malloc(std::max<size_t>(bytes(n), PAGE), PAGE);
+#elif defined(__ANDROID__)
+		void *p = nullptr;
+		if (posix_memalign(&p, PAGE, std::max<size_t>(bytes(n), PAGE)) != 0) p = nullptr;
 #else
 		void *p = std::aligned_alloc(PAGE, std::max<size_t>(bytes(n), PAGE));
 #endif
