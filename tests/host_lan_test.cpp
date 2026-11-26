@@ -7,6 +7,16 @@
 
 int main()
 {
+	lan_picture_grace picture_wait;
+	assert(!picture_wait.defer(false, 0));
+	assert(picture_wait.defer(true, 10000000));
+	assert(picture_wait.defer(true, 11999999));
+	assert(!picture_wait.defer(true, 12000000));
+	assert(!picture_wait.defer(true, 43000000));
+	assert(!picture_wait.defer(false, 44000000));
+	assert(picture_wait.defer(true, 45000000));
+	picture_wait.reset();
+	assert(picture_wait.defer(true, 47000000));
 	lan_name_editor edit{"RACER-123", true};
 	assert(edit.append("svera") && edit.text == "SVERA");
 	assert(edit.append(" 2") && edit.text == "SVERA 2" && valid_lan_name(edit.text));

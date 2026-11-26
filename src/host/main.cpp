@@ -1911,7 +1911,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	}
 	bool running = true, paused = false, menu_failed = false;
 	std::array<uint64_t, 3> next_picture{};
-	uint64_t last_lan_present = 0;
+	lan_picture_grace lan_picture_wait;
 	bool shape_restart = false;
 	bool second_player = !on_demand, join_pending = false, join_start_was = false;
 	bool player1_started = !on_demand;
@@ -3219,8 +3219,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		if (network_cabinet.active() && network_cabinet.racers() != lan_racers) {
 			if (lan_racers && network_cabinet.racers() < lan_racers)
-				join_overlay.toast("A racer disconnected. " + std::to_string(network_cabinet.racers()) +
-					" racers remain.", 8);
+				join_overlay.toast("A player disconnected. " + std::to_string(network_cabinet.racers()) +
+					" players remain.", 8);
 			lan_racers = network_cabinet.racers();
 		}
 		std::string lan_notice;
@@ -3780,6 +3780,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				perf_last_frame = frame_started;
 			}
 			const bool lan_boot_frame = lan_booting;
+			lan_picture_wait.reset();
 			display_trace.log("simulation begin", cabinets[0]->display->window);
 			run_frame();
 			display_trace.log("simulation returned", cabinets[0]->display->window);
@@ -3801,8 +3802,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		std::array<SDL_Rect, 3> viewports{};
 		std::array<float, 3> picture_aspects{};
 		const uint64_t picture_now = SDL_GetTicksNS();
-		const bool defer_lan_picture = lan_waiting && !join_overlay.is_open() && !shot_due && !screenshot_pending &&
-			picture_now - last_lan_present < 33000000ull;
+		const bool picture_grace = lan_picture_wait.defer(lan_waiting, picture_now);
+		const bool defer_lan_picture = picture_grace && !join_overlay.is_open() && !shot_due && !screenshot_pending;
 		bool ahead = false, early = false, inputs_ahead = false, restart_picture = false;
 		uint64_t ahead_ns = 0;
 		auto ahead_possible = [&] {
@@ -3846,6 +3847,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		auto complete_ahead = [&] {
 			if (!ahead) return true;
 			game_worker.wait("M1 multiplayer game-thread handoff");
+			lan_picture_wait.reset();
 			if (early) cabinets[0]->machine.finish_capture();
 			++ahead_frames;
 			if (early) ++early_frames;
@@ -4098,7 +4100,6 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			if (!complete_ahead()) return 1;
 			display_trace.log("SDL_RenderPresent returned", window);
 			if (p == 0) display_trace.presented();
-			if (p == 0) last_lan_present = SDL_GetTicksNS();
 			if (p == 0) ++fps_presents;
 			if (perf_enabled) {
 				const uint64_t present_ns = SDL_GetTicksNS() - present_started;

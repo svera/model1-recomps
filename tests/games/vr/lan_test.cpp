@@ -165,7 +165,7 @@ static void network_board()
 		update();
 		if (!master.update(host, now, a)) break;
 	}
-	assert(host.error().find("Fewer than two racers") != std::string::npos);
+	assert(host.error() == "Fewer than two players remain. The linked game has ended.");
 	master.stop(a); slave.stop(b);
 	assert(!a.link() && !b.link() && !master.active() && !slave.active());
 	assert(host.host());

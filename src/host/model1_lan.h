@@ -60,10 +60,10 @@ public:
 		if (board && board->ticks()) m_running = true;
 		const auto members = session.members(true);
 		if (int(members.size()) != m_count || session.interrupted())
-			return session.fail("LAN session interrupted. The linked race has ended.");
+			return session.fail("LAN session interrupted. The linked game has ended.");
 		for (int i = 0; i < m_count; i++)
 			if (members[i].id != m_ids[i])
-				return session.fail("The racing roster changed. The linked race has ended.");
+				return session.fail("The player roster changed. The linked game has ended.");
 		if (!m_received) { m_last_packet.fill(now); m_last_progress.fill(now); m_received = true; }
 		for (int i = 0; i < m_count; i++) {
 			if (i == m_player - 1 || !(m_active_mask & (1u << i))) continue;
@@ -78,14 +78,14 @@ public:
 		if (paused()) m_last_progress.fill(now);
 		if (!host()) {
 			if (members[0].gone || now > m_last_packet[0] + (m_peers[0].available() ? 3000 : 15000))
-				return session.fail("The host disconnected. The linked race has ended.");
+				return session.fail("The host disconnected. The linked game has ended.");
 			if (m_peers[0].available()) {
 				m_active_mask &= m_peers[0].active_mask();
 				m_pause_step = m_peers[0].pause_step();
 				m_pause_epoch = m_peers[0].pause_epoch();
 			}
 			if (!(m_active_mask & (1u << (m_player - 1))))
-				return session.fail("The host lost this racer's connection. The linked race has ended.");
+				return session.fail("The host lost this player's connection. The linked game has ended.");
 		} else {
 			for (int i = 1; i < m_count; i++)
 				if ((m_active_mask & (1u << i)) && (members[i].gone ||
@@ -93,13 +93,13 @@ public:
 					(!paused() && board && now > m_last_progress[i] + 3000 &&
 						uint32_t(m_peers[i].frame() - uint32_t(board->ticks())) >= 0x80000000u))) {
 					m_active_mask &= uint8_t(~(1u << i));
-					fprintf(stderr, "LAN: cabinet %d disconnected; %d racers remain (gone=%d data=%d frame=%u/%llu)\n",
+					fprintf(stderr, "LAN: cabinet %d disconnected; %d players remain (gone=%d data=%d frame=%u/%llu)\n",
 						i + 1, racers(), members[i].gone, m_peers[i].available(), m_peers[i].frame(),
 						(unsigned long long)(board ? board->ticks() : 0));
 				}
 		}
 		if (racers() < 2)
-			return session.fail("Fewer than two racers remain. The linked race has ended.");
+			return session.fail("Fewer than two players remain. The linked game has ended.");
 		if (m_active_mask != uint8_t((1u << m_count) - 1) && !m_retire_peer)
 			return session.fail("A cabinet disconnected. This game cannot continue without it.");
 		bool acknowledged = true;

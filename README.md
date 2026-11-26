@@ -1,14 +1,14 @@
 # Model 1 Recomps
 
-<p align="center"><b>SEGA classic arcade games on your computer, with sharper graphics,
+<p align="center"><b>SEGA classic arcade games on your computer or Android device, with sharper graphics,
 widescreen support, and smooth motion at up to 120 FPS.</b></p>
 
-This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native desktop runtimes: *Virtua Racing*, *Star Wars Arcade* and *Wing War*.
+This project forks Mr. Finster's superb [Virtua Fighter recomp](https://github.com/mr-finster/vf1-recomp), refactoring it to support the rest of Sega's Model 1 arcade hardware games library as native runtimes for multiple systems: *Virtua Racing*, *Star Wars Arcade* and *Wing War*.
 
 <p align="center">
   <a href="https://github.com/svera/model1-recomps/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/svera/model1-recomps?include_prereleases&amp;label=release"></a>
   <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-blue"></a>
-  <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Steam%20Deck%20%2F%20Linux-informational">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Steam%20Deck%20%2F%20Linux%20%7C%20Android-informational">
 </p>
 
 <p align="center">
@@ -44,9 +44,10 @@ Every game includes:
 - **Game > Play style:** PC starts without coins; Arcade uses the cabinet's coin settings.
 - **Sound:** adjust the audio levels.
 - Saved settings and the arcade's own difficulty options.
-- Packages for macOS, Windows and Steam Deck / Linux.
+- Packages for macOS, Windows and Steam Deck / Linux; experimental Android builds.
 
-Open the menu with **Esc** or **View / Select**. Higher graphics settings need a faster computer;
+Open the menu with **Esc**, **View / Select**, or the Android **Menu** touch button.
+Higher graphics settings need a faster system;
 if play feels slow, lower the render scale or frame rate.
 
 Each game's section below lists what is specific to that game.
@@ -73,12 +74,14 @@ Each game's section below lists what is specific to that game.
 
 - All three courses, four camera views, and the original arcade racing.
 - Local split-screen multiplayer: a second controller can press Start to join; disconnecting it returns to solo play.
-- Experimental LAN rooms for two to four computers: create a room or find and join one without entering IP addresses.
+- Experimental LAN rooms for two to four systems: create a room or find and join one without entering IP addresses.
 - Optional original Live Monitor broadcast above the players or in a spectator window.
 - Saved high scores.
 - Car color, language, and course settings.
 
 ### Getting started
+
+On macOS, Windows and Linux:
 
 1. [Download](https://github.com/svera/model1-recomp/releases) the package for your system and extract it.
 2. Keep **`vr.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
@@ -103,6 +106,9 @@ disappear in the Live Monitor, as in the original.
 **Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
 **VirtuaRacing.sh** instead of using a file picker. On Steam Deck, add the launcher as a
 Non-Steam Game and set **Start In** to the extracted **VirtuaRacing** folder.
+
+**Android:** install the APK, import both ROM archives in the launcher, then use
+the on-screen **Start** button or press **Start** on a controller.
 
 ### Controls
 
@@ -227,6 +233,8 @@ Online multiplayer is not supported.
 
 ### Getting started
 
+On macOS, Windows and Linux:
+
 1. [Download](https://github.com/svera/model1-recomp/releases) the package for your system and extract it.
 2. Keep **`swa.zip`** and **`model1io.zip`** together in the same folder. Leave them zipped.
 3. Start the game and select **`swa.zip`** when asked. It remembers your files for next time.
@@ -241,6 +249,9 @@ Online multiplayer is not supported.
 **Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
 **StarWarsArcade.sh** instead of using a file picker. On Steam Deck, add the launcher as a
 Non-Steam Game and set **Start In** to the extracted **StarWarsArcade** folder.
+
+**Android:** install the APK, import both ROM archives in the launcher, then use
+the on-screen **Start** button or press **Start** on a controller.
 
 ### Controls
 
@@ -314,6 +325,8 @@ fast-forward, including through attract mode;
 
 ### Getting started
 
+On macOS, Windows and Linux:
+
 1. [Download](https://github.com/svera/model1-recomps/releases) the package for your system and extract it.
 2. Keep **`wingwar.zip`** and **`model1io2.zip`** together in the same folder. Leave them zipped.
 3. Start the game and select **`wingwar.zip`** when asked. It remembers your files for next time.
@@ -327,6 +340,9 @@ fast-forward, including through attract mode;
 **Steam Deck / Linux:** put both ROM archives in the package's **roms** folder and run
 **WingWar.sh** instead of using a file picker. On Steam Deck, add the launcher as a
 Non-Steam Game and set **Start In** to the extracted **WingWar** folder.
+
+**Android:** install the APK, import both ROM archives in the launcher, then use
+the on-screen **Start** button or press **Start** on a controller.
 
 ### Controls
 
@@ -423,51 +439,6 @@ make test-wingwar-profile
 ```
 
 `test-host-graphics` needs a working SDL graphics driver (it uses a hidden window).
-
-### Android prototype
-
-Experimental Android builds are available for **Virtua Racing**,
-**Star Wars Arcade**, and **Wing War**, on ARM64 (`arm64-v8a`)
-with an external controller. They are not yet supported releases:
-device compatibility, JIT, graphics, audio and lifecycle behavior still need
-validation. It has no on-screen game controls and currently starts a single cabinet.
-The launcher and game request landscape orientation, allowing either landscape rotation.
-
-To build the debug APKs, install JDK 17 or 21, the Android SDK platform 35, NDK
-28.2.13676358 and CMake 3.22.1. Set `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) to
-the SDK directory, then run:
-
-```sh
-tools/android/build.sh
-```
-
-The script fetches the same verified SDL and FreeType sources as the desktop
-packaging scripts and uses SDL's Gradle wrapper. The APKs and required
-user-supplied MAME archives are:
-
-| Game | Debug APK under `tools/android/app/build/outputs/apk/` | Archives |
-| --- | --- | --- |
-| Virtua Racing | `vr/debug/app-vr-debug.apk` | `vr.zip`, `model1io.zip` |
-| Star Wars Arcade | `swa/debug/app-swa-debug.apk` | `swa.zip`, `model1io.zip` |
-| Wing War | `wingwar/debug/app-wingwar-debug.apk` | `wingwar.zip`, `model1io2.zip` |
-
-Each game is a separate app. Install its APK on an ARM64 Android device,
-connect a controller, and use its launcher to import the two archives separately.
-The archives and saves remain in that app's private storage; uninstalling the
-app removes them. Debug and diagnostics builds always show the launcher. In release
-builds, once both archives are imported, subsequent launches start the game
-automatically; leaving the game returns to the launcher to replace archives, view
-licences or export the log. Press Start to play and View/Select to open the game menu.
-On Android 13 or later, each game attempts a render-thread Performance Hint
-session when supported; the log reports whether it was enabled. It can increase
-power use, and gameplay continues without it if unavailable.
-The launcher icons use adaptive shapes and support themed icons on Android 13
-or later when the launcher enables them.
-
-For GPU performance diagnostics, select **Export diagnostic log** in the launcher
-after playing. It exports the most recent session's `log.txt`, including device,
-renderer, timing and file-path information, but not ROMs or saves. A new game
-session replaces the previous log.
 
 ## Repository layout
 

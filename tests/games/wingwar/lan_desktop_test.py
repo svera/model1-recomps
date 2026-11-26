@@ -103,6 +103,6 @@ with tempfile.TemporaryDirectory(prefix="wingwar-lan-desktop-") as directory:
         assert eeprom[0x17] == (7 if player == 2 else 0)
         assert nvram[0xf817] == eeprom[0x17]
     assert "ROOM FULL" in outputs[2], outputs[2]
-    assert "linked race has ended" in outputs[0], outputs[0]
+    assert "Fewer than two players remain. The linked game has ended." in outputs[0], outputs[0]
     assert re.search(r"LAN: status cabinet=0 .*phase=02", outputs[0]), outputs[0]
     print("Wing War LAN: two cabinets connected, third rejected, disconnect and standalone saves passed")

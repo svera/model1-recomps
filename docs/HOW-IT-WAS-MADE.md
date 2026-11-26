@@ -2097,10 +2097,31 @@ In manual Android-to-Mac LAN sessions with GPU checks temporarily disabled,
 the user reported that VR and Wing War gameplay, graphics, controls and audio
 worked, including pause and reconnect. Backgrounding a phone in a two-player
 session ended the race as expected. The Android shutdown logs recorded 2,777
-VR and 2,778 Wing War LAN frames using the early worker. The user observed low
-FPS on Wing War's Mac waiting screen; its cause has not been established.
-The nonvisual linked-ROM test exercised staggered starts and the guest waiting
-phase with zero native function fallbacks, but does not profile that Mac screen.
+VR and 2,778 Wing War LAN frames using the early worker. In a separate
+Android-to-Mac Wing War session, the user observed under 30 FPS on the Mac
+waiting screen. Phase `0x09` measurements showed about 57-58 simulation frames/s
+but only 26-27 presentations/s; emulation averaged about 2-3 ms/frame and picture
+preparation about 2-4 ms/view. Native fallbacks occurred in that session, but
+the presentation rate remained low even in windows where their count did not
+increase. The host had deferred pictures for up to 33 ms while waiting for LAN
+frames. It now polls briefly for a peer for up to 2 ms from the start of each
+wait, rather than delaying pictures based on the last presentation, without
+relaxing peer readiness. A repeat manual Mac/Android session with both changes
+showed about 60 presentations/s on the Mac waiting screen and zero fallbacks
+there; the user reported around 60 FPS. Both diagnostic sessions disabled
+automatic pixel comparisons, and they were not controlled single-change trials.
+After the pacing change, a manual VR Mac/Android LAN recheck completed with
+good reported performance and working pause/resume and disconnect. Sampled
+active windows showed about 60 presentations/s on the Mac and 84-118 on the
+phone at its 120 FPS setting; the phone logged 1,948 LAN ahead frames. GPU
+pixel comparisons were disabled in the temporary diagnostic builds. In the
+nonvisual VR desktop lifecycle test, macOS hidden-window presentations took
+about 140 ms each, delaying boot past the scripted Start events. The test now
+uses SDL's dummy video driver and CPU composition; it reaches the race and
+passes the LAN lifecycle without pixel comparisons.
+An extended nonvisual linked-ROM test reproduces the prolonged wait and later
+start sequence for both cabinets. With the additional native entry hints it
+matches the interpreter for 26,184 frames without fallbacks.
 Android now uses the multiplayer host by default for supported VR and Wing War
 modes, with the single host retained for incompatible modes. The user checked
 gameplay and the Game, Controls and LAN menus in marker-free Android diagnostic

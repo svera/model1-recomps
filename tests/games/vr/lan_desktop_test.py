@@ -58,7 +58,8 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
         events = [f"{int(int(at) * time_scale) if int(at) >= 20000 else at}:{name}"
                   for at, name in (event.split(":", 1) for event in events)]
         env = dict(os.environ, M1_HIDDEN="1", M1_QUIT_AFTER="-1", M1_SAVE="1",
-                   M1_EVENTS_MS=",".join(events),
+                   M1_EVENTS_MS=",".join(events), M1_CPU_2D="1",
+                   SDL_VIDEODRIVER="dummy", SDL_RENDER_DRIVER="software", SDL_AUDIODRIVER="dummy",
                    SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001")
         log = (root / f"{player}.log").open("w+")
         logs.append(log)
@@ -129,7 +130,7 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
     assert int(guest_status[1][0]) > int(guest_status[0][0]), guest_status
     assert host_status[-1][0] == "0", host_status  # guest closed: returned to room
     assert host_status[-1][3] in ("03", "07", "10"), host_status  # can start again from the room
-    assert "linked race has ended" in outputs[0]
+    assert "Fewer than two players remain. The linked game has ended." in outputs[0]
     if count > 2:
         assert re.search(r"LAN: status cabinet=1 running=1 .*racers=2", outputs[0]), outputs[0]
         assert f"cabinet {identities[-1]} disconnected" in outputs[0], outputs[0]
@@ -137,7 +138,8 @@ with tempfile.TemporaryDirectory(prefix="vr-lan-desktop-") as directory:
         # Session master/slave roles must never replace the standalone EEPROM.
         eeprom = (root / str(player) / "eeprom_93c46.sav").read_bytes()
         assert eeprom[12] == 0
-    local_env = dict(os.environ, M1_HIDDEN="1", M1_QUIT_AFTER="2000",
+    local_env = dict(os.environ, M1_HIDDEN="1", M1_QUIT_AFTER="2000", M1_CPU_2D="1",
+                     SDL_VIDEODRIVER="dummy", SDL_RENDER_DRIVER="software", SDL_AUDIODRIVER="dummy",
                      M1_EVENTS_AT="10:pad2,120:status,140:disconnect2,180:status,200:close",
                      SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="0x1209/0x0001")
     local = subprocess.run([str(binary), str(root / "0")], env=local_env,
