@@ -23,11 +23,14 @@ test-vr-gameplay: $(BIN)/vr_gameplay_test
 	$(BIN)/vr_gameplay_test
 
 $(OBJ)/tests/games/vr/local_host_test.o: CXXFLAGS += $(SDL_CFLAGS)
-$(BIN)/vr_local_host_test: $(OBJ)/tests/games/vr/local_host_test.o $(OBJ)/src/games/vr/host.o $(OBJ)/src/games/vr/romset.o $(call objs,$(ROMSET)) $(GAMES_LINK)
+$(BIN)/vr_local_host_test: $(OBJ)/tests/games/vr/local_host_test.o $(OBJ)/src/games/vr/host.o $(OBJ)/src/games/vr/romset.o $(call objs,$(ROMSET)) $(GAMES_LINK) $(call objs,$(RT) $(NATIVE)) $(REC_NONE) $(SLJIT_OBJ) $(CORO_OBJ)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS) $(SDL_LIBS)
 test-vr-local-host: $(BIN)/vr_local_host_test
 	$(BIN)/vr_local_host_test
+test-vr-local-host-rom: $(BIN)/vr_local_host_test vr-regions
+	$(BIN)/vr_local_host_test build/vr
+	$(BIN)/vr_local_host_test build/vr --native
 $(OBJ)/tests/games/vr/local_menu_host.o: CXXFLAGS += $(SDL_CFLAGS)
 $(OBJ)/tests/games/vr/renamed_host.o: src/games/vr/host.cpp
 	@mkdir -p $(dir $@)
@@ -77,4 +80,4 @@ test-vr-live-monitor: $(BIN)/vr_live_monitor_test vr-regions
 	$(BIN)/vr_live_monitor_test build/vr build/vr/live-monitor
 test-vr-live-monitor-desktop: $(BIN)/vr-native vr-regions
 	python3 tests/games/vr/live_monitor_desktop_test.py $(BIN)/vr-native build/vr
-.PHONY: test-vr-profile test-vr-gameplay test-vr-local-host test-vr-local-host-desktop test-vr-tgp-track test-vr-link test-vr-link-rom test-vr-two-cabinets test-vr-split-screen test-vr-menu-backdrops test-vr-live-monitor test-vr-live-monitor-desktop
+.PHONY: test-vr-profile test-vr-gameplay test-vr-local-host test-vr-local-host-rom test-vr-local-host-desktop test-vr-tgp-track test-vr-link test-vr-link-rom test-vr-two-cabinets test-vr-split-screen test-vr-menu-backdrops test-vr-live-monitor test-vr-live-monitor-desktop

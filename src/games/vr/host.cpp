@@ -294,7 +294,9 @@ public:
 
 	void after_frame() override
 	{
-		if (!ctx || ctx->link_player != 0 || ctx->machine.work_ram()[0x1138] != 0x14) {
+		// 0x13 is a brief transition between the grid countdown and racing.
+		const uint8_t phase = ctx ? ctx->machine.work_ram()[0x1138] : 0;
+		if (!ctx || ctx->link_player != 0 || phase < 0x12 || phase > 0x14) {
 			race_snapshot.reset();
 			race_gameplay.reset();
 		}
@@ -302,12 +304,13 @@ public:
 
 	void capture_race_start()
 	{
-		if (!ctx || ctx->link_player != 0 || ctx->machine.work_ram()[0x1138] != 0x14) {
+		const uint8_t phase = ctx ? ctx->machine.work_ram()[0x1138] : 0;
+		if (!ctx || ctx->link_player != 0 || phase < 0x12 || phase > 0x14) {
 			race_snapshot.reset();
 			race_gameplay.reset();
 			return;
 		}
-		if (race_snapshot) return;
+		if (phase != 0x12 || race_snapshot) return;
 		auto state = std::dynamic_pointer_cast<gameplay_state>(ctx->machine.game_state());
 		model1::simulation_state snapshot;
 		if (state && ctx->machine.save_simulation_state(snapshot)) {
@@ -320,9 +323,10 @@ public:
 
 	bool quick_restart_race() override
 	{
-		if (!ctx || ctx->link_player != 0 || !race_snapshot || !race_gameplay ||
-			ctx->machine.work_ram()[0x1138] != 0x14)
+		if (!ctx || ctx->link_player != 0 || !race_snapshot || !race_gameplay)
 			return false;
+		const uint8_t phase = ctx->machine.work_ram()[0x1138];
+		if (phase < 0x12 || phase > 0x14) return false;
 		auto state = std::dynamic_pointer_cast<gameplay_state>(ctx->machine.game_state());
 		if (!state || !ctx->machine.load_simulation_state(*race_snapshot)) return false;
 		const bool current_extended = state->extended_draw_distance;

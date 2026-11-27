@@ -165,7 +165,7 @@ inline const control_profile CONTROLS = [] {
 	// the shift was on Up and Down before it had keys of its own
 	c.renamed_keys = { { C_UP, "up", SDL_SCANCODE_UP, SDL_SCANCODE_X }, { C_DOWN, "down", SDL_SCANCODE_DOWN, SDL_SCANCODE_Z } };
 	c.analog_keys = { { 0, C_LEFT, C_RIGHT, true }, { 1, -1, C_ACCELERATOR, false }, { 2, -1, C_BRAKE, false } };
-	c.pad_buttons_help = "Change the shift, camera, look-back, start, coin and menu buttons.";
+	c.pad_buttons_help = "Change the shift, camera, look-back, start, coin and menu buttons. Hold View / Select for 1 second to restart a solo race.";
 	c.analog_help = "For a pad, select and move a stick axis or squeeze a trigger. The keyboard also has separate steering, accelerator and brake keys. On course selection and initials entry, tap the stick, D-pad or keys Left/Right to move one course or letter (hold to repeat), and press Accelerator (default: right trigger or Up key) to confirm.";
 	return c;
 }();

@@ -4,6 +4,16 @@
 #include <cstdio>
 #include <vector>
 
+struct gamepad_back_hold
+{
+	uint64_t started = 0;
+	bool restart(bool down, bool was_down, bool combo, uint64_t now)
+	{
+		if (down && !was_down) started = now;
+		return down && was_down && !combo && now - started >= 1000;
+	}
+};
+
 inline std::string gamepad_guid(SDL_JoystickID id)
 {
 	char guid[64];

@@ -2019,6 +2019,25 @@ MAME's V60 charges 8 cycles to every instruction, "just an average"; the 16 MHz 
 3.5 MIPS. The game profile now has `cpu_cycles_per_instruction`, applied to the per-line instruction
 budget so interpreted and native runs match. VR uses 4.5 (1.78x); VF keeps 8 and runs exactly as before.
 
+## VR's quick race restart
+
+The solo host captures an in-memory simulation and gameplay snapshot at the start of the race-grid
+countdown, rather than replaying recorded inputs. The snapshot includes V60 registers, RAM, display
+lists, TGP and I/O state, timers and interrupts. It is retained through countdown phase `0x12`,
+the brief `0x13` transition, and race phase `0x14`, then discarded outside those phases or in
+linked play. Missing `0x13` originally caused the snapshot to be lost before the race began.
+
+Restart restores the snapshot while retaining current rendering settings, resets the audio and
+native CPU coroutine, and cuts interpolation so the old frame is not blended with the restored
+countdown. The controller shortcut uses a one-second Back / View hold; a short tap and existing
+Back-button combinations keep their usual behavior. Android's on-screen MENU uses the same virtual
+gamepad button.
+
+`make test-vr-local-host` checks state restoration and phase handling; `make test-vr-local-host-rom`
+runs a scripted race with both interpreter and native CPU execution, including two restarts after
+the `0x13` transition. `make test-host-gamepads` checks the hold timing and combination suppression.
+These are nonvisual checks; the controller shortcut has not been tested on an Android device.
+
 ## VR's LAN rooms
 
 The desktop's on-demand VR session also supports an experimental two-to-four-computer
