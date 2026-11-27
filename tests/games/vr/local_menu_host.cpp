@@ -14,6 +14,7 @@ public:
 	}
 	void run_frame() override { inner->run_frame(); }
 	local_link_status status(unsigned cabinet) const override { return inner->status(cabinet); }
+	bool retire(model1 &machine) override { return inner->retire(machine); }
 };
 
 class test_host final : public game_host

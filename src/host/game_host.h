@@ -27,6 +27,7 @@ struct local_multiplayer_info
 	const char *join_wait = "waiting for a safe point";
 	const char *analog_help = "Change this player's analog axes.";
 	bool solo_on_controller_disconnect = true;
+	int max_players = 2;
 };
 
 struct local_multiplayer_status
@@ -133,6 +134,14 @@ public:
 	virtual const local_multiplayer_info *local_multiplayer() const { return nullptr; }
 	// Machines outlive the session; second and monitor are independently optional, but not both absent.
 	virtual std::unique_ptr<local_cabinet_link> make_local_link(model1 &, model1 *, model1 *) { return {}; }
+	virtual std::unique_ptr<local_cabinet_link> make_local_link(std::span<model1 *const> players, model1 *monitor)
+	{
+		if (players.empty() || players.size() > 2) {
+			fprintf(stderr, "Local link: expected one or two players\n");
+			return {};
+		}
+		return make_local_link(*players[0], players.size() == 2 ? players[1] : nullptr, monitor);
+	}
 	virtual local_multiplayer_status local_status(model1 &) const { return {}; }
 	virtual void begin_local_boot() {}
 	virtual bool local_boot_complete(model1 &machine) const { return machine.past_boot(); }

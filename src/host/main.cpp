@@ -1088,8 +1088,8 @@ struct local_display
 	bool icon_set = false;
 	bool renderer_vulkan = false;
 	int vsync = 0;
-	std::array<SDL_Texture *, 3> glass{};
-	std::array<int, 3> glass_w{}, glass_h{}, glass_kind{};
+	std::array<SDL_Texture *, 5> glass{};
+	std::array<int, 5> glass_w{}, glass_h{}, glass_kind{};
 };
 
 struct local_cabinet
@@ -1139,7 +1139,9 @@ struct local_cabinet
 int run_two_cabinets(model1::regions regions, const std::string &data_dir, const std::string &assets,
 					 int arg_scale, int arg_aspect, bool interp, cabinet_layout layout, int fullscreen)
 {
-	std::array<std::unique_ptr<local_cabinet>, 3> cabinets;
+	constexpr int monitor_slot = 4;
+	std::array<std::unique_ptr<local_cabinet>, 5> cabinets;
+	std::vector<std::unique_ptr<local_cabinet>> retired_cabinets;
 	const auto *local_info = the_game().local_multiplayer();
 	if (!local_info) {
 		fprintf(stderr, "two cabinets: local multiplayer is not supported by %s\n", host_title());
@@ -1159,7 +1161,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	bool lan_leave_requested = false, lan_start_requested = false, lan_open_requested = false;
 	const bool on_demand = layout != cabinet_layout::windows;
 	int cabinet_count = on_demand ? 1 : 2;
-	auto instance_count = [&] { return cabinets[2] ? 3 : cabinet_count; };
+	const int max_players = local_info->max_players;
+	auto player_name = [](int player) { return "Player " + std::to_string(player + 1); };
+	auto local_controls_defaults = [](int player, const control_profile &profile) {
+		auto controls = player_controls::defaults(player, profile);
+		if (player >= 2) std::fill(std::begin(controls.key), std::end(controls.key), SDL_SCANCODE_UNKNOWN);
+		return controls;
+	};
+	auto instance_count = [&] { return cabinets[monitor_slot] ? 5 : cabinet_count; };
 	bool pc_mode = true;
 	const bool hidden = getenv("M1_HIDDEN") != nullptr;
 	const int quit_after = getenv("M1_QUIT_AFTER") ? atoi(getenv("M1_QUIT_AFTER")) : -1;
@@ -1177,15 +1186,16 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			fprintf(stderr, "two cabinets: the Model 1 I/O-board ROM is required for independent controls\n");
 			return false;
 		}
-		c.dir = p == 0 ? data_dir : p == 1 ? data_dir + "/two-cabinets/2" : data_dir + "/live-monitor";
+		c.dir = p == 0 ? data_dir : p == monitor_slot ? data_dir + "/live-monitor" :
+			data_dir + "/two-cabinets/" + std::to_string(p + 1);
 		std::error_code ec;
 		std::filesystem::create_directories(c.dir, ec);
 		if (ec) { fprintf(stderr, "two cabinets: cannot create %s: %s\n", c.dir.c_str(), ec.message().c_str()); return false; }
 		for (int slot = 0; slot < 2; slot++) c.config.ctl[slot] = player_controls::defaults(slot, c.game->controls());
 		c.config.fps = game::get_video(host_game()).default_fps;
 		if (getenv("SteamDeck")) { c.config.fullscreen = true; c.config.aspect = 2; }
-		// Each virtual cabinet has one driver; use different keyboard defaults in the two windows.
-		c.config.ctl[0] = player_controls::defaults(p == 1 ? 1 : 0, c.game->controls());
+		// Additional players use controllers or explicitly assigned keys, not duplicate defaults.
+		c.config.ctl[0] = local_controls_defaults(p, c.game->controls());
 		c.config.load(p == 0 ? data_dir + "/settings.ini" : c.dir + "/settings.ini",
 			c.game->controls(), c.game.get());
 		if (p != 0) {
@@ -1205,7 +1215,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		}
 		c.config.ctl[1] = {};
 		c.config.ctl[1].pad_choice = "none";
-		if (p == 2) {
+		if (p == monitor_slot) {
 			for (auto &controls : c.config.ctl) { controls = {}; controls.pad_choice = "none"; }
 		}
 		if (p == 0) pc_mode = g_pc_mode = !c.config.arcade;
@@ -1218,7 +1228,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		c.machine.set_sky_filter(c.config.smooth_bg);
 		c.machine.set_aspect(c.config.aspect ? ASPECTS[c.config.aspect] : 4.0f / 3);
 		c.machine.enable_sound();
-		c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, p == 2 ? 0.0f : c.config.effects / 100.0f);
+		c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, p == monitor_slot ? 0.0f : c.config.effects / 100.0f);
 		auto load_save = [&](const char *name, uint8_t *destination, size_t size, bool eeprom = false) {
 			std::string path = c.dir + "/" + name;
 			bool exists = std::filesystem::exists(path, ec);
@@ -1252,8 +1262,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				c.machine.eeprom(), model1::EEPROM_SIZE, true)) return false;
 		c.host = std::make_unique<host_context>(host_context{
 			c.machine, c.dir, assets, pc_mode, [&c] { c.settings_dirty = true; }, {}, {}, {}});
-		c.host->link_player = p == 2 ? 3 : cabinet_count == 2 ? p + 1 : 0;
-		c.host->standalone_cabinet = cabinet_count == 1 && p != 2;
+		c.host->link_player = p == monitor_slot ? 3 : cabinet_count > 1 ? (p ? 2 : 1) : 0;
+		c.host->standalone_cabinet = cabinet_count == 1 && p != monitor_slot;
 		c.game->start(*c.host);
 		if (*c.game->save_sidecar_name()) {
 			c.sidecar_path = c.dir + "/" + c.game->save_sidecar_name();
@@ -1316,9 +1326,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	};
 	for (int p = 0; p < cabinet_count; p++) if (!create_cabinet(p)) return 1;
 	auto make_pair = [&]() {
-		auto session = cabinets[0]->game->make_local_link(cabinets[0]->machine,
-			cabinet_count == 2 ? &cabinets[1]->machine : nullptr,
-			cabinets[2] ? &cabinets[2]->machine : nullptr);
+		std::array<model1 *, 4> players{};
+		for (int p = 0; p < cabinet_count; p++) players[p] = &cabinets[p]->machine;
+		auto session = cabinets[0]->game->make_local_link(std::span(players.data(), cabinet_count),
+			cabinets[monitor_slot] ? &cabinets[monitor_slot]->machine : nullptr);
 		if (!session) fprintf(stderr, "two cabinets: %s did not provide a local link implementation\n", host_title());
 		return session;
 	};
@@ -1331,12 +1342,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	for (int p = 1; p < cabinet_count; p++)
 		cabinets[p]->game->sync_shared_settings(cabinets[0]->machine);
 	const bool trace_attract = getenv("M1_ATTRACT_TRACE") != nullptr;
-	std::array<int, 3> trace_phase{-1, -1, -1};
-	std::array<uint32_t, 3> trace_camera{};
+	std::array<int, 5> trace_phase{-1, -1, -1, -1, -1};
+	std::array<uint32_t, 5> trace_camera{};
 	auto run_frame = [&] {
 		if (network_cabinet.active()) network_cabinet.run_frame(cabinets[0]->machine);
 		else if (pair) pair->run_frame();
 		else cabinets[0]->machine.run_frame();
+		for (auto &c : retired_cabinets) c->machine.m_audio_out.clear();
 		if (trace_attract)
 			for (int p = 0; p < instance_count(); p++) {
 				if (!cabinets[p]) continue;
@@ -1411,10 +1423,11 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	}
 	// The cabinets and their SDL resources must be destroyed before SDL_Quit.
 	struct sdl_cleanup {
-		std::array<std::unique_ptr<local_cabinet>, 3> &cabinets;
+		std::array<std::unique_ptr<local_cabinet>, 5> &cabinets;
+		std::vector<std::unique_ptr<local_cabinet>> &retired;
 		std::unique_ptr<local_cabinet_link> &pair;
-		~sdl_cleanup() { pair.reset(); for (auto &c : cabinets) c.reset(); SDL_Quit(); }
-	} cleanup{cabinets, pair};
+		~sdl_cleanup() { pair.reset(); retired.clear(); for (auto &c : cabinets) c.reset(); SDL_Quit(); }
+	} cleanup{cabinets, retired_cabinets, pair};
 	std::unique_ptr<SDL_AudioStream, decltype(&SDL_DestroyAudioStream)> audio(nullptr, SDL_DestroyAudioStream);
 	audio_recovery sound_recovery;
 	const SDL_AudioSpec sound_spec{SDL_AUDIO_S16, 2, m1audio::OUT_RATE};
@@ -1699,12 +1712,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	for (int p = 0; p < cabinet_count; p++)
 		if (!configure_3d(*cabinets[p], cabinets[p]->config.renderer3d)) return 1;
 	auto monitor_above = [&] {
-		return cabinets[2] && cabinets[2]->display == cabinets[0]->display;
+		return cabinets[monitor_slot] && cabinets[monitor_slot]->display == cabinets[0]->display;
 	};
 	auto monitor_display = [&] {
-		if (!cabinets[2]) return true;
-		auto &c = *cabinets[2];
-		const bool shared = cabinets[0]->config.live_monitor == 1 && layout != cabinet_layout::windows;
+		if (!cabinets[monitor_slot]) return true;
+		auto &c = *cabinets[monitor_slot];
+		const bool shared = (cabinets[0]->config.live_monitor == 1 || cabinet_count == 3) &&
+			layout != cabinet_layout::windows;
 		if (c.display && (c.display == cabinets[0]->display) == shared) return true;
 		if (c.gpu) configure_3d(c, 0);
 		c.compose.release();
@@ -1744,20 +1758,20 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return true;
 	};
 	auto sync_monitor = [&] {
-		const bool wanted = local_info->live_monitor && cabinets[0]->config.live_monitor != 0;
-		const bool rebuild = wanted != bool(cabinets[2]) ||
-			(pair ? paired_racers != cabinet_count : cabinet_count == 2 || wanted);
+		const bool wanted = local_info->live_monitor && cabinet_count < 4 && cabinets[0]->config.live_monitor != 0;
+		const bool rebuild = !retired_cabinets.empty() || wanted != bool(cabinets[monitor_slot]) ||
+			(pair ? paired_racers != cabinet_count : cabinet_count > 1 || wanted);
 		// Rebuild the transport when racers join or leave, even if the monitor stays enabled.
-		if (rebuild) pair.reset();
-		if (wanted != bool(cabinets[2])) {
+		if (rebuild) { pair.reset(); retired_cabinets.clear(); }
+		if (wanted != bool(cabinets[monitor_slot])) {
 			if (wanted) {
-				if (!create_cabinet(2)) return false;
-				cabinets[2]->game->sync_shared_settings(cabinets[0]->machine);
-			} else cabinets[2].reset();
+				if (!create_cabinet(monitor_slot)) return false;
+				cabinets[monitor_slot]->game->sync_shared_settings(cabinets[0]->machine);
+			} else cabinets[monitor_slot].reset();
 		}
-		cabinets[0]->host->link_player = cabinet_count == 2 || wanted ? 1 : 0;
+		cabinets[0]->host->link_player = cabinet_count > 1 || wanted ? 1 : 0;
 		cabinets[0]->host->standalone_cabinet = cabinet_count == 1 && !wanted;
-		if (rebuild && (cabinet_count == 2 || wanted)) {
+		if (rebuild && (cabinet_count > 1 || wanted)) {
 			pair = make_pair();
 			if (!pair) return false;
 		}
@@ -1765,7 +1779,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return monitor_display();
 	};
 	if (!sync_monitor()) return 1;
-	if (cabinets[2] && !boot()) { fprintf(stderr, "Live Monitor: initial linked boot failed\n"); return 1; }
+	if (cabinets[monitor_slot] && !boot()) { fprintf(stderr, "Live Monitor: initial linked boot failed\n"); return 1; }
 	auto draw_filter = [&](SDL_Renderer *renderer, int player, SDL_Rect viewport, float aspect) {
 		const int kind = cabinets[player]->config.filter;
 		if (!kind) return true;
@@ -1857,16 +1871,19 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	if (layout != cabinet_layout::windows)
 		fprintf(stderr, "two cabinets: on-demand split-screen %s, one cabinet running\n",
 			layout == cabinet_layout::side_by_side ? "side-by-side" : "top-bottom");
-	SDL_Gamepad *pads[2]{};
-	settings waiting_config;
-	if (on_demand) {
+	SDL_Gamepad *pads[4]{};
+	std::array<settings, 4> waiting_config;
+	std::array<player_controls, 4> bindings{};
+	bindings[0] = cabinets[0]->config.ctl[0];
+	for (int p = 1; p < max_players; p++) {
 		auto waiting_game = make_game_host();
-		waiting_config.ctl[0] = player_controls::defaults(1, waiting_game->controls());
-		waiting_config.load(data_dir + "/two-cabinets/2/settings.ini", waiting_game->controls(), waiting_game.get());
+		waiting_config[p].ctl[0] = local_controls_defaults(p, waiting_game->controls());
+		waiting_config[p].load(data_dir + "/two-cabinets/" + std::to_string(p + 1) + "/settings.ini",
+			waiting_game->controls(), waiting_game.get());
+		bindings[p] = p < cabinet_count ? cabinets[p]->config.ctl[0] : waiting_config[p].ctl[0];
 	}
-	std::array<player_controls, 2> bindings{cabinets[0]->config.ctl[0],
-		on_demand ? waiting_config.ctl[0] : cabinets[1]->config.ctl[0]};
-	std::array<SDL_JoystickID, 2> claimed_pads{};
+	for (int p = max_players; p < 4; p++) bindings[p].pad_choice = "none";
+	std::array<SDL_JoystickID, 4> claimed_pads{};
 #ifdef __ANDROID__
 	SDL_JoystickID touch_pad_id = android_touch_update();
 	struct touch_cleanup {
@@ -1879,9 +1896,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 #ifdef __ANDROID__
 		auto preferred = claimed_pads;
 		if (touch_pad_id) preferred[0] = touch_pad_id;
-		return refresh_gamepads(pads, bindings.data(), false, preferred);
+		return refresh_gamepad_slots(pads, bindings.data(), false, preferred);
 #else
-		return refresh_gamepads(pads, bindings.data(), false, claimed_pads);
+		return refresh_gamepad_slots(pads, bindings.data(), false, claimed_pads);
 #endif
 	};
 	auto pad_binding = [&](int player, int action) {
@@ -1893,12 +1910,12 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	};
 	struct pad_cleanup {
 		SDL_Gamepad **pads;
-		std::array<SDL_JoystickID, 2> test_pads{};
+		std::array<SDL_JoystickID, 4> test_pads{};
 		SDL_Joystick *test_joystick = nullptr;
 		SDL_Gamepad *test_gamepad = nullptr;
 		~pad_cleanup()
 		{
-			for (int p = 0; p < 2; p++) if (pads[p]) SDL_CloseGamepad(pads[p]);
+			for (int p = 0; p < 4; p++) if (pads[p]) SDL_CloseGamepad(pads[p]);
 			if (test_gamepad) SDL_CloseGamepad(test_gamepad);
 			if (test_joystick) SDL_CloseJoystick(test_joystick);
 			for (auto id : test_pads)
@@ -1917,13 +1934,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		join_overlay.set_footer(host_app_name() + " " + M1_VERSION + (*M1_DATE ? std::string(" \u00b7 ") + M1_DATE : ""));
 	}
 	bool running = true, paused = false, menu_failed = false;
-	std::array<uint64_t, 3> next_picture{};
+	std::array<uint64_t, 5> next_picture{};
 	lan_picture_grace lan_picture_wait;
 	bool shape_restart = false;
-	bool second_player = !on_demand, join_pending = false, join_start_was = false;
+	bool join_pending = false, join_start_was = false;
 	bool player1_started = !on_demand;
 	const bool trace_input = getenv("M1_INPUT_TRACE") != nullptr;
-	SDL_JoystickID queued_controller = 0, joined_controller = 0;
+	SDL_JoystickID queued_controller = 0;
+	std::array<SDL_JoystickID, 4> joined_controllers{};
 	const SDL_JoystickID test_controller = SDL_JoystickID(0x7ffffffe);
 	if (!join_overlay.ready() && on_demand) {
 		fprintf(stderr, "two cabinets: settings menu unavailable because its UI assets could not be loaded\n");
@@ -1933,7 +1951,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		for (int p = 0; p < instance_count(); p++) {
 			if (!cabinets[p]) continue;
 			auto &c = *cabinets[p];
-			if (p == 2) {
+			if (p == monitor_slot) {
 				const auto &source = cabinets[0]->config;
 				c.config.scale = source.scale; c.config.aa = source.aa; c.config.fps = source.fps;
 				c.config.filter = source.filter; c.config.smooth_bg = source.smooth_bg;
@@ -1942,7 +1960,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			c.machine.set_edge_aa(c.config.aa == 0);
 			c.machine.set_smooth(c.config.fps != 30);
 			c.machine.set_sky_filter(c.config.smooth_bg);
-			c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, p == 2 ? 0.0f : c.config.effects / 100.0f);
+			c.machine.set_volumes(p == 0 ? c.config.music / 100.0f : 0.0f, p == monitor_slot ? 0.0f : c.config.effects / 100.0f);
 			c.settings_dirty = true;
 		}
 		next_picture = {};
@@ -2116,13 +2134,18 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			set_fullscreen(enabled);
 		};
 		if (local_info->live_monitor) actions.live_monitor = menu_item{"Live Monitor",
-			"Off, above the players, or a spectator window. Works with one or two players. "
+			"Off, above the players, or a spectator window. Works with up to three players; with three, the shared monitor is top left. "
 			"Enabling/disabling restarts the linked session. Player audio only; the monitor is muted and has no controls.",
 			[&] {
+				if (cabinet_count == 4) return std::string("Unavailable with 4 players");
 				static const char *names[] = {"Off", "Above players", "Spectator window"};
 				return std::string(names[cabinets[0]->config.live_monitor]);
 			},
 			[&](int direction) {
+				if (cabinet_count == 4) {
+					join_overlay.toast("Live Monitor is unavailable with four players.");
+					return;
+				}
 				if (lan.role() != LAN_OFF) {
 					join_overlay.toast("Leave LAN before enabling the Live Monitor.");
 					return;
@@ -2245,7 +2268,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				for (int p = 0; p < cabinet_count; p++) cabinets[p]->config.music = volume;
 				apply_shared_settings();
 			}});
-		page.items.push_back({"Effects and voices", "Volume for effects and voices from both players.",
+		page.items.push_back({"Effects and voices", "Volume for effects and voices from all players.",
 			[&] { return std::to_string(cabinets[0]->config.effects) + "%"; },
 			[&](int direction) {
 				const int volume = std::clamp(cabinets[0]->config.effects + direction * 10, 0, 100);
@@ -2257,9 +2280,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		} else {
 			for (int p = 0; p < cabinet_count; p++)
 				if (!cabinets[p]->game->sound_menu_items().empty())
-					page.items.push_back({p ? "Player 2" : "Player 1", "This player's sound settings.", {}, {},
+					page.items.push_back({player_name(p), "This player's sound settings.", {}, {},
 						[&, p] {
-							menu_page player_page{p ? "Player 2 sound" : "Player 1 sound", "",
+							menu_page player_page{player_name(p) + " sound", "",
 								cabinets[p]->game->sound_menu_items()};
 							player_page.items.push_back(back_item());
 							join_overlay.push(std::move(player_page));
@@ -2307,14 +2330,15 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		const int index = it == choices.end() ? 0 : int(it - choices.begin());
 		bindings[player].pad_choice = choices[wrap_choice(index + direction, int(choices.size()))];
 		const auto &choice = bindings[player].pad_choice;
-		if (choice != "auto" && choice != "none" && bindings[1 - player].pad_choice == choice)
-			bindings[1 - player].pad_choice = "auto";
+		for (int p = 0; p < max_players; p++)
+			if (p != player && choice != "auto" && choice != "none" && bindings[p].pad_choice == choice)
+				bindings[p].pad_choice = "auto";
 		claimed_pads = {};
 		controls_changed(player);
-		controls_changed(1 - player);
+		for (int p = 0; p < max_players; p++) if (p != player) controls_changed(p);
 	};
 	auto keyboard_page = [&](int player) {
-		menu_page page{player ? "Player 2 keyboard" : "Player 1 keyboard", "", {}};
+		menu_page page{player_name(player) + " keyboard", "", {}};
 		for (int action = 0; action < C_COUNT; action++) {
 			if (!controls.visible(action)) continue;
 			page.items.push_back({controls.label(action),
@@ -2325,7 +2349,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				}, {},
 				[&, player, action] {
 					join_overlay.capture(std::string("Press a key for ") + controls.label(action) +
-						(player ? " (player 2)." : " (player 1).") +
+						" (" + player_name(player) + ")." +
 						" Backspace or Delete clears it; Esc keeps it.",
 						[&, player, action](const SDL_Event &event) {
 							if (event.type != SDL_EVENT_KEY_DOWN) return false;
@@ -2342,7 +2366,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 									for (auto &assigned : other.key)
 										if (assigned == key) assigned = SDL_SCANCODE_UNKNOWN;
 							bindings[player].key[action] = key;
-							if (!controls_changed(0) || !controls_changed(1)) return false;
+							for (int p = 0; p < max_players; p++) if (!controls_changed(p)) return false;
 							return true;
 						});
 				}, false,
@@ -2355,7 +2379,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return page;
 	};
 	auto pad_buttons_page = [&](int player) {
-		menu_page page{player ? "Player 2 pad buttons" : "Player 1 pad buttons", "", {}};
+		menu_page page{player_name(player) + " pad buttons", "", {}};
 		for (int action : controls.pad_actions) {
 			if (!controls.visible(action)) continue;
 			page.items.push_back({controls.label(action),
@@ -2363,7 +2387,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				[&, player, action] { return player_controls::pad_label(bindings[player].pad[action]); }, {},
 				[&, player, action] {
 					join_overlay.capture(std::string("Press a controller button for ") + controls.label(action) +
-						(player ? " (player 2)." : " (player 1).") + " Delete clears it; Esc keeps it.",
+						" (" + player_name(player) + "). Delete clears it; Esc keeps it.",
 						[&, player, action](const SDL_Event &event) {
 							int code = PAD_NONE;
 							if (event.type == SDL_EVENT_KEY_DOWN) {
@@ -2394,7 +2418,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	};
 	auto analog_axes_page = [&](int player) {
 		const auto &io = game::get_io_profile(controls.title);
-		menu_page page{player ? "Player 2 analog axes" : "Player 1 analog axes", "", {}};
+		menu_page page{player_name(player) + " analog axes", "", {}};
 		if (controls.steering_curve)
 			page.items.push_back({"Steering curve",
 				"Arcade keeps the original response. Standard (default) softens small stick movements, ramps keyboard/D-pad steering up and back to center, and progressively limits steering range and sudden changes as speed rises. Pedals and course/initials selection are unchanged.",
@@ -2442,7 +2466,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return page;
 	};
 	auto player_controls_page = [&](int player) {
-		menu_page page{player ? "Player 2" : "Player 1", "", {}};
+		menu_page page{player_name(player), "", {}};
 		page.items.push_back({"Controller", "Choose any free controller, a specific controller, or none.",
 			[&, player] { return pad_name(player); },
 			[&, player](int direction) { cycle_pad(player, direction); }});
@@ -2458,31 +2482,30 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				[&, player] { join_overlay.push(analog_axes_page(player)); }});
 		page.items.push_back({"Reset to defaults", "Restore this player's original controller and keyboard bindings.", {}, {},
 			[&, player] {
-				bindings[player] = player_controls::defaults(player, controls);
+				bindings[player] = local_controls_defaults(player, controls);
 				for (const auto key : bindings[player].key)
 					if (key != SDL_SCANCODE_UNKNOWN)
-						for (auto &assigned : bindings[1 - player].key)
-							if (assigned == key) assigned = SDL_SCANCODE_UNKNOWN;
-				controls_changed(player);
-				controls_changed(1 - player);
+						for (int p = 0; p < max_players; p++) if (p != player)
+							for (auto &assigned : bindings[p].key)
+								if (assigned == key) assigned = SDL_SCANCODE_UNKNOWN;
+				for (int p = 0; p < max_players; p++) controls_changed(p);
 			}});
 		page.items.push_back(back_item());
 		return page;
 	};
 	auto controls_page = [&] {
 		menu_page page{"Controls", "", {}};
-		page.items.push_back({"Player 1", "Player 1's controller, keys, buttons and axes.",
-			[&] { return pad_name(0); }, {}, [&] { join_overlay.push(player_controls_page(0)); }});
-		page.items.push_back({"Player 2", "Player 2's controller, keys, buttons and axes.",
-			[&] { return pad_name(1); }, {}, [&] { join_overlay.push(player_controls_page(1)); }});
-		page.items.push_back({"Swap controllers", "Swap which connected controller is assigned to each player.", {}, {},
+		for (int p = 0; p < max_players; p++)
+			page.items.push_back({player_name(p), "This player's controller, keys, buttons and axes.",
+				[&, p] { return pad_name(p); }, {}, [&, p] { join_overlay.push(player_controls_page(p)); }});
+		page.items.push_back({"Swap controllers", "Swap Player 1 and Player 2's connected controllers.", {}, {},
 			[&] {
 				std::swap(bindings[0].pad_choice, bindings[1].pad_choice);
 				std::swap(pads[0], pads[1]);
 				for (int p = 0; p < 2; p++)
 					claimed_pads[p] = pads[p] ? SDL_GetGamepadID(pads[p]) : 0;
-				if (joined_controller) joined_controller = claimed_pads[1];
-				if (queued_controller) queued_controller = claimed_pads[1];
+				if (joined_controllers[1]) joined_controllers[1] = claimed_pads[1];
+				if (queued_controller && cabinet_count == 1) queued_controller = claimed_pads[1];
 				controls_changed(0);
 				controls_changed(1);
 			}});
@@ -2492,10 +2515,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	bool game_reset_requested = false;
 	bool remove_player2_requested = false;
 	bool play_style_restart = false;
-	std::array<bool, 3> code_restart{};
+	std::array<bool, 5> code_restart{};
 	auto cabinet_game_page = [&](int player) {
 		auto &c = *cabinets[player];
-		menu_page page{player ? "Player 2 game" : "Player 1 game", "", c.game->cabinet_game_menu_items()};
+		menu_page page{player_name(player) + " game", "", c.game->cabinet_game_menu_items()};
 		page.items.push_back(back_item());
 		return page;
 	};
@@ -2526,13 +2549,13 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				page.items.push_back(std::move(item));
 		} else {
 			for (int player = 0; player < cabinet_count; player++)
-				page.items.push_back({player ? "Player 2" : "Player 1",
+				page.items.push_back({player_name(player),
 					local_info->cabinet_game_help, {}, {},
 					[&, player] { join_overlay.push(cabinet_game_page(player)); }});
 			for (auto &item : cabinets[0]->game->shared_game_menu_items())
 				page.items.push_back(std::move(item));
 		}
-		page.items.push_back({"Reset game", "Restart the active cabinets, keeping both players and their settings.",
+		page.items.push_back({"Reset game", "Restart the active cabinets, keeping all players and their settings.",
 			{}, {}, [&] { game_reset_requested = true; join_overlay.close(); }});
 		page.items.push_back(back_item());
 		return page;
@@ -2562,7 +2585,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		return false;
 	};
 	auto lan_eligible = [&] {
-		if (!pc_mode || cabinet_count != 1 || cabinets[2] || join_pending) {
+		if (!pc_mode || cabinet_count != 1 || cabinets[monitor_slot] || join_pending) {
 			join_overlay.toast(local_info->live_monitor ?
 				"LAN needs PC play, one local player and Live Monitor off." :
 				"LAN needs PC play and one local player.");
@@ -2685,9 +2708,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				auto after_controls = cabinets[p]->game->menu_items_after_controls();
 				auto extras = cabinets[p]->game->menu_items();
 				if (!after_controls.empty() || !extras.empty())
-					page.items.push_back({p ? "Player 2 options" : "Player 1 options",
+					page.items.push_back({player_name(p) + " options",
 						"This player's game-specific options.", {}, {}, [&, p] {
-							menu_page options{p ? "Player 2 options" : "Player 1 options", "", {}};
+							menu_page options{player_name(p) + " options", "", {}};
 							for (auto &item : cabinets[p]->game->menu_items_after_controls())
 								options.items.push_back(std::move(item));
 							for (auto &item : cabinets[p]->game->menu_items())
@@ -2700,8 +2723,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (cabinet_count == 1 && cabinets[0]->game->supports_lan())
 			page.items.push_back({"LAN", "Create or find a local-network room. No IP addresses required.", {}, {},
 				[&] { lan_open_requested = true; join_overlay.close(); }});
-		if (on_demand && cabinet_count == 2)
-			page.items.push_back({"Remove Player 2", "Save both players' settings and restart in single-player mode. Player 2 can join again with Start.",
+		if (on_demand && cabinet_count > 1)
+			page.items.push_back({cabinet_count == 2 ? "Remove Player 2" : "Return to solo play",
+				"Save all players' settings and restart in single-player mode. Other players can join again with Start.",
 				{}, {}, [&] { remove_player2_requested = true; join_overlay.close(); }});
 		page.items.push_back({"Quit", "Save and close the game.", {}, {}, [&] { running = false; }});
 		return page;
@@ -2729,9 +2753,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	int perf_frames = 0, perf_interval_late = 0, perf_sim_late = 0;
 	uint64_t perf_sim_total = 0, perf_mix_total = 0, perf_present_total = 0, perf_idle_total = 0;
 	uint64_t perf_loops = 0;
-	std::array<uint64_t, 3> perf_render_total{}, perf_render_count{};
+	std::array<uint64_t, 5> perf_render_total{}, perf_render_count{};
 	std::vector<uint64_t> perf_frame_intervals, perf_sim_samples, perf_present_samples;
-	std::array<std::vector<uint64_t>, 3> perf_render_samples;
+	std::array<std::vector<uint64_t>, 5> perf_render_samples;
 	auto percentile_ms = [](std::vector<uint64_t> values, double percentile) {
 		if (values.empty()) return 0.0;
 		std::sort(values.begin(), values.end());
@@ -2780,7 +2804,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			auto &c = cabinets[p];
 			// Pending menu choices must reach menu_closed(), which requests their restart.
 			if (!join_overlay.is_open() && lan_saved_eeprom.empty()) c->game->keep_arcade_settings();
-			if (p < 2) c->config.ctl[0] = bindings[p];
+			if (p < cabinet_count) c->config.ctl[0] = bindings[p];
 			const auto nvram = nvram_for_save(p);
 			const bool nv = save_blob(c->dir + "/nvram.sav", nvram.data(), nvram.size());
 			const bool ee = save_blob(c->dir + (c->machine.real_ioboard() ? "/eeprom_93c46.sav" : "/eeprom.sav"),
@@ -2794,10 +2818,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			if (!nv || !ee || !config || !sidecar) { fprintf(stderr, "two cabinets: could not save %s\n", c->dir.c_str()); ok = false; }
 		}
-		if (on_demand && cabinet_count == 1) {
-			waiting_config.ctl[0] = bindings[1];
-			if (!waiting_config.save(data_dir + "/two-cabinets/2/settings.ini", *cabinets[0]->game)) {
-				fprintf(stderr, "two cabinets: could not save player 2 controls\n");
+		for (int p = cabinet_count; on_demand && p < max_players; p++) {
+			waiting_config[p].ctl[0] = bindings[p];
+			const std::string directory = data_dir + "/two-cabinets/" + std::to_string(p + 1);
+			std::error_code ec;
+			std::filesystem::create_directories(directory, ec);
+			if (ec) { fprintf(stderr, "local multiplayer: cannot create %s: %s\n", directory.c_str(), ec.message().c_str()); return false; }
+			if (!waiting_config[p].save(directory + "/settings.ini", *cabinets[0]->game)) {
+				fprintf(stderr, "local multiplayer: could not save player %d controls\n", p + 1);
 				ok = false;
 			}
 		}
@@ -2810,11 +2838,19 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
 		if (on_demand && return_to_solo) {
 			pair.reset();
-			cabinets[1].reset();
+			retired_cabinets.clear();
+			for (int p = 1; p < cabinet_count; p++) {
+				cabinets[p].reset();
+				code_restart[p] = false;
+			}
 			cabinet_count = 1;
 			code_restart[1] = false;
 			cabinets[0]->host->link_player = 0;
 			cabinets[0]->host->standalone_cabinet = true;
+		}
+		for (int p = 0; p < cabinet_count; p++) {
+			cabinets[p]->host->link_player = cabinet_count > 1 ? (p ? 2 : 1) : 0;
+			cabinets[p]->host->standalone_cabinet = cabinet_count == 1;
 		}
 		if (!sync_monitor()) return false;
 		for (int p = 0; p < instance_count(); p++) {
@@ -2838,10 +2874,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (again && !boot()) { fprintf(stderr, "two cabinets: linked settings reboot did not complete\n"); return false; }
 		show_arcade_boot();
 		for (int p = 0; p < cabinet_count; p++) { cabinets[p]->pad = {}; cabinets[p]->service = {}; }
-		second_player = cabinet_count == 2;
 		join_pending = false;
 		queued_controller = 0;
-		if (return_to_solo) joined_controller = 0;
+		if (return_to_solo) joined_controllers = {};
 		if (return_to_solo) player1_started = false;
 		if (on_demand && !SDL_SetWindowTitle(cabinets[0]->display->window, host_title())) {
 			fprintf(stderr, "two cabinets: window title: %s\n", SDL_GetError());
@@ -2855,22 +2890,74 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		fprintf(stderr, "two cabinets: reset complete, %d cabinet(s) running\n", cabinet_count);
 		return true;
 	};
+	auto remove_disconnected_player = [&](int player) {
+		if (cabinet_count == 1) return true;
+		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
+		if (!pair || !pair->retire(cabinets[player]->machine)) {
+			fprintf(stderr, "local multiplayer: cannot retire player %d without interrupting the game\n", player + 1);
+			return false;
+		}
+		const auto primary_config = cabinets[0]->config;
+		waiting_config[player] = cabinets[player]->config;
+		// Keep the original link IDs and master clock until the race finishes.
+		auto retired = std::move(cabinets[player]);
+		std::fill_n(retired->machine.m_inputs, 3, uint8_t(0xff));
+		retired->machine.set_volumes(0, 0);
+		retired->machine.set_drawing(false);
+		retired_cabinets.push_back(std::move(retired));
+		for (int p = player; p + 1 < cabinet_count; p++)
+			cabinets[p] = std::move(cabinets[p + 1]);
+		std::rotate(bindings.begin() + player, bindings.begin() + player + 1, bindings.begin() + cabinet_count);
+		std::rotate(waiting_config.begin() + player, waiting_config.begin() + player + 1,
+			waiting_config.begin() + cabinet_count);
+		std::rotate(pads + player, pads + player + 1, pads + cabinet_count);
+		std::rotate(claimed_pads.begin() + player, claimed_pads.begin() + player + 1,
+			claimed_pads.begin() + cabinet_count);
+		std::rotate(joined_controllers.begin() + player, joined_controllers.begin() + player + 1,
+			joined_controllers.begin() + cabinet_count);
+		std::rotate(code_restart.begin() + player, code_restart.begin() + player + 1,
+			code_restart.begin() + cabinet_count);
+		--cabinet_count;
+		claimed_pads[cabinet_count] = joined_controllers[cabinet_count] = 0;
+		code_restart[cabinet_count] = false;
+		if (player == 0) cabinets[0]->config = primary_config;
+		for (int p = 0; p < cabinet_count; p++) {
+			auto &c = *cabinets[p];
+			c.dir = p == 0 ? data_dir : data_dir + "/two-cabinets/" + std::to_string(p + 1);
+			c.host->data_dir = c.dir;
+			if (!c.sidecar_path.empty()) c.sidecar_path = c.dir + "/" + c.game->save_sidecar_name();
+			c.config.ctl[0] = bindings[p];
+			connect_game_menu(p);
+		}
+		join_overlay.close();
+		service_menu_player = -1;
+		player1_started = true;
+		join_start_was = true;
+		open_local_pads();
+		apply_shared_settings();
+		join_pending = false;
+		queued_controller = 0;
+		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
+		fprintf(stderr, "two cabinets: player %d controller disconnected; %s (%d player(s) remain)\n",
+			player + 1, cabinet_count == 1 ? "returned to solo play" : "keeping split-screen session", cabinet_count);
+		return true;
+	};
 	auto request_join = [&](SDL_JoystickID controller = 0) {
 		if (lan.role() != LAN_OFF) return true;
-		if (!on_demand || second_player || join_pending) return true;
+		if (!on_demand || cabinet_count >= max_players || join_pending) return true;
 		player1_started = true;
 		join_pending = true;
 		queued_controller = controller;
 		next_picture = {};
-		fprintf(stderr, "two cabinets: player 2 join requested; %s\n", local_info->join_wait);
+		fprintf(stderr, "two cabinets: player %d join requested; %s\n", cabinet_count + 1, local_info->join_wait);
 		return true;
 	};
 	auto controller_start = [&](int player) {
 		if (lan.role() != LAN_OFF) return true;
-		if (!on_demand || second_player) return true;
+		if (!on_demand) return true;
 		if (!player1_started) {
-			if (player == 1) std::swap(pads[0], pads[1]);
-			for (int p = 0; p < 2; p++)
+			if (player != 0) std::swap(pads[0], pads[player]);
+			for (int p = 0; p < max_players; p++)
 				claimed_pads[p] = pads[p] ? SDL_GetGamepadID(pads[p]) : 0;
 			player1_started = true;
 			cabinets[0]->pad = {};
@@ -2881,12 +2968,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				unsigned(claimed_pads[0]));
 			return true;
 		}
-		if (player == 0) {
-			cabinets[0]->pad.start_delay = 0;
+		if (player < cabinet_count) {
+			cabinets[player]->pad.start_delay = 0;
 			return true;
 		}
-		claimed_pads[1] = SDL_GetGamepadID(pads[1]);
-		return request_join(claimed_pads[1]);
+		if (cabinet_count >= max_players || join_pending) return true;
+		if (player != cabinet_count) std::swap(pads[player], pads[cabinet_count]);
+		for (int p = 0; p < max_players; p++) claimed_pads[p] = pads[p] ? SDL_GetGamepadID(pads[p]) : 0;
+		return request_join(claimed_pads[cabinet_count]);
 	};
 	auto cancel_pending_join = [&] {
 		if (!join_pending) return true;
@@ -2922,13 +3011,18 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			return false;
 		}
 		if ((quit_after < 0 || getenv("M1_SAVE")) && !save()) return false;
-		cabinet_count = 2;
-		if (!create_cabinet(1)) return false;
-		connect_game_menu(1);
-		cabinets[1]->game->sync_shared_settings(cabinets[0]->machine);
-		cabinets[1]->config.ctl[0] = bindings[1];
-		cabinets[1]->display = cabinets[0]->display;
-		if (!configure_3d(*cabinets[1], cabinets[1]->config.renderer3d)) return false;
+		const int joined_player = cabinet_count++;
+		if (!create_cabinet(joined_player)) return false;
+		connect_game_menu(joined_player);
+		cabinets[joined_player]->game->sync_shared_settings(cabinets[0]->machine);
+		cabinets[joined_player]->config.ctl[0] = bindings[joined_player];
+		cabinets[joined_player]->display = cabinets[0]->display;
+		if (!configure_3d(*cabinets[joined_player], cabinets[joined_player]->config.renderer3d)) return false;
+		if (cabinet_count == 4 && cabinets[0]->config.live_monitor) {
+			cabinets[0]->config.live_monitor = 0;
+			cabinets[0]->settings_dirty = true;
+			fprintf(stderr, "Live Monitor: disabled for four players\n");
+		}
 		cabinets[0]->host->standalone_cabinet = false;
 		cabinets[0]->host->link_player = 1;
 		if (!sync_monitor()) return false;
@@ -2939,8 +3033,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		if (again && !boot()) { fprintf(stderr, "two cabinets: linked join reboot did not complete\n"); return false; }
 		show_arcade_boot();
 		for (int p = 0; p < cabinet_count; p++) { cabinets[p]->pad = {}; cabinets[p]->service = {}; cabinets[p]->pad.start_delay = 0; }
-		second_player = true;
-		joined_controller = queued_controller;
+		joined_controllers[joined_player] = queued_controller;
 		queued_controller = 0;
 		join_pending = false;
 		next_picture = {};
@@ -2952,7 +3045,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			return false;
 		}
 		reset_perf();
-		fprintf(stderr, "two cabinets: player 2 joined, two cabinets running, split-screen enabled\n");
+		if (cabinet_count == 2) fprintf(stderr, "two cabinets: player 2 joined, two cabinets running, split-screen enabled\n");
+		else fprintf(stderr, "local multiplayer: player %d joined, %d cabinets running, split-screen enabled\n", cabinet_count, cabinet_count);
 		return true;
 	};
 	int passes = 0;
@@ -3065,7 +3159,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	uint64_t last_event_ms = 0;
 	bool controller_restart_pending = false;
 	auto restart_solo_race = [&](bool controller) {
-		const bool solo = on_demand && cabinet_count == 1 && !second_player && !join_pending &&
+		const bool solo = on_demand && cabinet_count == 1 && !join_pending &&
 			!network_cabinet.active() && !join_overlay.is_open();
 		if (solo && cabinets[0]->game->quick_restart_race()) {
 			auto &c = *cabinets[0];
@@ -3146,7 +3240,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				network_cabinet.player(), double(SDL_GetTicksNS() - lan_boot_started) / 1e9,
 				(unsigned long long)lan_boot_frames);
 		}
-		if (cabinets[2]) cabinets[2]->machine.m_audio_out.clear();
+		if (cabinets[monitor_slot]) cabinets[monitor_slot]->machine.m_audio_out.clear();
 		if (perf_enabled) {
 			perf_sim_total += sim_ns;
 			perf_sim_samples.push_back(sim_ns);
@@ -3164,7 +3258,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 		mixed.resize(samples);
 		for (size_t sample = 0; sample < samples; sample++) {
 			int sum = 0;
-			for (int p = 0; p < (second_player ? 2 : 1); p++) {
+			for (int p = 0; p < cabinet_count; p++) {
 				const auto &c = cabinets[p];
 				if (sample < c->machine.m_audio_out.size()) sum += c->machine.m_audio_out[sample] * c->config.volume / 100;
 			}
@@ -3315,22 +3409,22 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 							!pc_mode, cabinets[0]->display->icon_set, cabinets[0]->machine.free_cam());
 						for (int p = 0; p < cabinet_count; p++) {
 							const auto cabinet_status = cabinets[p]->game->local_status(cabinets[p]->machine);
-							fprintf(stderr, "two cabinets: player=%d phase=%02x subphase=%02x role=%u participants=%u\n",
+							fprintf(stderr, "two cabinets: player=%d phase=%02x subphase=%02x role=%u participants=%u machine_frame=%llu\n",
 								p + 1, cabinet_status.phase, cabinet_status.subphase, cabinet_status.role,
-								cabinet_status.participants);
+								cabinet_status.participants, (unsigned long long)cabinets[p]->machine.frame_number());
 							fprintf(stderr, "two cabinets: picture player=%d aspect=%.6f picture_shape=%d\n",
 								p + 1, cabinets[p]->machine.aspect(), cabinets[p]->config.aspect);
 						}
-						if (cabinets[2]) {
-							auto &m = cabinets[2]->machine;
-							const auto monitor_status = cabinets[2]->game->local_status(m);
-							const auto link_status = pair->status(2);
+						if (cabinets[monitor_slot]) {
+							auto &m = cabinets[monitor_slot]->machine;
+							const auto monitor_status = cabinets[monitor_slot]->game->local_status(m);
+							const auto link_status = pair->status(monitor_slot);
 							fprintf(stderr, "Live Monitor: status role=%u id=%u racers=%u inputs=%02x/%02x/%02x "
 								"ticks=%llu layout=%s audio=muted frame=%llu aspect=%.6f picture_shape=%d\n",
 								monitor_status.role, link_status.id, link_status.participants,
 								m.m_inputs[0], m.m_inputs[1], m.m_inputs[2],
 								(unsigned long long)link_status.exchanges, monitor_above() ? "above" : "window",
-								(unsigned long long)m.frame_number(), m.aspect(), cabinets[2]->config.aspect);
+								(unsigned long long)m.frame_number(), m.aspect(), cabinets[monitor_slot]->config.aspect);
 						}
 					} else if (!strcmp(name, "sleep")) {
 						wake_clock = audio_wake_clock(audio_wake_clock::ticks() - 60000000000ull);
@@ -3342,16 +3436,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						event.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
 						event.window.windowID = SDL_GetWindowID(cabinets[cabinet_count - 1]->display->window);
 					} else if (!strcmp(name, "close-monitor")) {
-						if (!cabinets[2] || monitor_above()) {
+						if (!cabinets[monitor_slot] || monitor_above()) {
 							fprintf(stderr, "Live Monitor: no spectator window to close\n");
 							return 2;
 						}
 						event.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
-						event.window.windowID = SDL_GetWindowID(cabinets[2]->display->window);
-					} else if (!strcmp(name, "pad2")) {
+						event.window.windowID = SDL_GetWindowID(cabinets[monitor_slot]->display->window);
+					} else if (!strcmp(name, "pad2") || !strcmp(name, "pad3") || !strcmp(name, "pad4")) {
 						if (!request_join(test_controller)) return 1;
-					} else if (!strcmp(name, "tap1") || !strcmp(name, "tap2")) {
-						const int p = !strcmp(name, "tap2") ? 1 : 0;
+					} else if (!strcmp(name, "tap1") || !strcmp(name, "tap2") ||
+						!strcmp(name, "tap3") || !strcmp(name, "tap4")) {
+						const int p = name[3] - '1';
 						auto *pad = SDL_OpenGamepad(close_pads.test_pads[p]);
 						if (!pad) {
 							fprintf(stderr, "two cabinets: open test pad for tap: %s\n", SDL_GetError());
@@ -3368,7 +3463,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						}
 						SDL_CloseGamepad(pad);
 					} else if (!strcmp(name, "latepads") || !strcmp(name, "tappads") ||
-						!strcmp(name, "testpads")) {
+						!strcmp(name, "testpads") || !strcmp(name, "fourpads")) {
 						SDL_VirtualJoystickDesc desc;
 						SDL_INIT_INTERFACE(&desc);
 						desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
@@ -3379,12 +3474,19 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
 						desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
 						desc.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1;
-						for (auto &id : close_pads.test_pads) {
+						for (int p = 0; p < (!strcmp(name, "fourpads") ? 4 : 2); p++) {
+							auto &id = close_pads.test_pads[p];
 							id = SDL_AttachVirtualJoystick(&desc);
 							if (!id) {
 								fprintf(stderr, "two cabinets: attach test controller: %s\n", SDL_GetError());
 								return 1;
 							}
+						}
+						if (!strcmp(name, "fourpads")) {
+							open_local_pads();
+							at += used;
+							if (*at == ',') ++at;
+							continue;
 						}
 						close_pads.test_joystick = SDL_OpenJoystick(close_pads.test_pads[1]);
 						const bool tap = !strcmp(name, "tappads");
@@ -3412,16 +3514,24 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						SDL_FlushEvent(SDL_EVENT_JOYSTICK_ADDED);
 						SDL_FlushEvent(SDL_EVENT_GAMEPAD_ADDED);
 						SDL_FlushEvent(SDL_EVENT_GAMEPAD_REMAPPED);
+					} else if (!strcmp(name, "unplug1") || !strcmp(name, "unplug2") ||
+						!strcmp(name, "unplug3") || !strcmp(name, "unplug4")) {
+						const int p = name[6] - '1';
+						if (!SDL_DetachVirtualJoystick(close_pads.test_pads[p])) {
+							fprintf(stderr, "two cabinets: disconnect test controller: %s\n", SDL_GetError());
+							return 1;
+						}
+						close_pads.test_pads[p] = 0;
 					} else if (!strcmp(name, "disconnect2")) {
 						event.type = SDL_EVENT_GAMEPAD_REMOVED;
 						event.gdevice.which = test_controller;
 					} else if (!strcmp(name, "resize") || !strcmp(name, "resize-monitor")) {
 						const bool monitor = !strcmp(name, "resize-monitor");
-						if (monitor && (!cabinets[2] || monitor_above())) {
+						if (monitor && (!cabinets[monitor_slot] || monitor_above())) {
 							fprintf(stderr, "Live Monitor: no spectator window to resize\n");
 							return 2;
 						}
-						auto *window = cabinets[monitor ? 2 : cabinet_count - 1]->display->window;
+						auto *window = cabinets[monitor ? monitor_slot : cabinet_count - 1]->display->window;
 						if (!SDL_SetWindowSize(window, 800, 450)) {
 							fprintf(stderr, "two cabinets: resize: %s\n", SDL_GetError());
 							return 1;
@@ -3478,8 +3588,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				continue;
 			}
 			if (join_overlay.is_open() && join_overlay.handle_event(event)) continue;
-			if (cabinets[2] && !monitor_above() && event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-				event.window.windowID == SDL_GetWindowID(cabinets[2]->display->window)) {
+			if (cabinets[monitor_slot] && !monitor_above() && event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+				event.window.windowID == SDL_GetWindowID(cabinets[monitor_slot]->display->window)) {
 				cabinets[0]->config.live_monitor = 0;
 				cabinets[0]->settings_dirty = true;
 				if (!reset_both(false)) return 1;
@@ -3494,16 +3604,22 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			else if (event.type == SDL_EVENT_GAMEPAD_ADDED || event.type == SDL_EVENT_GAMEPAD_REMOVED ||
 					 event.type == SDL_EVENT_GAMEPAD_REMAPPED || event.type == SDL_EVENT_JOYSTICK_ADDED ||
 					 event.type == SDL_EVENT_JOYSTICK_REMOVED) {
+				int disconnected_player = -1;
+				if (on_demand && !network_cabinet.active() && event.type == SDL_EVENT_GAMEPAD_REMOVED)
+					for (int p = 0; p < cabinet_count; p++)
+						if ((pads[p] && SDL_GetGamepadID(pads[p]) == event.gdevice.which) ||
+							claimed_pads[p] == event.gdevice.which || joined_controllers[p] == event.gdevice.which)
+							disconnected_player = p;
 				open_local_pads();
 				if (on_demand && event.type == SDL_EVENT_GAMEPAD_REMOVED) {
 					if (join_pending && queued_controller == event.gdevice.which) {
 						if (!cancel_pending_join()) return 1;
-					} else if (second_player && joined_controller == event.gdevice.which) {
+					} else if (disconnected_player >= 0 && cabinet_count > 1) {
 						if (local_info->solo_on_controller_disconnect) {
-							if (!reset_both()) return 1;
-							fprintf(stderr, "two cabinets: player 2 controller disconnected; returned to solo play\n");
+							if (!remove_disconnected_player(disconnected_player)) return 1;
 						} else {
-							fprintf(stderr, "two cabinets: player 2 controller disconnected; keeping split-screen session\n");
+							fprintf(stderr, "two cabinets: player %d controller disconnected; keeping split-screen session\n",
+								disconnected_player + 1);
 						}
 					}
 				}
@@ -3520,18 +3636,18 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 						if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
 							pad_binding(p, C_MENU) == event.gbutton.button &&
 							!(event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && !paused &&
-							  on_demand && cabinet_count == 1 && !second_player && !join_pending &&
+							  on_demand && cabinet_count == 1 && !join_pending &&
 							  !network_cabinet.active() && cabinets[0]->game->supports_quick_restart_race())) {
 							open_menu();
 							break;
 						}
-				for (int p = 0; p < 2; p++)
+				for (int p = 0; p < max_players; p++)
 					if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
 						pad_binding(p, C_START) == event.gbutton.button) {
 						if (!controller_start(p)) return 1;
 						break;
 					}
-				for (int p = 0; p < 2; p++)
+				for (int p = 0; p < max_players; p++)
 					if (paused && !network_cabinet.active() && pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
 						pad_binding(p, C_MENU) == event.gbutton.button) {
 						paused = false;
@@ -3645,8 +3761,8 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				game_reset_requested = false;
 				if (monitor_change_requested) {
 					const bool wanted = cabinets[0]->config.live_monitor != 0;
-					game_restart = game_restart || wanted != bool(cabinets[2]);
-					if (wanted == bool(cabinets[2]) && !monitor_display()) return 1;
+					game_restart = game_restart || wanted != bool(cabinets[monitor_slot]);
+					if (wanted == bool(cabinets[monitor_slot]) && !monitor_display()) return 1;
 					monitor_change_requested = false;
 				}
 				if (play_style_restart) {
@@ -3736,12 +3852,14 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			next_pad_scan = SDL_GetTicks() + 1000;
 		}
-		if (on_demand && !second_player && lan.role() == LAN_OFF) {
+		if (on_demand && cabinet_count < max_players && lan.role() == LAN_OFF) {
 			const bool *keys = SDL_GetKeyboardState(nullptr);
-			const bool key_start = bindings[1].key[C_START] != SDL_SCANCODE_UNKNOWN && keys[bindings[1].key[C_START]];
-			const int player = !player1_started && pads[0] &&
-				player_controls::pad_down(pads[0], pad_binding(0, C_START)) ? 0 : 1;
-			const bool pad_start = pads[player] && player_controls::pad_down(pads[player], pad_binding(player, C_START));
+			const bool key_start = bindings[cabinet_count].key[C_START] != SDL_SCANCODE_UNKNOWN &&
+				keys[bindings[cabinet_count].key[C_START]];
+			int player = -1;
+			for (int p = player1_started ? cabinet_count : 0; p < max_players; p++)
+				if (pads[p] && player_controls::pad_down(pads[p], pad_binding(p, C_START))) { player = p; break; }
+			const bool pad_start = player >= 0;
 			if ((key_start || pad_start) && !join_start_was) {
 				if (key_start) { if (!request_join()) return 1; }
 				else if (!controller_start(player)) return 1;
@@ -3775,7 +3893,17 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				frame_clock.reset();
 				break;
 			}
-			if (join_pending && lan.role() == LAN_OFF && cabinets[0]->game->can_join_local_cabinet() &&
+			if (!retired_cabinets.empty() && !join_pending &&
+				std::all_of(cabinets.begin(), cabinets.begin() + cabinet_count,
+					[](const auto &c) { return c->game->can_join_local_cabinet(); })) {
+				if (!reset_both(false)) return 1;
+				if (cabinet_count > 1)
+					for (int p = 0; p < cabinet_count; p++) cabinets[p]->pad.start_delay = 0;
+				break;
+			}
+			if (join_pending && lan.role() == LAN_OFF &&
+				std::all_of(cabinets.begin(), cabinets.begin() + cabinet_count,
+					[](const auto &c) { return c->game->can_join_local_cabinet(); }) &&
 				cabinets[0]->pad.start_frames == 0 && cabinets[0]->pad.start_delay < 0) {
 				if (!start_linked_session()) return 1;
 				break;
@@ -3785,7 +3913,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				break;
 			}
 #ifdef __ANDROID__
-			std::array<bool, 3> arcade_draws{};
+			std::array<bool, 5> arcade_draws{};
 #endif
 			for (int p = 0; p < cabinet_count; p++) {
 				auto &c = *cabinets[p];
@@ -3813,8 +3941,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (audio) SDL_ClearAudioStream(audio.get());
 				break;
 			}
-			if (cabinets[2]) std::fill_n(cabinets[2]->machine.m_inputs, 3, uint8_t(0xff));
-			if (cabinets[0]->service.left_test_menu || (cabinet_count == 2 && cabinets[1]->service.left_test_menu)) {
+			if (cabinets[monitor_slot]) std::fill_n(cabinets[monitor_slot]->machine.m_inputs, 3, uint8_t(0xff));
+			if (std::any_of(cabinets.begin(), cabinets.begin() + cabinet_count,
+				[](const auto &c) { return c->service.left_test_menu; })) {
 				if (!reset_both(false)) return 1;
 				break;
 			}
@@ -3845,10 +3974,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				break;
 			}
 		}
-		std::array<bool, 3> updated{};
+		std::array<bool, 5> updated{};
 		const bool shot_due = shot_at >= 0 && frames >= shot_at && !shot_saved;
-		std::array<SDL_Rect, 3> viewports{};
-		std::array<float, 3> picture_aspects{};
+		std::array<SDL_Rect, 5> viewports{};
+		std::array<float, 5> picture_aspects{};
 		const uint64_t picture_now = SDL_GetTicksNS();
 		const bool picture_grace = lan_picture_wait.defer(lan_waiting, picture_now);
 		const bool defer_lan_picture = picture_grace && !join_overlay.is_open() && !shot_due && !screenshot_pending;
@@ -3918,14 +4047,16 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				fprintf(stderr, "two cabinets: display size: %s\n", SDL_GetError());
 				return 1;
 			}
-			const bool separate_monitor = p == 2 && !monitor_above();
+			const bool separate_monitor = p == monitor_slot && !monitor_above();
 			const SDL_Rect viewport = cabinet_composition_viewport(
 				separate_monitor ? cabinet_layout::windows : layout, width, height,
-				separate_monitor ? 0 : p, ASPECTS[c.config.aspect], second_player,
+				separate_monitor ? 0 : p == monitor_slot ? cabinet_count : p,
+				ASPECTS[c.config.aspect], separate_monitor ? 1 : cabinet_count,
 				!separate_monitor && monitor_above());
 			viewports[p] = viewport;
 			if (viewport.w <= 0 || viewport.h <= 0) continue;
-			const float max_aspect = monitor_above() && (p == 2 || !second_player) ? 64.0f / 9 : 32.0f / 9;
+			const float max_aspect = monitor_above() && cabinet_count < 3 &&
+				(p == monitor_slot || cabinet_count == 1) ? 64.0f / 9 : 32.0f / 9;
 			const float aspect = std::clamp(float(viewport.w) / viewport.h, 4.0f / 3, max_aspect);
 			picture_aspects[p] = aspect;
 			if (shot_due) {
@@ -4108,7 +4239,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				for (int view = 0; view < instance_count(); view++)
 					if (cabinets[view] && !cabinets[view]->gpu_notice.empty())
 						notice += (notice.empty() ? "" : "\n") +
-							std::string(view == 2 ? "Live Monitor: " : cabinet_count == 1 ? "" : view ? "Player 2: " : "Player 1: ") +
+							(view == monitor_slot ? std::string("Live Monitor: ") : cabinet_count == 1 ? "" : player_name(view) + ": ") +
 							cabinets[view]->gpu_notice;
 				if (!join_overlay.set_notice(notice)) {
 					fprintf(stderr, "two cabinets: GPU status notice unavailable\n");
@@ -4122,7 +4253,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (!save_picture(renderer, "build/host_window_at.png")) return 1;
 				shot_saved = true;
 			}
-			if (shot_due && p == 2 && !monitor_above() &&
+			if (shot_due && p == monitor_slot && !monitor_above() &&
 				!save_picture(renderer, "build/host_monitor_at.png")) return 1;
 			auto &machine = cabinets[0]->machine;
 			if (!ahead && p == 0 && ahead_possible()) {
@@ -4170,11 +4301,15 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			std::vector<uint64_t> all_render_samples;
 			for (const auto &samples : perf_render_samples)
 				all_render_samples.insert(all_render_samples.end(), samples.begin(), samples.end());
+			uint64_t render_total = 0, render_count = 0;
+			for (size_t p = 0; p < perf_render_total.size(); p++) {
+				render_total += perf_render_total[p];
+				render_count += perf_render_count[p];
+			}
 			char title[256];
 			snprintf(title, sizeof title, "%s | %.1f FPS | CPU %.2f ms | Draw %.2f ms | Present %.2f ms",
 				host_title(), perf_frames / seconds, double(perf_sim_total) / perf_frames / 1e6,
-				double(perf_render_total[0] + perf_render_total[1] + perf_render_total[2]) /
-					std::max<uint64_t>(1, perf_render_count[0] + perf_render_count[1] + perf_render_count[2]) / 1e6,
+				double(render_total) / std::max<uint64_t>(1, render_count) / 1e6,
 				double(perf_present_total) / std::max<size_t>(1, perf_present_samples.size()) / 1e6);
 			for (int p = 0; p < cabinet_count; p++)
 				if (!SDL_SetWindowTitle(cabinets[p]->display->window, title)) {
@@ -4192,10 +4327,9 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				double(perf_sim_total) / perf_frames / 1e6, percentile_ms(perf_sim_samples, 0.95),
 				percentile_ms(perf_sim_samples, 1.0), perf_sim_late, 1000.0 / FRAME_HZ,
 				double(perf_mix_total) / perf_frames / 1e6,
-				double(perf_render_total[0] + perf_render_total[1] + perf_render_total[2]) /
-					std::max<uint64_t>(1, perf_render_count[0] + perf_render_count[1] + perf_render_count[2]) / 1e6,
+				double(render_total) / std::max<uint64_t>(1, render_count) / 1e6,
 				percentile_ms(all_render_samples, 0.95),
-				(unsigned long long)(perf_render_count[0] + perf_render_count[1] + perf_render_count[2]),
+				(unsigned long long)render_count,
 				double(perf_present_total) / std::max<size_t>(1, perf_present_samples.size()) / 1e6,
 				percentile_ms(perf_present_samples, 0.95), perf_present_samples.size(),
 				perf_present_samples.size() / seconds,

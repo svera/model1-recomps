@@ -153,14 +153,26 @@ automatically migrate to Standard. Saved Linear settings remain Arcade.
 
 ### Local multiplayer
 
-Virtua Racing starts in solo play and automatically supports a second local player.
+Virtua Racing starts in solo play and supports up to four local players.
 The first controller to press Start becomes Player 1 and starts solo play, regardless of
 connection order. Start on another controller joins Player 2 from the demo or
-course-selection screen. Pressing Start again on Player 1's controller does not add a player.
-Joining restarts both players at linked course selection.
+course-selection screen. Further controllers join Players 3 and 4 the same way.
+Pressing Start again on an active player's controller does not add a player.
+Joining restarts all players at linked course selection.
 If a race is already underway, the join waits until the game returns to
-the demo or course-selection screen, without interrupting Player 1's race. If Player 2's controller
-disconnects, the game returns to solo play.
+the demo or course-selection screen, without interrupting Player 1's race.
+If a player's controller disconnects, only that player leaves. The remaining
+players continue the ongoing race with the corresponding split-screen layout.
+The game returns to a single-player view only when one player remains. Original
+race IDs stay fixed until the race ends; the next session uses consecutive IDs.
+
+With three players and Live Monitor off, Player 1 occupies the top half; Players 2
+and 3 share the bottom half. With Live Monitor enabled, it occupies the top-left
+quadrant, followed by Players 1, 2 and 3 in reading order. Four players use four
+quadrants in player order; joining Player 4 turns Live Monitor off, and it cannot
+be enabled with four players. Players 3 and 4 have no default keyboard bindings;
+assign keys under Controls or use controllers. Each player's settings are saved
+separately. **Return to solo play** in the menu removes the additional players.
 
 ### LAN multiplayer (experimental)
 

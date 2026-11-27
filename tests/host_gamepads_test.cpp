@@ -88,6 +88,19 @@ int main()
 	assert(SDL_DetachVirtualJoystick(reconnected));
 	assert(refresh_gamepads(pads, ctl, false));
 	assert(!pads[0] && !pads[1]);
+	SDL_Gamepad *group[4]{};
+	player_controls group_controls[4];
+	std::array<SDL_JoystickID, 4> ids{};
+	for (int p = 0; p < 4; p++) ids[p] = attach_pad(p % 2 + 1);
+	assert(refresh_gamepad_slots(group, group_controls, false, ids));
+	for (int p = 0; p < 4; p++) assert(SDL_GetGamepadID(group[p]) == ids[p]);
+	assert(!refresh_gamepad_slots(group, group_controls, false, ids));
+	std::swap(ids[0], ids[3]);
+	assert(refresh_gamepad_slots(group, group_controls, false, ids));
+	for (int p = 0; p < 4; p++) assert(SDL_GetGamepadID(group[p]) == ids[p]);
+	for (auto id : ids) assert(SDL_DetachVirtualJoystick(id));
+	assert(refresh_gamepad_slots(group, group_controls, false, ids));
+	for (auto *pad : group) assert(!pad);
 	SDL_Quit();
 	printf("Gamepad hotplug: late connection, missed events, live input, stable handles, assignments, swaps and reconnection passed\n");
 }
