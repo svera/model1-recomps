@@ -92,12 +92,15 @@ template <typename T> std::unique_ptr<T> make_unique_clear(size_t n)
 class u32_fifo
 {
 public:
+	struct state { std::deque<uint32_t> queue; bool underflow = false; };
 	void push(uint32_t v) { m_q.push_back(v); if (m_on_push) m_on_push(); }
 	uint32_t pop() { if (m_q.empty()) { m_underflow = true; return 0; } uint32_t v = m_q.front(); m_q.pop_front(); return v; }
 	uint32_t peek(int i) const { return m_q[i]; }
 	size_t size() const { return m_q.size(); }
 	bool is_empty() const { return m_q.empty(); }
 	void clear() { m_q.clear(); }
+	state save_state() const { return {m_q, m_underflow}; }
+	void load_state(const state &saved) { m_q = saved.queue; m_underflow = saved.underflow; }
 	std::function<void()> m_on_push;
 	bool m_underflow = false;
 private:

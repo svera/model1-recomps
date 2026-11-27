@@ -49,6 +49,7 @@ struct host_context
 	std::function<void(menu_page, int)> replace_page;
 	std::function<void(const std::string &, std::function<bool(const SDL_Event &)>, std::function<void()>)> capture;
 	std::function<void()> refresh_menu;
+	std::function<void()> restart_cpu_runtime;
 	bool replay = false;                     // --replay-inputs (and its recording): reproduction settings, until a reset ends them
 	int link_player = 0;                     // 0 standalone, 1 first cabinet, 2 other linked cabinet, 3 receive-only monitor
 	bool standalone_cabinet = false;         // force standalone instead of restoring a saved link role
@@ -123,6 +124,9 @@ public:
 	// Before each game frame
 	virtual void before_frame() {}
 	virtual void after_frame() {}
+	// Restore a game-owned in-memory snapshot to restart the active race, if supported.
+	virtual bool supports_quick_restart_race() const { return false; }
+	virtual bool quick_restart_race() { return false; }
 	virtual bool hide_frame() const { return false; }
 	// Whether a queued local multiplayer join can safely restart into linked play.
 	virtual bool can_join_local_cabinet() const { return false; }

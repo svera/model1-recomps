@@ -123,6 +123,7 @@ the on-screen **Start** button or press **Start** on a controller.
 | Start | 1 | Start |
 | Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
+| Restart current solo race | Shift+F3 | Hold View / Select for 1 second |
 
 To see or change your actual controller bindings, open **Esc > Controls > Player 1 >
 Pad buttons**.

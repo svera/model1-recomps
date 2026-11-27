@@ -37,6 +37,71 @@ void model1io::reset()
 	m_time = m_ready_at = m_cs_rise = 0;   // the Z80's cycle count starts again from 0
 }
 
+model1io::state model1io::save_state() const
+{
+	state saved;
+	std::copy(std::begin(inputs), std::end(inputs), saved.inputs.begin());
+	std::copy(std::begin(analog_inputs), std::end(analog_inputs), saved.analog_inputs.begin());
+	saved.outputs = outputs;
+	std::copy(std::begin(eeprom), std::end(eeprom), saved.eeprom.begin());
+	std::copy(std::begin(m_ram), std::end(m_ram), saved.ram.begin());
+	saved.cpu = m_cpu;
+	saved.carry = m_carry;
+	saved.time = m_time;
+	std::copy(std::begin(m_port_value), std::end(m_port_value), saved.port_value.begin());
+	saved.port_config = m_port_config;
+	saved.serial_output = m_serial_output;
+	saved.cmd = m_cmd;
+	saved.address = m_address;
+	saved.secondary = m_secondary;
+	saved.adc_shift = m_adc_shift;
+	saved.ee = m_ee;
+	saved.cs = m_cs;
+	saved.clk = m_clk;
+	saved.di = m_di;
+	saved.accum = m_accum;
+	saved.shift = m_shift;
+	saved.bits = m_bits;
+	saved.cmd_ee = m_cmd_ee;
+	saved.ee_addr = m_ee_addr;
+	saved.locked = m_locked;
+	saved.ready_at = m_ready_at;
+	saved.cs_rise = m_cs_rise;
+	return saved;
+}
+
+void model1io::load_state(const state &saved)
+{
+	std::copy(saved.inputs.begin(), saved.inputs.end(), std::begin(inputs));
+	std::copy(saved.analog_inputs.begin(), saved.analog_inputs.end(), std::begin(analog_inputs));
+	outputs = saved.outputs;
+	std::copy(saved.eeprom.begin(), saved.eeprom.end(), std::begin(eeprom));
+	std::copy(saved.ram.begin(), saved.ram.end(), std::begin(m_ram));
+	m_cpu = saved.cpu;
+	m_cpu.userdata = this;
+	m_carry = saved.carry;
+	m_time = saved.time;
+	std::copy(saved.port_value.begin(), saved.port_value.end(), std::begin(m_port_value));
+	m_port_config = saved.port_config;
+	m_serial_output = saved.serial_output;
+	m_cmd = saved.cmd;
+	m_address = saved.address;
+	m_secondary = saved.secondary;
+	m_adc_shift = saved.adc_shift;
+	m_ee = ee_state(saved.ee);
+	m_cs = saved.cs;
+	m_clk = saved.clk;
+	m_di = saved.di;
+	m_accum = saved.accum;
+	m_shift = saved.shift;
+	m_bits = saved.bits;
+	m_cmd_ee = saved.cmd_ee;
+	m_ee_addr = saved.ee_addr;
+	m_locked = saved.locked;
+	m_ready_at = saved.ready_at;
+	m_cs_rise = saved.cs_rise;
+}
+
 void model1io::run(double usec)
 {
 	double target = usec * CLOCK / 1e6 + m_carry;

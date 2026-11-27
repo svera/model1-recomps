@@ -57,6 +57,36 @@ void mb86233_device::reset()
 	m_stalled = false;
 }
 
+mb86233_device::state mb86233_device::save_state() const
+{
+	state saved;
+	saved.regs = {m_st, m_a, m_b, m_d, m_p, m_alu_stmask, m_alu_stset, m_alu_r1, m_alu_r2};
+	saved.short_regs = {m_ppc, m_pc, m_sp, m_b0, m_b1, m_x0, m_x1, m_i0, m_i1, m_vsmr,
+		m_pcs[0], m_pcs[1], m_pcs[2], m_pcs[3], m_mask, m_m};
+	saved.byte_regs = {m_r, m_rpc, m_c0, m_c1, m_sft, m_vsm};
+	saved.icount = m_icount;
+	saved.flags = {m_stalled, m_stall, m_gpio0, m_gpio1, m_gpio2, m_gpio3};
+	return saved;
+}
+
+void mb86233_device::load_state(const state &saved)
+{
+	m_st = saved.regs[0]; m_a = saved.regs[1]; m_b = saved.regs[2]; m_d = saved.regs[3];
+	m_p = saved.regs[4]; m_alu_stmask = saved.regs[5]; m_alu_stset = saved.regs[6];
+	m_alu_r1 = saved.regs[7]; m_alu_r2 = saved.regs[8];
+	m_ppc = saved.short_regs[0]; m_pc = saved.short_regs[1]; m_sp = saved.short_regs[2];
+	m_b0 = saved.short_regs[3]; m_b1 = saved.short_regs[4]; m_x0 = saved.short_regs[5];
+	m_x1 = saved.short_regs[6]; m_i0 = saved.short_regs[7]; m_i1 = saved.short_regs[8];
+	m_vsmr = saved.short_regs[9];
+	std::copy_n(saved.short_regs.begin() + 10, 4, std::begin(m_pcs));
+	m_mask = saved.short_regs[14]; m_m = saved.short_regs[15];
+	m_r = saved.byte_regs[0]; m_rpc = saved.byte_regs[1]; m_c0 = saved.byte_regs[2];
+	m_c1 = saved.byte_regs[3]; m_sft = saved.byte_regs[4]; m_vsm = saved.byte_regs[5];
+	m_icount = saved.icount;
+	m_stalled = saved.flags[0]; m_stall = saved.flags[1];
+	m_gpio0 = saved.flags[2]; m_gpio1 = saved.flags[3]; m_gpio2 = saved.flags[4]; m_gpio3 = saved.flags[5];
+}
+
 u32 mb86233_device::set_exp(u32 val, u32 exp)
 {
 	return (val & 0x807fffff) | ((exp & 0xff) << 23);

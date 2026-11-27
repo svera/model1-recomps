@@ -51,6 +51,49 @@ public:
 		game::id title;                 // the game (src/games: its own code and data)
 	};
 
+	struct simulation_state
+	{
+		v60_device::state cpu;
+		uint64_t frame = 0, tgp_cycles = 0;
+		int scanline = 0;
+		double cpu_owed = 0;
+		std::vector<uint8_t> ram_a, ram_b;
+		std::vector<uint16_t> display_list0, display_list1, palette, colour_xlat, tgp_ram;
+		std::vector<uint32_t> poly_ram, copro_ram;
+		segas24_tile::memory_state tile_memory;
+		std::array<uint32_t, 0x2000> pens{};
+		std::array<uint8_t, 0x800> dpram{};
+		std::array<uint8_t, 3> inputs{}, frame_inputs{};
+		std::array<uint8_t, 8> analog_inputs{};
+		uint8_t lamps = 0;
+		uint32_t bank_base = 0;
+		std::array<uint16_t, 2> listctl{};
+		int uart_txbuf = -1, uart_shift = -1, uart_rx = -1, uart_shift_left = 0, uart_rx_left = 0;
+		uint8_t io_command = 0;
+		int64_t io_ack = 0;
+		std::array<uint16_t, 2> timer_period{}, timer_val{};
+		std::array<int64_t, 2> timer_remain{};
+		uint16_t timer_mode = 0;
+		uint8_t irq_status = 0, irq_mask = 0;
+		int last_irq = 0;
+		std::array<uint32_t, 3> copro_bases{};
+		std::array<uint32_t, 4> copro_atan_base{};
+		uint32_t copro_data_base = 0, copro_ram_adr = 0;
+		u32_fifo::state copro_fifo_in, copro_fifo_out;
+		uint32_t v60_copro_fifo_r = 0, v60_copro_fifo_w = 0;
+		uint32_t pushpc = 0;
+		std::array<float, 12> cmat{};
+		std::array<float, MAT_STACK_SIZE * 12> mat_stack{};
+		std::array<float, 21 * 12> mat_vector{};
+		int32_t mat_stack_pos = 0;
+		float acc = 0, tgp_int_px = 0, tgp_int_py = 0, tgp_int_pz = 0;
+		uint32_t tgp_int_adr = 0;
+		uint16_t v60_copro_ram_adr = 0, v60_copro_ram_latch[2]{}, copro_hle_ram_scan_adr = 0;
+		int ccount = 0;
+		std::shared_ptr<void> lle;
+		std::optional<model1io::state> io_board;
+	};
+
 	// Testing (the host's M1_TRACE): the one-off work done since the counts were last cleared.
 	struct work_trace {
 		int tiles_full = 0, layers = 0, sky_build = 0, sky_scale = 0, sky_scale_sync = 0, padded = 0;
@@ -89,6 +132,8 @@ public:
 	explicit model1(regions &&r);
 	game::id title() const { return m_regions.title; }
 	void reset();
+	bool save_simulation_state(simulation_state &saved) const;
+	bool load_simulation_state(const simulation_state &saved);
 	// One video frame: CPU time, the vblank IRQ, the display-list scan and the render.
 	void run_frame();
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
@@ -871,6 +916,8 @@ private:
 	uint64_t m_tgp_cycles = 0;
 	double m_cpu_owed = 0;       // the fraction of an instruction-budget cycle carried to the next line
 	void lle_reset();
+	std::shared_ptr<void> save_lle_state() const;
+	bool restore_lle_state(const std::shared_ptr<void> &saved);
 	u16 lle_v60_r(uint32_t a);
 	void lle_v60_w(uint32_t a, uint16_t data, uint16_t mem_mask);
 

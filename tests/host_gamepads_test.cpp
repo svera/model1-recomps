@@ -20,6 +20,16 @@ static SDL_JoystickID attach_pad(Uint16 product)
 
 int main()
 {
+	gamepad_back_hold hold;
+	assert(!hold.restart(true, false, false, 100));
+	assert(!hold.restart(true, true, false, 1099));
+	assert(hold.restart(true, true, false, 1100));
+	assert(!hold.restart(true, true, true, 2200));
+	assert(!hold.restart(true, false, false, 3000));
+	assert(!hold.restart(true, true, true, 5000));
+	assert(!hold.restart(true, false, false, 6000));
+	assert(hold.restart(true, true, false, 7000));
+
 	SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT, "0x1209/0x0001,0x1209/0x0002");
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 	assert(SDL_Init(SDL_INIT_GAMEPAD));

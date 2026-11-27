@@ -389,9 +389,10 @@ struct pad_state
 	int coin_frames = 0, start_delay = -1, start_frames = 0;
 	bool key_start_was = false, key_coin_was = false, pad_coin_was = false, key_menu_was = false;
 	bool lb_was = false, rb_was = false, right_stick_was = false;
+	gamepad_back_hold back_hold;
 };
 
-enum class hotkey { none, menu, scale, aspect, free_cam };
+enum class hotkey { none, menu, scale, aspect, free_cam, restart_race };
 
 // The game's test menu, from our menu: the test button pressed for a moment, then, while the test
 // menu is up, Down is the service button (move) and Start the test button (select). The game's mode
@@ -525,6 +526,11 @@ hotkey read_inputs(model1 &m, SDL_Gamepad *pads[2], pad_state ps[2], const playe
 					st.back_combo = true;
 				}
 				st.lb_was = lb; st.rb_was = rb;
+				if (game_part.supports_quick_restart_race() &&
+					st.back_hold.restart(back, st.back_was, st.back_combo, SDL_GetTicks())) {
+					hk = hotkey::restart_race;
+					st.back_combo = true;
+				}
 			} else {
 				for (int a : prof.pad_actions)
 					if (player_controls::pad_down(g, ctl[p].pad[a])) press(a);
@@ -1294,6 +1300,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			fprintf(stderr, "two cabinets: cabinet %d compiled %zu functions (%zu KB)\n", p + 1, stats.functions, stats.code_bytes / 1024);
 			c.machine.run_cpu = [&c](int n) { c.runtime.run(n); };
+			c.host->restart_cpu_runtime = [&c] { c.runtime.reset_run_state(); };
 		}
 		if (cabinet_count == 1 && p == 0) return true;
 		// A fresh EEPROM must initialize standalone before a master can wait for this peer.
@@ -3150,6 +3157,27 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	audio_wake_clock wake_clock;
 	const uint64_t events_started = SDL_GetTicks();
 	uint64_t last_event_ms = 0;
+	bool controller_restart_pending = false;
+	auto restart_solo_race = [&](bool controller) {
+		const bool solo = on_demand && cabinet_count == 1 && !join_pending &&
+			!network_cabinet.active() && !join_overlay.is_open();
+		if (solo && cabinets[0]->game->quick_restart_race()) {
+			auto &c = *cabinets[0];
+			c.pad = {};
+			if (controller) c.pad.back_was = c.pad.back_combo = true;
+			c.service = {};
+			c.machine.m_audio_out.clear();
+			if (audio) SDL_ClearAudioStream(audio.get());
+			frame_clock.reset();
+			last = SDL_GetTicksNS();
+			next_picture = {};
+			reset_perf();
+			fprintf(stderr, "two cabinets: restarted the solo race\n");
+			if (controller && join_overlay.ready()) join_overlay.toast("Race restarted");
+		} else if (join_overlay.ready() && !join_overlay.is_open()) {
+			join_overlay.toast("Quick restart is available during the solo race countdown or race.");
+		}
+	};
 	auto read_cabinet_inputs = [&](int p) {
 		auto &c = *cabinets[p];
 		SDL_Gamepad *selected[2]{pads[p], nullptr};
@@ -3198,6 +3226,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			set_free_camera(c.machine.free_cam());
 			fprintf(stderr, "two cabinets: free camera %s\n", c.machine.free_cam() ? "on" : "off");
 		}
+		if (action == hotkey::restart_race) controller_restart_pending = true;
 		return action;
 	};
 	auto finish_frame = [&](bool lan_boot_frame, uint64_t sim_ns) {
@@ -3263,6 +3292,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 	bool android_lan_active = false;
 #endif
 	while (running && (quit_after < 0 || frames < quit_after)) {
+		if (controller_restart_pending) {
+			controller_restart_pending = false;
+			restart_solo_race(true);
+		}
 #ifdef __ANDROID__
 		const SDL_JoystickID next_touch_pad = android_touch_update();
 		if (next_touch_pad != touch_pad_id) {
@@ -3601,7 +3634,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				if (join_overlay.ready() && !join_overlay.is_open())
 					for (int p = 0; p < cabinet_count; p++)
 						if (pads[p] && SDL_GetGamepadID(pads[p]) == event.gbutton.which &&
-							pad_binding(p, C_MENU) == event.gbutton.button) {
+							pad_binding(p, C_MENU) == event.gbutton.button &&
+							!(event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK && !paused &&
+							  on_demand && cabinet_count == 1 && !join_pending &&
+							  !network_cabinet.active() && cabinets[0]->game->supports_quick_restart_race())) {
 							open_menu();
 							break;
 						}
@@ -3648,6 +3684,10 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					paused = !paused;
 					fprintf(stderr, "two cabinets: %s both at frame %d\n", paused ? "paused" : "resumed", frames);
 					if (audio) SDL_ClearAudioStream(audio.get());
+				} else if (event.key.scancode == SDL_SCANCODE_F3 &&
+						   (event.key.mod & SDL_KMOD_SHIFT) && cabinets[0]->game->supports_quick_restart_race()) {
+					restart_solo_race(false);
+					continue;
 				} else if (event.key.scancode == SDL_SCANCODE_F3) {
 					if (network_cabinet.active()) { join_overlay.toast("Leave the LAN room before resetting."); continue; }
 					if (!reset_both()) return 1;
@@ -3896,7 +3936,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 				read_cabinet_inputs(p);
 				c.game->before_frame();
 			}
-			if (paused) {
+			if (paused || controller_restart_pending) {
 				frame_clock.reset();
 				if (audio) SDL_ClearAudioStream(audio.get());
 				break;
@@ -4218,7 +4258,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			auto &machine = cabinets[0]->machine;
 			if (!ahead && p == 0 && ahead_possible()) {
 				if (!inputs_ahead) read_cabinet_inputs(0);
-				if (!paused && !join_overlay.is_open() && !shape_restart &&
+				if (!paused && !controller_restart_pending && !join_overlay.is_open() && !shape_restart &&
 					!cabinets[0]->service.left_test_menu) {
 					machine.set_parts_mode(cabinets[0]->compose_enabled);
 #ifdef __ANDROID__
@@ -4768,6 +4808,7 @@ int main(int argc, char **argv)
 	host_context game_ctx{ m, dir, find_assets(), g_pc_mode, [&] { cfg_dirty = true; }, {}, {}, {} };
 	game_ctx.replay = replay_mode;
 	game_ctx.link_player = link_player;
+	if (!interp) game_ctx.restart_cpu_runtime = [] { rec::reset_run_state(); };
 	game_part.start(game_ctx);   // (before the code is recompiled: an instruction it changes goes in it)
 	const std::string rank_path = *game_part.save_sidecar_name() ? dir + "/" + game_part.save_sidecar_name() : std::string();
 	uint32_t rank_saved = game_part.save_sidecar_version();
@@ -6274,6 +6315,20 @@ int main(int argc, char **argv)
 	// A game frame's inputs (false: a hotkey opened the menu, no frame runs) and what follows one: the
 	// scene changes' hold, its sound
 	bool replay_manual_first = replay_mode;
+	bool controller_restart_pending = false;
+	auto restart_solo_race = [&](bool controller) {
+		gt.wait();
+		if (game_part.quick_restart_race()) {
+			m.m_audio_out.clear();
+			if (audio) SDL_ClearAudioStream(audio.get());
+			pstate[0] = pstate[1] = pad_state{};
+			if (controller)
+				for (pad_state &s : pstate) s.back_was = s.back_combo = true;
+			sync.reset();
+			frame_clock = double(game_run);
+			menu.toast("Race restarted");
+		} else menu.toast("Quick restart is available during the solo race countdown or race.");
+	};
 	// (in two: what the host reads, on its thread; what the frame's start does with them, before_frame
 	// on the game's thread when the frame runs there mid-picture)
 	auto read_frame_inputs = [&]() -> bool {
@@ -6306,9 +6361,10 @@ int main(int argc, char **argv)
 			menu.toast(m.free_cam() ? "Free camera on (View + R3 to toggle)" : "Free camera off");
 			if (paused) redraw_if_stopped();
 			break;
+		case hotkey::restart_race: controller_restart_pending = true; break;
 		case hotkey::none: break;
 		}
-		if (menu.is_open()) return false;
+		if (menu.is_open() || controller_restart_pending) return false;
 		if (replay_manual_first) {
 			fprintf(stderr, "input replay: live controls active at machine frame %llu; buttons=%02x,%02x,%02x pilot=%u,%u throttle=%u gunner=%u,%u\n",
 				(unsigned long long)m.frame_number(), uint8_t(~m.m_inputs[0]), uint8_t(~m.m_inputs[1]), uint8_t(~m.m_inputs[2]),
@@ -6540,6 +6596,10 @@ int main(int argc, char **argv)
 #endif
 	while (running) {
 		if (link.failed()) break;
+		if (controller_restart_pending) {
+			controller_restart_pending = false;
+			restart_solo_race(true);
+		}
 #ifdef __APPLE__
 		if (hud_benchmark && game_run >= hud_boundary) {
 			if (mac_benchmark_swa)
@@ -6749,7 +6809,11 @@ int main(int argc, char **argv)
 					if (paused) save_recording("paused");
 				}
 				else if (e.key.scancode == SDL_SCANCODE_F9 && !force_frame_timings) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }
-				else if (e.key.scancode == SDL_SCANCODE_F3) reset_game();
+				else if (e.key.scancode == SDL_SCANCODE_F3) {
+					if ((e.key.mod & SDL_KMOD_SHIFT) && game_part.supports_quick_restart_race()) {
+						restart_solo_race(false);
+					} else reset_game();
+				}
 				else if (e.key.scancode == SDL_SCANCODE_F5) player_scale_to(cfg.scale % 6 + 1);
 				else if (e.key.scancode == SDL_SCANCODE_F6) set_shape((aspect_i + 1) % N_ASPECTS);
 				else if (e.key.scancode == SDL_SCANCODE_F12) {

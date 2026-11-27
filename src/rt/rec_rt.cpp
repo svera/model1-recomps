@@ -36,6 +36,7 @@ struct context::state
 
 static context::state default_state;
 static context::state *active = &default_state;
+static void game_main(void *);
 
 static void select(context::state &next)
 {
@@ -61,6 +62,12 @@ context::~context()
 }
 void context::activate() { select(*m); }
 void context::attach(v60_device &c, std::string_view game) { activate(); rec::attach(c, game); }
+void context::reset_run_state()
+{
+	activate();
+	if (!m->cpu || m->game_stack.empty()) return;
+	coro_init(&m->game_ctx, m->game_stack.data(), m->game_stack.size(), game_main, nullptr);
+}
 void context::run(int n) { activate(); rec::run(n); }
 
 static void yield() { coro_switch(&active->game_ctx, &active->host_ctx); }
@@ -195,6 +202,12 @@ void detach(v60_device &c)
 	active->cpu = nullptr;
 	cpu = nullptr;
 	pc = nullptr;
+}
+
+void reset_run_state()
+{
+	if (active->cpu && !active->game_stack.empty())
+		coro_init(&active->game_ctx, active->game_stack.data(), active->game_stack.size(), game_main, nullptr);
 }
 
 void run(int n)

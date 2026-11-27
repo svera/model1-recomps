@@ -10,6 +10,19 @@
 
 struct model1::tgp_lle : mb86233_bus
 {
+	struct state
+	{
+		mb86233_device::state cpu;
+		std::array<u32, 0x100> ram0{};
+		std::array<u32, 0x200> ram1{};
+		std::vector<u32> copro_ram;
+		std::array<u32, 4> ram_adr{};
+		u32 sincos_base = 0, inv_base = 0, isqrt_base = 0, data_base = 0;
+		std::array<u32, 4> atan_base{};
+		std::deque<u32> fifo_in, fifo_out;
+		tgp_diagnostics diagnostics;
+	};
+
 	model1 &m;
 	std::vector<u32> prog;               // 0x800 words
 	const std::vector<uint8_t> &data_rom;
@@ -25,6 +38,46 @@ struct model1::tgp_lle : mb86233_bus
 		: m(mm), prog(0x800), data_rom(data), copro_ram(0x2000)
 	{
 		memcpy(prog.data(), rom.data(), std::min(rom.size(), size_t(0x2000)));
+	}
+
+	state save_state() const
+	{
+		state saved;
+		saved.cpu = cpu.save_state();
+		std::copy(std::begin(ram0), std::end(ram0), saved.ram0.begin());
+		std::copy(std::begin(ram1), std::end(ram1), saved.ram1.begin());
+		saved.copro_ram = copro_ram;
+		std::copy(std::begin(ram_adr), std::end(ram_adr), saved.ram_adr.begin());
+		saved.sincos_base = sincos_base;
+		saved.inv_base = inv_base;
+		saved.isqrt_base = isqrt_base;
+		saved.data_base = data_base;
+		std::copy(std::begin(atan_base), std::end(atan_base), saved.atan_base.begin());
+		saved.fifo_in = fifo_in;
+		saved.fifo_out = fifo_out;
+		saved.diagnostics = diagnostics;
+		return saved;
+	}
+
+	void load_state(const state &saved)
+	{
+		if (saved.copro_ram.size() != copro_ram.size()) {
+			fprintf(stderr, "tgp state: invalid shared RAM size %zu\n", saved.copro_ram.size());
+			std::abort();
+		}
+		cpu.load_state(saved.cpu);
+		std::copy(saved.ram0.begin(), saved.ram0.end(), std::begin(ram0));
+		std::copy(saved.ram1.begin(), saved.ram1.end(), std::begin(ram1));
+		std::copy(saved.copro_ram.begin(), saved.copro_ram.end(), copro_ram.begin());
+		std::copy(saved.ram_adr.begin(), saved.ram_adr.end(), std::begin(ram_adr));
+		sincos_base = saved.sincos_base;
+		inv_base = saved.inv_base;
+		isqrt_base = saved.isqrt_base;
+		data_base = saved.data_base;
+		std::copy(saved.atan_base.begin(), saved.atan_base.end(), std::begin(atan_base));
+		fifo_in = saved.fifo_in;
+		fifo_out = saved.fifo_out;
+		diagnostics = saved.diagnostics;
 	}
 
 	void reset()
@@ -200,6 +253,18 @@ struct model1::tgp_lle : mb86233_bus
 };
 
 void model1::tgp_lle_deleter::operator()(tgp_lle *p) const { delete p; }
+
+std::shared_ptr<void> model1::save_lle_state() const
+{
+	return m_lle ? std::make_shared<tgp_lle::state>(m_lle->save_state()) : std::shared_ptr<void>{};
+}
+
+bool model1::restore_lle_state(const std::shared_ptr<void> &saved)
+{
+	if (bool(m_lle) != bool(saved)) return false;
+	if (m_lle) m_lle->load_state(*std::static_pointer_cast<tgp_lle::state>(saved));
+	return true;
+}
 
 bool model1::use_tgp_program(const std::vector<uint8_t> &rom)
 {
