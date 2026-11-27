@@ -65,6 +65,9 @@ test-vr-link-rom: $(BIN)/vr_link_test vr-regions
 	$(BIN)/vr_link_test --roms build/vr
 test-vr-two-cabinets: $(BIN)/vr_link_test vr-regions
 	$(BIN)/vr_link_test --in-process build/vr
+test-vr-local-retirement: $(BIN)/vr_link_test vr-regions
+	$(BIN)/vr_link_test --retirement build/vr
+.PHONY: test-vr-local-retirement
 test-vr-split-screen: $(BIN)/vr-native vr-regions
 	python3 tests/games/vr/split_screen_test.py $(BIN)/vr-native build/vr
 test-vr-menu-backdrops: $(BIN)/model1_video_test vr-regions

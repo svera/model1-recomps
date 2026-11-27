@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="vr-live-monitor-") as directory:
 
     set_layout(0)
     solo = run("40:status,60:close")
-    assert "cabinet 3 compiled" not in solo
+    assert "cabinet 5 compiled" not in solo
     assert not (data / "live-monitor").exists()
 
     for mode, name in ((1, "above"), (2, "window")):
@@ -126,7 +126,7 @@ with tempfile.TemporaryDirectory(prefix="vr-live-monitor-") as directory:
     set_layout(1)
     removed = run("10:2,80:f3,120:status,160:2,220:status,260:close")
     assert "reset complete, 1 cabinet(s) running" in removed
-    assert removed.count("cabinet 3 compiled") == 1
+    assert removed.count("cabinet 5 compiled") == 1
     assert_monitor(removed, "above", racers=1)
     assert_monitor(removed, "above")
 

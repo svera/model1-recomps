@@ -2223,10 +2223,11 @@ The local-cabinet host is shared infrastructure, but games must explicitly opt i
 join handling. The host obtains the title, recompiler map, backgrounds, default frame rate,
 diagnostics and multiplayer menu descriptions from the registered game and its host.
 Live Monitor and LAN are separate game capabilities; VR supplies its LAN configuration and
-diagnostic fields. Wing War has not opted in: its communication settings and linked play still
-need implementation and ROM-backed validation. `make test-vr-local-host` and
-`make test-vr-local-host-desktop` cover the capability contract and the nonvisual VR solo,
-join and reset path, including rejection of Wing War's split-screen option. A test host layered
+diagnostic fields. The local capability also declares the maximum player count: VR supports
+four, while Wing War retains its two-player limit and no monitor. Wing War's separate lifecycle
+test verifies its policy of retaining linked play when Player 2's controller disconnects.
+`make test-vr-local-host` and `make test-vr-local-host-desktop` cover the capability contract,
+viewport coordinates, and the nonvisual VR solo, join, disconnect and reset paths. A test host layered
 over VR also checks game-specific menu callbacks, per-player options and sound settings, and
 per-cabinet sidecar persistence. The local host obtains its link session from the game's host;
 VR supplies an M1COMM session, while another game can provide a different transport. The Model 1
@@ -2242,25 +2243,69 @@ including when both controllers have identical GUIDs, without changing saved pad
 The Controls menu can explicitly reassign pads; returning to solo with a reset clears the
 first-Start latch. Keyboard Player 1 Start also establishes solo play, while the separate
 Player 2 Start key remains an explicit join shortcut.
-Start on the other controller queues a join, which
-starts the linked cabinet at the next safe attract-mode or course-selection point.
-Joining during course selection restarts both cabinets into linked course selection; an
-active race is not interrupted. The controller's device ID
-is retained with that request; if it disconnects while queued, the join is cancelled, and
-if it disconnects after joining, the second cabinet is saved and released and the first
-returns to standalone play. This avoids continuing to spend emulation and rendering time
-on an absent player. Keyboard-initiated joins remain available and are not tied to a
+Start on another controller queues a join, which starts the next linked cabinet at the
+next safe attract-mode or course-selection point, up to four players.
+Joining during course selection restarts all active cabinets into linked course selection;
+a join requested during a race waits without interrupting it. The controller's device ID
+is retained with that request; if it disconnects while queued, the join is cancelled.
+Keyboard-initiated joins remain available and are not tied to a
 controller's connection lifetime. `--split-screen` remains available to explicitly select
 split-screen layout behavior.
+
+With three players and Live Monitor off, Player 1 gets the full top half and Players 2
+and 3 split the bottom half, regardless of the two-player split orientation. With
+Live Monitor enabled, it occupies the top-left quadrant and Players 1, 2 and 3 occupy
+the remaining quadrants in reading order. Four players use four quadrants in player
+order. Joining Player 4 disables Live Monitor; the menu prevents enabling it with
+four active players. Player views are renumbered consecutively after a disconnect,
+but this does not change the ongoing race's cabinet IDs.
+
+### Preserving a race when a controller disconnects
+
+A controller disconnect removes only that player's view and controls, including when
+the departing controller belongs to Player 1. Remaining players continue the same race;
+one survivor gets a single-player view rather than an immediate standalone reboot.
+The host compacts the active cabinets and controller assignments, preserves their
+settings, and saves the changed player-slot bindings. It does not reset surviving
+machines, their frame clocks, or the original communication-board IDs during the race.
+
+`local_cabinet_link::retire()` lets VR retain the original scanline-lockstep session
+while applying its game-specific retirement policy. Departing cars retain their last
+published pose and model data, with participation data cleared. The original master
+also publishes live race metadata: `FE1670` reads the master record's roster, timer
+and lap status. Clearing that data as if the master were an ordinary departing slave
+would destroy the survivors' race state. The local policy therefore preserves it,
+while retiring the master's player participation.
+
+Retired cabinet instances stay alive until the surviving players reach a safe demo or
+course-selection point. Their inputs are released, rendering is disabled and audio is
+muted and discarded, but their CPU simulation continues to maintain the original link
+and master clock. A smaller layout therefore reduces rendering work without immediately
+reducing emulation to the cost of fewer cabinets; a single-player view during an ongoing
+linked race is not yet true solo mode. At the safe point, the host destroys retired
+instances and rebuilds the surviving session with consecutive IDs. With one survivor,
+it resets into standalone play; with more, it remains linked. The app itself is not
+restarted. Joining remains deferred until a safe point, and explicit reset/menu-removal
+actions retain their restart behavior.
+
+`make test-vr-local-retirement` runs a real-ROM four-player race, removes a slave,
+the master and another slave, and verifies that the final survivor keeps its race RAM,
+frame-clock progression, original ID, movement and results. The nonvisual desktop
+lifecycle test also checks four-to-three-to-two-to-one removal during an actual race,
+and three-to-two-to-one with Live Monitor. It requires phase `14` throughout the
+disconnect sequence, advancing machine frame numbers and no reset, then separately
+checks safe-point cleanup, controller-binding persistence and rejoining. These checks
+do not establish visual correctness or measure the performance savings.
 
 Like the single-cabinet host, the local host listens for joystick as well as gamepad
 connection events and reconciles controller assignments once per second. This retries
 staged Bluetooth opens and recovers missed hotplug events without reopening active pads.
 Button-down events from an unassigned controller also trigger reconciliation before the
 button is handled, so a short Start tap is retained even before the next periodic scan.
-The regression attaches two identical SDL virtual gamepads, discards their connection events,
-and checks both a held Start button and a tap released before event polling to verify
-discovery and joining through the real input path.
+The regressions attach identical SDL virtual gamepads, discard their connection events,
+and check both a held Start button and a tap released before event polling to verify
+discovery and joining through the real input path. The four-player lifecycle checks
+also exercise out-of-order controller claims and removal of the original Player 1.
 For physical-controller diagnosis, `M1_INPUT_TRACE=1` logs gamepad button-down/up events,
 both controller assignments and Start bindings, menu state, and whether joining is pending
 or currently allowed. It does not change input handling.
@@ -2273,19 +2318,21 @@ background filtering, scanline/CRT screen filters, CPU/GPU/Auto 3D rendering, fu
 sound levels. GPU rendering is attached to each cabinet separately and its test picture is checked
 against the CPU before use; unavailable or incorrect GPU rendering falls back to the CPU. The
 regression changes the screen filter and 3D renderer and checks both saved settings. Its Controls pages configure each player's
-controller assignment, keyboard keys, pad buttons and analog axes independently; Player 2's
-bindings persist in the second cabinet's settings file even before that cabinet is started, and
-the regression verifies that a saved Player 2 Start key is loaded on the next launch. It also
+controller assignment, keyboard keys, pad buttons and analog axes independently; waiting
+players' bindings persist in their cabinet settings files even before those cabinets start.
+Players 3 and 4 have controller defaults but no default keyboard bindings, avoiding
+duplicate keys across cabinets. The regression verifies that a saved Player 2 Start key
+is loaded on the next launch. It also
 checks that the removed `--two-cabinets` option is rejected.
 
-The local session also exposes VR's existing Game settings through per-cabinet Player 1 and
-Player 2 pages: language, car color, difficulty and the arcade service menu. Race type
+The local session also exposes VR's existing Game settings through per-player pages:
+language, car color, difficulty and the arcade service menu. Race type
 (Normal or Grand Prix) and course selection are shared options directly on the Game page.
 Closing the menu applies each game's pending
 EEPROM changes through `menu_closed()`, then synchronizes the primary cabinet's course
-selection and race type to the other cabinet. A cabinet joining later inherits both before boot. A
+selection and race type to the other cabinets. A cabinet joining later inherits both before boot. A
 settings restart, the Game page's reset, and leaving the service menu reboot the active linked
-pair without dropping Player 2; F3 retains its explicit return-to-solo behavior. The ROM-backed
+session without dropping players; F3 retains its explicit return-to-solo behavior. The ROM-backed
 regression changes Player 2's language and color, checks the EEPROM is saved and verifies both
 cabinets remain linked after the settings restart. It also checks all four shared course choices,
 saving during menu edits, both race types, the per-player menu layout and shared-setting
@@ -2293,11 +2340,14 @@ synchronization on a later join.
 Player 1 reads and writes the original single-player save files in the game's data folder, so
 enabling on-demand local multiplayer does not reset language, rankings or other saved settings.
 If an original save file is absent, its interim `two-cabinets/1` counterpart is loaded and
-migrated on the next save; an existing original file takes precedence. Player 2's saves remain
-separate under `two-cabinets/2`. The regression verifies migration and original-save precedence
+migrated on the next save; an existing original file takes precedence. Additional player slots
+use separate saves under `two-cabinets/2`, `two-cabinets/3` and `two-cabinets/4`.
+The regression verifies migration and original-save precedence
 using an English save alongside a stale Japanese cabinet-1 save.
 While two players are active, the main menu also offers Remove Player 2. It closes the menu,
 applies pending settings, saves both cabinets and uses the same return-to-solo reset as F3.
+With three or four players, the action is named Return to solo play and removes all
+additional players. Unlike controller disconnection, these are explicit reset actions.
 The controller remains available for a later Start-to-join request. The regression verifies
 removal, saved Player 2 color, rejoining and absence of the action in solo mode.
 The local-session renderer enables VSync, matching the original single-player host. With
@@ -2381,12 +2431,14 @@ The linked ROM regression checks both the player's and monitor's complete notice
 through entry and settling at six aspect ratios, 1x/2x, with matching whole/parts layers.
 
 The local VR host's Display menu persists `live_monitor` in the primary `settings.ini`:
-0 Off (default), 1 Above players, 2 Spectator window. The monitor works with one or
-two racers. Above players reserves the upper half of the shared window for
+0 Off (default), 1 Above players, 2 Spectator window. The monitor works with up to
+three racers. With one or two racers, Above players reserves the upper half of the shared window for
 the broadcast and places one full-width player view or two side-by-side player views below it,
 regardless of the usual split orientation. The separate resizable spectator window
 does not wait for VSync; only the primary renderer waits, as with separate player
 windows. If using separate player windows, the monitor also has its own window.
+With three split-screen players, either enabled monitor setting uses the top-left
+quadrant of the shared window. Four-player sessions cannot enable the monitor.
 Both layouts use the same scanline-synchronized receive-only instance. Solo mode
 links one master and the monitor, with racer count 1 and relay ID 0, without a hidden
 slave or a synthetic racer block. The board loops the master's published block into
@@ -2395,9 +2447,10 @@ monitor. The ROM-backed test runs another 15,000 frames in this mode with the ex
 Beginner-course driver, requiring actual broadcast polygons and matching player positions
 (allowing the ROM's sub-unit extrapolation between publications). Reversed CPU and
 board-delivery order must match RAM, audio, link state and sampled pixels here too.
-Joining or removing
-Player 2 rebuilds the transport and reboots the coordinated session, retaining the
-monitor, its isolated saves, and its layout.
+Joining rebuilds the transport and reboots the coordinated session, retaining the
+monitor unless a fourth player joins. An explicit return-to-solo action also reboots.
+A controller disconnect instead retains the original transport and monitor during
+the ongoing race, with cleanup and rebuilding deferred to the next safe point.
 
 The monitor's NVRAM, EEPROM, settings and GPU-start marker live exclusively in
 `live-monitor/`, with no fallback to either player's saves. Its host role forces LIVE
@@ -2416,8 +2469,8 @@ area retains the composition's ratio (8:4.5 for a 16:9 composition). Narrower ar
 preserve 4:3 with black bars, without stretching or cropping. The spectator window
 applies the selected shape independently. Fit window
 uses each whole window's aspect within those same bounds. It remains muted at the emulated volume stage, its audio
-buffer is discarded every frame, and the final mixer still includes only the one or
-two players with the original gain/divisor. There is deliberately no audible
+buffer is discarded every frame, and the final mixer includes only active players,
+dividing their mixed audio by the active player count. There is deliberately no audible
 commentary option: player audio only is the chosen policy.
 
 The ROM advances AI rivals independently in the monitor. In a longer solo race, one rival
@@ -2429,7 +2482,7 @@ At `FEDD6B`, after the monitor's AI update but before its pose and lap bookkeepi
 monitor adopts those records' flags and physics/presentation prefix (`+0x14..+0x1c5`).
 It preserves its own record IDs, linked-list offsets, handlers and camera pointers
 (`+0x04..+0x13`), and the trailing non-AI animation state.
-AI records retain their ordering between the master and observer; the first one or two
+AI records retain their ordering between the master and observer; the original race's
 human records are excluded and continue using the original link protocol. This also supplies
 the race data used by the monitor's rankings and minimap, not just polygon transforms.
 Snapshots apply only when both machines are racing on the same course; reset, disconnect

@@ -32,13 +32,22 @@ inline SDL_Texture *create_cabinet_texture(SDL_Renderer *renderer, int width, in
 }
 
 inline SDL_Rect cabinet_viewport(cabinet_layout layout, int width, int height, int player,
-	bool second_player = true, bool live_monitor_above = false)
+	int player_count, bool live_monitor_above = false)
 {
+	if (layout != cabinet_layout::windows && player_count >= 3) {
+		const int half_w = width / 2, half_h = height / 2;
+		if (player_count == 3 && !live_monitor_above && player == 0)
+			return {0, 0, width, half_h};
+		const int slot = player_count == 3 ? (live_monitor_above ? (player == player_count ? 0 : player + 1) : player + 1) : player;
+		return {slot % 2 ? half_w : 0, slot / 2 ? half_h : 0,
+			slot % 2 ? width - half_w : half_w, slot / 2 ? height - half_h : half_h};
+	}
+	const bool second_player = player_count > 1;
 	if (live_monitor_above) {
 		const int split = height / 2;
-		if (player == 2) return {0, 0, width, split};
+		if (player == player_count) return {0, 0, width, split};
 		if (!second_player) return player ? SDL_Rect{} : SDL_Rect{0, split, width, height - split};
-		auto viewport = cabinet_viewport(cabinet_layout::side_by_side, width, height - split, player, second_player);
+		auto viewport = cabinet_viewport(cabinet_layout::side_by_side, width, height - split, player, player_count);
 		viewport.y += split;
 		return viewport;
 	}
@@ -53,6 +62,15 @@ inline SDL_Rect cabinet_viewport(cabinet_layout layout, int width, int height, i
 		return {0, player ? split : 0, width, player ? height - split : split};
 	}
 	return {0, 0, width, height};
+}
+
+inline SDL_Rect cabinet_viewport(cabinet_layout layout, int width, int height, int player,
+	bool second_player = true, bool live_monitor_above = false)
+{
+	if (live_monitor_above && !second_player && player == 1) return {};
+	return cabinet_viewport(layout, width, height,
+		live_monitor_above && player == 2 ? (second_player ? 2 : 1) : player,
+		second_player ? 2 : 1, live_monitor_above);
 }
 
 inline SDL_FRect cabinet_picture_rect(SDL_Rect viewport, float aspect)
@@ -72,16 +90,25 @@ inline SDL_FRect cabinet_picture_rect(SDL_Rect viewport, float aspect)
 }
 
 inline SDL_Rect cabinet_composition_viewport(cabinet_layout layout, int width, int height,
-	int player, float aspect, bool second_player = true, bool live_monitor_above = false)
+	int player, float aspect, int player_count, bool live_monitor_above = false)
 {
 	if (width <= 0 || height <= 0) return {};
 	if (aspect <= 0) aspect = std::clamp(float(width) / height, 4.0f / 3, 32.0f / 9);
 	const auto picture = cabinet_picture_rect({0, 0, width, height}, aspect);
 	auto viewport = cabinet_viewport(layout, int(std::lround(picture.w)), int(std::lround(picture.h)),
-		player, second_player, live_monitor_above);
+		player, player_count, live_monitor_above);
 	viewport.x += int(std::lround(picture.x));
 	viewport.y += int(std::lround(picture.y));
 	return viewport;
+}
+
+inline SDL_Rect cabinet_composition_viewport(cabinet_layout layout, int width, int height,
+	int player, float aspect, bool second_player = true, bool live_monitor_above = false)
+{
+	if (live_monitor_above && !second_player && player == 1) return {};
+	return cabinet_composition_viewport(layout, width, height,
+		live_monitor_above && player == 2 ? (second_player ? 2 : 1) : player,
+		aspect, second_player ? 2 : 1, live_monitor_above);
 }
 
 inline bool draw_cabinet(SDL_Renderer *renderer, SDL_Texture *texture, SDL_Rect viewport, float aspect)

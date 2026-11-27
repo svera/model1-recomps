@@ -42,11 +42,19 @@ public:
 	}
 	void receive(const memory &master, const memory *slave = nullptr)
 	{
+		const std::array<memory, 2> racers{master, slave ? *slave : memory{}};
+		receive_group(std::span(racers.data(), slave ? 2 : 1));
+	}
+	void receive_group(std::span<const memory> racers)
+	{
 		if (!m_cn) return;
 		if (m_failed) { m_shared[0] = 0xff; return; }
-		if (m_shared[1] != 0 || master[1] != 1 || (slave && (*slave)[1] != 2)) {
-			fprintf(stderr, "Model 1 relay: expected relay/master/slave modes 0/1/2, received %u/%u/%u\n",
-				m_shared[1], master[1], slave ? (*slave)[1] : 0);
+		if (racers.empty() || racers.size() > 4)
+			throw std::invalid_argument("Model 1 relay requires one to four racers");
+		bool valid = m_shared[1] == 0;
+		for (size_t i = 0; i < racers.size(); i++) valid &= racers[i][1] == (i == 0 ? 1 : 2);
+		if (!valid) {
+			fprintf(stderr, "Model 1 relay: expected relay/master/slave modes 0/1/2\n");
 			m_failed = true;
 			m_alive = false;
 			m_shared[0] = 0xff;
@@ -55,10 +63,9 @@ public:
 		m_alive = true;
 		m_shared[0] = 1;
 		m_shared[2] = 0;
-		m_shared[3] = slave ? 2 : 1;
-		receive_block(master, 1);
-		if (slave) receive_block(*slave, 2);
-		std::copy_n(master.begin() + 6, 10, m_shared.begin() + 6);
+		m_shared[3] = uint8_t(racers.size());
+		for (size_t i = 0; i < racers.size(); i++) receive_block(racers[i], unsigned(i + 1));
+		std::copy_n(racers[0].begin() + 6, 10, m_shared.begin() + 6);
 		m_shared[5] = 0;
 		++m_ticks;
 	}

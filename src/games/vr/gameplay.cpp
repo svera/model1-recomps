@@ -234,7 +234,7 @@ gameplay_callbacks create_gameplay(model1 &machine)
 			std::abort();
 		}
 		const int racers = source->link()->read(3);
-		if (racers < 1 || racers > 2) {
+		if (racers < 1 || racers > 4) {
 			fprintf(stderr, "VR Live Monitor: invalid racer count %d\n", racers);
 			std::abort();
 		}

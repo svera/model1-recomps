@@ -18,7 +18,14 @@ class local_link final : public local_cabinet_link
 public:
 	local_link(model1 &first, model1 *second, model1 *monitor)
 		: pair(first, second, monitor), machines{&first, second, monitor} {}
+	local_link(std::span<model1 *const> players, model1 *monitor)
+		: pair(std::vector<model1 *>(players.begin(), players.end()), monitor)
+	{
+		std::copy(players.begin(), players.end(), machines.begin());
+		machines[4] = monitor;
+	}
 	void run_frame() override { pair.run_frame(); }
+	bool retire(model1 &machine) override { return pair.retire(machine, retire_local_snapshot); }
 	local_link_status status(unsigned cabinet) const override
 	{
 		if (cabinet >= machines.size() || !machines[cabinet] || !machines[cabinet]->link()) return {};
@@ -27,7 +34,7 @@ public:
 	}
 private:
 	linked_pair pair;
-	std::array<model1 *, 3> machines;
+	std::array<model1 *, 5> machines{};
 };
 
 class host final : public game_host
@@ -41,13 +48,17 @@ public:
 			true, "Race type, course, language, car color, difficulty and service settings.",
 			"Language, race type and course selection are shared; player settings are kept separately.",
 			"Car color, difficulty and the arcade service menu.", "waiting for attract mode or course selection",
-			"Change this player's steering and pedal axes."
+			"Change this player's steering and pedal axes.", true, 4
 		};
 		return &info;
 	}
 	std::unique_ptr<local_cabinet_link> make_local_link(model1 &first, model1 *second, model1 *monitor) override
 	{
 		return std::make_unique<local_link>(first, second, monitor);
+	}
+	std::unique_ptr<local_cabinet_link> make_local_link(std::span<model1 *const> players, model1 *monitor) override
+	{
+		return std::make_unique<local_link>(players, monitor);
 	}
 	local_multiplayer_status local_status(model1 &machine) const override
 	{
