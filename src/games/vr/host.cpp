@@ -289,6 +289,56 @@ public:
 		const uint8_t phase = ctx->machine.work_ram()[0x1138];
 		ctx->machine.set_rear_view(rear && (phase == 0x12 || phase == 0x14) && ctx->link_player != 3);
 		cameras.update(ctx->machine, pressed);
+		capture_race_start();
+	}
+
+	void after_frame() override
+	{
+		if (!ctx || ctx->link_player != 0 || ctx->machine.work_ram()[0x1138] != 0x14) {
+			race_snapshot.reset();
+			race_gameplay.reset();
+		}
+	}
+
+	void capture_race_start()
+	{
+		if (!ctx || ctx->link_player != 0 || ctx->machine.work_ram()[0x1138] != 0x14) {
+			race_snapshot.reset();
+			race_gameplay.reset();
+			return;
+		}
+		if (race_snapshot) return;
+		auto state = std::dynamic_pointer_cast<gameplay_state>(ctx->machine.game_state());
+		model1::simulation_state snapshot;
+		if (state && ctx->machine.save_simulation_state(snapshot)) {
+			race_snapshot.emplace(std::move(snapshot));
+			race_gameplay = *state;
+		}
+	}
+
+	bool supports_quick_restart_race() const override { return true; }
+
+	bool quick_restart_race() override
+	{
+		if (!ctx || ctx->link_player != 0 || !race_snapshot || !race_gameplay ||
+			ctx->machine.work_ram()[0x1138] != 0x14)
+			return false;
+		auto state = std::dynamic_pointer_cast<gameplay_state>(ctx->machine.game_state());
+		if (!state || !ctx->machine.load_simulation_state(*race_snapshot)) return false;
+		const bool current_extended = state->extended_draw_distance;
+		const bool current_lod = state->lod;
+		const bool current_standalone_color = state->standalone_car_color;
+		*state = *race_gameplay;
+		state->extended_draw_distance = current_extended;
+		state->lod = current_lod;
+		state->standalone_car_color = current_standalone_color;
+		menu_wheel = {};
+		steering_frame.reset();
+		cameras = {};
+		ctx->machine.set_rear_view(false);
+		if (ctx->restart_cpu_runtime) ctx->restart_cpu_runtime();
+		ctx->machine.smooth_cut();
+		return true;
 	}
 
 	bool can_join_local_cabinet() const override
@@ -298,6 +348,8 @@ public:
 
 	bool booted() override
 	{
+		race_snapshot.reset();
+		race_gameplay.reset();
 		menu_wheel = {};
 		steering_frame.reset();
 		language_before.reset();
@@ -372,6 +424,8 @@ private:
 	int language_choice = -1;
 	std::optional<std::array<int, 4>> machine_before;
 	std::array<int, 4> machine_choices{};
+	std::optional<model1::simulation_state> race_snapshot;
+	std::optional<gameplay_state> race_gameplay;
 };
 
 }

@@ -123,9 +123,12 @@ the on-screen **Start** button or press **Start** on a controller.
 | Start | 1 | Start |
 | Insert coin (Arcade mode) | 5 | D-pad Up |
 | Open menu | Esc | View / Select |
+| Restart current solo race | Shift+F3 | — |
 
 To see or change your actual controller bindings, open **Esc > Controls > Player 1 >
 Pad buttons**.
+Shift+F3 restores the race's starting machine state and restarts its audio; it is available only
+during a solo race.
 External rear views swing around the car so it stays visible; the onboard view turns in place.
 Release the look-back control to return to the selected camera. The keyboard binding can
 be changed in Controls; the right stick's look-back axis is not remappable.

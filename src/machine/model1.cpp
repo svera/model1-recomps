@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <cstring>
 #include <optional>
 #include <unordered_map>
 #include "model1.h"
@@ -98,6 +99,176 @@ void model1::reset()
 		m_ioboard2->reset();
 	}
 	m_maincpu.reset();
+}
+
+bool model1::save_simulation_state(simulation_state &saved) const
+{
+	if (m_comm || m_ioboard2) return false;
+	saved.cpu = m_maincpu.save_state();
+	saved.frame = m_frame;
+	saved.scanline = m_scanline;
+	saved.tgp_cycles = m_tgp_cycles;
+	saved.cpu_owed = m_cpu_owed;
+	saved.ram_a = m_ram_a;
+	saved.ram_b = m_ram_b;
+	saved.display_list0 = m_display_list0_ram;
+	saved.display_list1 = m_display_list1_ram;
+	saved.palette = m_paletteram16_ram;
+	saved.colour_xlat = m_color_xlat_ram;
+	saved.tile_memory = m_tiles.save_memory();
+	std::copy(std::begin(m_pens), std::end(m_pens), saved.pens.begin());
+	std::copy(std::begin(m_dpram), std::end(m_dpram), saved.dpram.begin());
+	std::copy(std::begin(m_inputs), std::end(m_inputs), saved.inputs.begin());
+	std::copy(m_frame_inputs.begin(), m_frame_inputs.end(), saved.frame_inputs.begin());
+	saved.analog_inputs = m_analog_inputs;
+	saved.lamps = m_lamps;
+	saved.bank_base = m_bank_base;
+	std::copy(std::begin(m_listctl), std::end(m_listctl), saved.listctl.begin());
+	saved.uart_txbuf = m_uart_txbuf;
+	saved.uart_shift = m_uart_shift;
+	saved.uart_rx = m_uart_rx;
+	saved.uart_shift_left = m_uart_shift_left;
+	saved.uart_rx_left = m_uart_rx_left;
+	saved.io_command = m_io_command;
+	saved.io_ack = m_io_ack;
+	std::copy(std::begin(m_timer_period), std::end(m_timer_period), saved.timer_period.begin());
+	std::copy(std::begin(m_timer_val), std::end(m_timer_val), saved.timer_val.begin());
+	std::copy(std::begin(m_timer_remain), std::end(m_timer_remain), saved.timer_remain.begin());
+	saved.timer_mode = m_timer_mode;
+	saved.irq_status = m_irq_status;
+	saved.irq_mask = m_irq_mask;
+	saved.last_irq = m_last_irq;
+	saved.copro_bases = {m_copro_sincos_base, m_copro_inv_base, m_copro_isqrt_base};
+	std::copy(std::begin(m_copro_atan_base), std::end(m_copro_atan_base), saved.copro_atan_base.begin());
+	saved.copro_data_base = m_copro_data_base;
+	saved.copro_ram_adr = m_copro_ram_adr;
+	saved.copro_fifo_in = m_copro_fifo_in_q.save_state();
+	saved.copro_fifo_out = m_copro_fifo_out_q.save_state();
+	saved.v60_copro_fifo_r = m_v60_copro_fifo_r;
+	saved.v60_copro_fifo_w = m_v60_copro_fifo_w;
+	saved.pushpc = m_pushpc;
+	std::copy(std::begin(m_cmat), std::end(m_cmat), saved.cmat.begin());
+	std::memcpy(saved.mat_stack.data(), m_mat_stack, sizeof m_mat_stack);
+	std::memcpy(saved.mat_vector.data(), m_mat_vector, sizeof m_mat_vector);
+	saved.mat_stack_pos = m_mat_stack_pos;
+	saved.acc = m_acc;
+	saved.tgp_int_px = m_tgp_int_px;
+	saved.tgp_int_py = m_tgp_int_py;
+	saved.tgp_int_pz = m_tgp_int_pz;
+	saved.tgp_int_adr = m_tgp_int_adr;
+	saved.v60_copro_ram_adr = m_v60_copro_ram_adr;
+	std::copy(std::begin(m_v60_copro_ram_latch), std::end(m_v60_copro_ram_latch),
+		std::begin(saved.v60_copro_ram_latch));
+	saved.copro_hle_ram_scan_adr = m_copro_hle_ram_scan_adr;
+	saved.ccount = m_ccount;
+	saved.copro_ram.assign(m_copro_ram_data.get(), m_copro_ram_data.get() + 0x8000);
+	saved.tgp_ram.assign(m_tgp_ram.get(), m_tgp_ram.get() + 0xc0000);
+	saved.poly_ram.assign(m_poly_ram.get(), m_poly_ram.get() + 0x400000);
+	saved.lle = save_lle_state();
+	if (m_ioboard) saved.io_board = m_ioboard->save_state();
+	else saved.io_board.reset();
+	return true;
+}
+
+bool model1::load_simulation_state(const simulation_state &saved)
+{
+	if (m_comm || m_ioboard2 || bool(m_lle) != bool(saved.lle) ||
+		bool(m_ioboard) != bool(saved.io_board) ||
+		saved.ram_a.size() != m_ram_a.size() || saved.ram_b.size() != m_ram_b.size() ||
+		saved.display_list0.size() != m_display_list0_ram.size() ||
+		saved.display_list1.size() != m_display_list1_ram.size() ||
+		saved.palette.size() != m_paletteram16_ram.size() ||
+		saved.colour_xlat.size() != m_color_xlat_ram.size() ||
+		saved.tile_memory.chars.size() != 0x40000 || saved.tile_memory.tiles.size() != 0x8000 ||
+		saved.tgp_ram.size() != 0xc0000 || saved.poly_ram.size() != 0x400000 ||
+		saved.copro_ram.size() != 0x8000) return false;
+
+	std::copy(saved.ram_a.begin(), saved.ram_a.end(), m_ram_a.begin());
+	std::copy(saved.ram_b.begin(), saved.ram_b.end(), m_ram_b.begin());
+	std::copy(saved.display_list0.begin(), saved.display_list0.end(), m_display_list0_ram.begin());
+	std::copy(saved.display_list1.begin(), saved.display_list1.end(), m_display_list1_ram.begin());
+	std::copy(saved.palette.begin(), saved.palette.end(), m_paletteram16_ram.begin());
+	std::copy(saved.colour_xlat.begin(), saved.colour_xlat.end(), m_color_xlat_ram.begin());
+	if (!m_tiles.restore_memory(saved.tile_memory)) return false;
+	std::copy(saved.pens.begin(), saved.pens.end(), std::begin(m_pens));
+	std::copy(saved.dpram.begin(), saved.dpram.end(), std::begin(m_dpram));
+	std::copy(saved.inputs.begin(), saved.inputs.end(), std::begin(m_inputs));
+	std::copy(saved.frame_inputs.begin(), saved.frame_inputs.end(), m_frame_inputs.begin());
+	m_analog_inputs = saved.analog_inputs;
+	m_lamps = saved.lamps;
+	m_frame = saved.frame;
+	m_scanline = saved.scanline;
+	m_tgp_cycles = saved.tgp_cycles;
+	m_cpu_owed = saved.cpu_owed;
+	m_maincpu.load_state(saved.cpu);
+	m_bank_base = saved.bank_base;
+	std::copy(saved.listctl.begin(), saved.listctl.end(), std::begin(m_listctl));
+	m_display_list_current = m_listctl[0] & 0x40 ? m_display_list1 : m_display_list0;
+	m_uart_txbuf = saved.uart_txbuf;
+	m_uart_shift = saved.uart_shift;
+	m_uart_rx = saved.uart_rx;
+	m_uart_shift_left = saved.uart_shift_left;
+	m_uart_rx_left = saved.uart_rx_left;
+	m_io_command = saved.io_command;
+	m_io_ack = saved.io_ack;
+	std::copy(saved.timer_period.begin(), saved.timer_period.end(), std::begin(m_timer_period));
+	std::copy(saved.timer_val.begin(), saved.timer_val.end(), std::begin(m_timer_val));
+	std::copy(saved.timer_remain.begin(), saved.timer_remain.end(), std::begin(m_timer_remain));
+	m_timer_mode = saved.timer_mode;
+	m_irq_status = saved.irq_status;
+	m_irq_mask = saved.irq_mask;
+	m_last_irq = saved.last_irq;
+	m_copro_sincos_base = saved.copro_bases[0];
+	m_copro_inv_base = saved.copro_bases[1];
+	m_copro_isqrt_base = saved.copro_bases[2];
+	m_copro_data_base = saved.copro_data_base;
+	std::copy(saved.copro_atan_base.begin(), saved.copro_atan_base.end(), std::begin(m_copro_atan_base));
+	m_copro_ram_adr = saved.copro_ram_adr;
+	m_copro_fifo_in_q.load_state(saved.copro_fifo_in);
+	m_copro_fifo_out_q.load_state(saved.copro_fifo_out);
+	m_v60_copro_fifo_r = saved.v60_copro_fifo_r;
+	m_v60_copro_fifo_w = saved.v60_copro_fifo_w;
+	m_pushpc = saved.pushpc;
+	std::copy(saved.cmat.begin(), saved.cmat.end(), std::begin(m_cmat));
+	std::memcpy(m_mat_stack, saved.mat_stack.data(), sizeof m_mat_stack);
+	std::memcpy(m_mat_vector, saved.mat_vector.data(), sizeof m_mat_vector);
+	m_mat_stack_pos = saved.mat_stack_pos;
+	m_acc = saved.acc;
+	m_tgp_int_px = saved.tgp_int_px;
+	m_tgp_int_py = saved.tgp_int_py;
+	m_tgp_int_pz = saved.tgp_int_pz;
+	m_tgp_int_adr = saved.tgp_int_adr;
+	m_v60_copro_ram_adr = saved.v60_copro_ram_adr;
+	std::copy(std::begin(saved.v60_copro_ram_latch), std::end(saved.v60_copro_ram_latch),
+		std::begin(m_v60_copro_ram_latch));
+	m_copro_hle_ram_scan_adr = saved.copro_hle_ram_scan_adr;
+	m_ccount = saved.ccount;
+	std::copy(saved.copro_ram.begin(), saved.copro_ram.end(), m_copro_ram_data.get());
+	std::copy(saved.tgp_ram.begin(), saved.tgp_ram.end(), m_tgp_ram.get());
+	std::copy(saved.poly_ram.begin(), saved.poly_ram.end(), m_poly_ram.get());
+	if (!restore_lle_state(saved.lle)) return false;
+	if (m_ioboard) m_ioboard->load_state(*saved.io_board);
+	if (m_audio) m_audio->reset();
+	m_audio_out.clear();
+
+	m_shown = m_unshown = false;
+	m_render_done = false;
+	m_glist = nullptr;
+	m_picture_buffer = 0;
+	m_tiles_updated = ~0ull;
+	m_list_written[0] = m_list_written[1] = ~0ull;
+	m_list_extra[0].clear();
+	m_list_extra[1].clear();
+	for (int buffer = 0; buffer < 2; buffer++) {
+		m_list_owner[buffer].clear();
+		m_list_rear_target[buffer].reset();
+		m_list_has_camera[buffer] = false;
+		m_list_visibility[buffer].clear();
+		m_list_visibility_frame[buffer] = ~0ull;
+	}
+	for (auto &cache : m_layer_cache) cache.frame = ~0ull;
+	smooth_cut();
+	return true;
 }
 
 void model1::copro_reset()

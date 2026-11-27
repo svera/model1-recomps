@@ -25,6 +25,8 @@ int main()
 	assert(host->local_boot_complete(machine) == machine.past_boot());
 	bool pc_mode = true;
 	host_context context{.machine = machine, .pc_mode = pc_mode};
+	bool runtime_reset = false;
+	context.restart_cpu_runtime = [&] { runtime_reset = true; };
 	host->start(context);
 	for (int port : {1, 2}) {
 		std::fill(std::begin(machine.m_inputs), std::end(machine.m_inputs), uint8_t(0xff));
@@ -42,9 +44,27 @@ int main()
 	host->before_frame();
 	assert(!machine.rear_view());
 	machine.work_ram()[0x1138] = 0x14;
+	assert(host->supports_quick_restart_race());
+	machine.cpu().set_reg(0, 0x12345678);
+	*machine.cpu().m_cycles = 73;
+	machine.work_ram()[0x200] = 0x5a;
+	host->before_frame();
+	machine.cpu().set_reg(0, 0x87654321);
+	*machine.cpu().m_cycles = 99;
+	machine.work_ram()[0x200] = 0xa5;
+	assert(host->quick_restart_race());
+	assert(machine.cpu().reg(0) == 0x12345678 && *machine.cpu().m_cycles == 73 &&
+		machine.work_ram()[0x200] == 0x5a);
+	assert(runtime_reset);
+	machine.work_ram()[0x1138] = 0x10;
+	host->after_frame();
+	assert(!host->quick_restart_race());
+	machine.work_ram()[0x1138] = 0x14;
 	context.link_player = 3;
 	machine.m_inputs[1] &= uint8_t(~game::vr::CAMERA_REAR_INPUT);
 	host->before_frame();
 	assert(!machine.rear_view());
+	host->after_frame();
+	assert(!host->quick_restart_race());
 	puts("VR local multiplayer host capabilities and diagnostics passed");
 }

@@ -139,6 +139,85 @@ void v60_device::reset()
 	_CY = _OV = _S = _Z = 0;
 }
 
+v60_device::state v60_device::save_state() const
+{
+	state saved;
+	std::copy(std::begin(m_reg), std::end(m_reg), saved.reg.begin());
+	saved.flags = {m_flags.CY, m_flags.OV, m_flags.S, m_flags.Z};
+	saved.irq_line = m_irq_line;
+	saved.nmi_line = m_nmi_line;
+	saved.ppc = m_PPC;
+	saved.icount = m_icount;
+	saved.stall_io = m_stall_io;
+	saved.cycle_residue = m_cycles ? *m_cycles : m_icount;
+	saved.op1 = m_op1;
+	saved.op2 = m_op2;
+	saved.flag1 = m_flag1;
+	saved.flag2 = m_flag2;
+	saved.instflags = m_instflags;
+	saved.lenop1 = m_lenop1;
+	saved.lenop2 = m_lenop2;
+	saved.subop = m_subop;
+	saved.bamoffset1 = m_bamoffset1;
+	saved.bamoffset2 = m_bamoffset2;
+	saved.amflag = m_amflag;
+	saved.amout = m_amout;
+	saved.bamoffset = m_bamoffset;
+	saved.amlength1 = m_amlength1;
+	saved.amlength2 = m_amlength2;
+	saved.modadd = m_modadd;
+	saved.modm = m_modm;
+	saved.modval = m_modval;
+	saved.modval2 = m_modval2;
+	saved.modwritevalb = m_modwritevalb;
+	saved.modwritevalh = m_modwritevalh;
+	saved.modwritevalw = m_modwritevalw;
+	saved.moddim = m_moddim;
+	saved.debugger_temp = m_debugger_temp;
+	saved.irq_taken = m_irq_taken;
+	return saved;
+}
+
+void v60_device::load_state(const state &saved)
+{
+	std::copy(saved.reg.begin(), saved.reg.end(), std::begin(m_reg));
+	m_flags.CY = saved.flags[0];
+	m_flags.OV = saved.flags[1];
+	m_flags.S = saved.flags[2];
+	m_flags.Z = saved.flags[3];
+	m_irq_line = saved.irq_line;
+	m_nmi_line = saved.nmi_line;
+	m_PPC = saved.ppc;
+	m_icount = saved.icount;
+	m_stall_io = saved.stall_io;
+	if (m_cycles) *m_cycles = saved.cycle_residue;
+	m_op1 = saved.op1;
+	m_op2 = saved.op2;
+	m_flag1 = saved.flag1;
+	m_flag2 = saved.flag2;
+	m_instflags = saved.instflags;
+	m_lenop1 = saved.lenop1;
+	m_lenop2 = saved.lenop2;
+	m_subop = saved.subop;
+	m_bamoffset1 = saved.bamoffset1;
+	m_bamoffset2 = saved.bamoffset2;
+	m_amflag = saved.amflag;
+	m_amout = saved.amout;
+	m_bamoffset = saved.bamoffset;
+	m_amlength1 = saved.amlength1;
+	m_amlength2 = saved.amlength2;
+	m_modadd = saved.modadd;
+	m_modm = saved.modm;
+	m_modval = saved.modval;
+	m_modval2 = saved.modval2;
+	m_modwritevalb = saved.modwritevalb;
+	m_modwritevalh = saved.modwritevalh;
+	m_modwritevalw = saved.modwritevalw;
+	m_moddim = saved.moddim;
+	m_debugger_temp = saved.debugger_temp;
+	m_irq_taken = saved.irq_taken;
+}
+
 void v60_device::v60_do_irq(int vector)
 {
 	standard_irq_callback(vector, PC);

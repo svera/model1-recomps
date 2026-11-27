@@ -8,8 +8,34 @@ class segas24_tile
 {
 public:
 	enum { DRAW_OPAQUE = 0x10000 };
+	struct memory_state
+	{
+		std::vector<uint16_t> chars, tiles;
+	};
 
 	segas24_tile() : char_ram(0x80000 / 2), tile_ram(0x10000 / 2) {}
+	memory_state save_memory() const { return {char_ram, tile_ram}; }
+	bool restore_memory(const memory_state &saved)
+	{
+		if (saved.chars.size() != char_ram.size() || saved.tiles.size() != tile_ram.size()) return false;
+		std::copy(saved.chars.begin(), saved.chars.end(), char_ram.begin());
+		std::copy(saved.tiles.begin(), saved.tiles.end(), tile_ram.begin());
+		m_dirty = true;
+		m_entries_dirty = m_chars_dirty = false;
+		char_gen++;
+		std::fill(m_entry_dirty.begin(), m_entry_dirty.end(), 0);
+		std::fill(m_char_dirty.begin(), m_char_dirty.end(), 0);
+		const uint64_t revision = ++m_revision;
+		std::fill(std::begin(m_map_revision), std::end(m_map_revision), revision);
+		std::fill(std::begin(m_line_revision), std::end(m_line_revision), revision);
+		std::fill(std::begin(m_scroll_revision), std::end(m_scroll_revision), revision);
+		std::fill(std::begin(m_mask_revision), std::end(m_mask_revision), revision);
+#if defined(__ANDROID__) || defined(__APPLE__) || defined(M1_ALWAYS_FRAME_TIMINGS)
+		for (auto &entry : m_map0_entry_revision) entry = {revision, revision};
+		m_full_decode_revision = revision;
+#endif
+		return true;
+	}
 
 	uint16_t tile_r(offs_t o) const { return tile_ram[o & 0x7fff]; }
 	uint16_t char_r(offs_t o) const { return char_ram[o & 0x3ffff]; }

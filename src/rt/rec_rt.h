@@ -33,6 +33,8 @@ void len_mismatch(uint32_t addr, uint32_t n, uint32_t want);
 void attach(v60_device &c, std::string_view game);
 // Back to the interpreter: the CPU counts its own cycles again and the game stack is freed.
 void detach(v60_device &c);
+// Discard the suspended native call stack after restoring a CPU snapshot.
+void reset_run_state();
 void run(int cycles);                   // runs the game for a scanline's worth of cycles
 
 // Independently suspended runtimes, selected only between CPU slices on one thread.
@@ -48,6 +50,7 @@ public:
 	context &operator=(const context &) = delete;
 	void activate();
 	void attach(v60_device &cpu, std::string_view game);
+	void reset_run_state();
 	void run(int cycles);
 private:
 	std::unique_ptr<state> m;

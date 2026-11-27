@@ -1284,6 +1284,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			fprintf(stderr, "two cabinets: cabinet %d compiled %zu functions (%zu KB)\n", p + 1, stats.functions, stats.code_bytes / 1024);
 			c.machine.run_cpu = [&c](int n) { c.runtime.run(n); };
+			c.host->restart_cpu_runtime = [&c] { c.runtime.reset_run_state(); };
 		}
 		if (cabinet_count == 1 && p == 0) return true;
 		// A fresh EEPROM must initialize standalone before a master can wait for this peer.
@@ -3532,6 +3533,25 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					paused = !paused;
 					fprintf(stderr, "two cabinets: %s both at frame %d\n", paused ? "paused" : "resumed", frames);
 					if (audio) SDL_ClearAudioStream(audio.get());
+				} else if (event.key.scancode == SDL_SCANCODE_F3 &&
+						   (event.key.mod & SDL_KMOD_SHIFT) && cabinets[0]->game->supports_quick_restart_race()) {
+					const bool solo = on_demand && cabinet_count == 1 && !second_player && !join_pending &&
+						!network_cabinet.active() && !join_overlay.is_open();
+					if (solo && cabinets[0]->game->quick_restart_race()) {
+						auto &c = *cabinets[0];
+						c.pad = {};
+						c.service = {};
+						c.machine.m_audio_out.clear();
+						if (audio) SDL_ClearAudioStream(audio.get());
+						frame_clock.reset();
+						last = SDL_GetTicksNS();
+						next_picture = {};
+						reset_perf();
+						fprintf(stderr, "two cabinets: restarted the solo race\n");
+					} else if (join_overlay.ready() && !join_overlay.is_open()) {
+						join_overlay.toast("Quick restart is available during a solo race.");
+					}
+					continue;
 				} else if (event.key.scancode == SDL_SCANCODE_F3) {
 					if (network_cabinet.active()) { join_overlay.toast("Leave the LAN room before resetting."); continue; }
 					if (!reset_both()) return 1;
@@ -4634,6 +4654,7 @@ int main(int argc, char **argv)
 	host_context game_ctx{ m, dir, find_assets(), g_pc_mode, [&] { cfg_dirty = true; }, {}, {}, {} };
 	game_ctx.replay = replay_mode;
 	game_ctx.link_player = link_player;
+	if (!interp) game_ctx.restart_cpu_runtime = [] { rec::reset_run_state(); };
 	game_part.start(game_ctx);   // (before the code is recompiled: an instruction it changes goes in it)
 	const std::string rank_path = *game_part.save_sidecar_name() ? dir + "/" + game_part.save_sidecar_name() : std::string();
 	uint32_t rank_saved = game_part.save_sidecar_version();
@@ -6615,7 +6636,19 @@ int main(int argc, char **argv)
 					if (paused) save_recording("paused");
 				}
 				else if (e.key.scancode == SDL_SCANCODE_F9 && !force_frame_timings) { perf.show = cfg.timings = !perf.show; cfg_dirty = true; if (!perf.show) present_shape(); }
-				else if (e.key.scancode == SDL_SCANCODE_F3) reset_game();
+				else if (e.key.scancode == SDL_SCANCODE_F3) {
+					if ((e.key.mod & SDL_KMOD_SHIFT) && game_part.supports_quick_restart_race()) {
+						gt.wait();
+						if (game_part.quick_restart_race()) {
+							m.m_audio_out.clear();
+							if (audio) SDL_ClearAudioStream(audio.get());
+							pstate[0] = pstate[1] = pad_state{};
+							sync.reset();
+							frame_clock = double(game_run);
+							menu.toast("Race restarted");
+						} else menu.toast("Quick restart is available during a solo race.");
+					} else reset_game();
+				}
 				else if (e.key.scancode == SDL_SCANCODE_F5) player_scale_to(cfg.scale % 6 + 1);
 				else if (e.key.scancode == SDL_SCANCODE_F6) set_shape((aspect_i + 1) % N_ASPECTS);
 				else if (e.key.scancode == SDL_SCANCODE_F12) {

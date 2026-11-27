@@ -2,6 +2,7 @@
 // copyright-holders: Olivier Galibert).
 #pragma once
 #include "mame_shim.h"
+#include <array>
 
 // The TGP's four address spaces, word-addressed (one 32-bit word per address).
 struct mb86233_bus
@@ -20,6 +21,14 @@ class mb86233_device
 {
 public:
 	explicit mb86233_device(mb86233_bus &bus) : m_bus(&bus) {}
+	struct state
+	{
+		std::array<u32, 9> regs{};
+		std::array<u16, 16> short_regs{};
+		std::array<u8, 6> byte_regs{};
+		int icount = 0;
+		std::array<bool, 6> flags{};
+	};
 	enum regs_ids {
 		REG_A, REG_B, REG_D, REG_P,
 		REG_R, REG_C0, REG_C1,
@@ -66,6 +75,8 @@ public:
 
 
 	void reset();
+	state save_state() const;
+	void load_state(const state &saved);
 	// Runs for the cycle budget or until a FIFO stalls; returns cycles actually consumed.
 	int run(int cycles);
 	void stall() { m_stall = true; m_stalled = true; }

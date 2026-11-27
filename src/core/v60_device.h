@@ -4,13 +4,39 @@
 // MAME device framework with a plain bus interface.
 #pragma once
 #include "mame_shim.h"
+#include <array>
 
 class v60_device
 {
 public:
+	struct state
+	{
+		std::array<uint32_t, 68> reg{};
+		std::array<uint8_t, 4> flags{};
+		uint8_t irq_line = 0, nmi_line = 0;
+		uint32_t ppc = 0;
+		int icount = 0, stall_io = 0, cycle_residue = 0;
+		uint32_t op1 = 0, op2 = 0;
+		uint8_t flag1 = 0, flag2 = 0, instflags = 0;
+		uint32_t lenop1 = 0, lenop2 = 0;
+		uint8_t subop = 0;
+		uint32_t bamoffset1 = 0, bamoffset2 = 0;
+		uint8_t amflag = 0;
+		uint32_t amout = 0, bamoffset = 0, amlength1 = 0, amlength2 = 0;
+		uint32_t modadd = 0;
+		uint8_t modm = 0, modval = 0, modval2 = 0, modwritevalb = 0;
+		uint16_t modwritevalh = 0;
+		uint32_t modwritevalw = 0;
+		uint8_t moddim = 0;
+		uint32_t debugger_temp = 0;
+		bool irq_taken = false;
+	};
+
 	explicit v60_device(v60_bus &bus, uint32_t start_pc = 0xfffff0) : m_bus(bus), m_start_pc(start_pc) {}
 
 	void reset();
+	state save_state() const;
+	void load_state(const state &saved);
 	// Runs until at least `cycles` cycles have been spent (8 per instruction, as MAME).
 	int run(int cycles);
 	// One instruction; returns its address.

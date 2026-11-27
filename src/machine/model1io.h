@@ -5,6 +5,7 @@
 // copyright-holders: Aaron Giles) for the EEPROM. The Z80 is superzazu/z80 (MIT).
 #pragma once
 #include "mame_lite.h"
+#include <array>
 extern "C" {
 #include "../../third_party/z80/z80.h"
 }
@@ -12,10 +13,34 @@ extern "C" {
 class model1io
 {
 public:
+	struct state
+	{
+		std::array<uint8_t, 3> inputs{};
+		std::array<uint8_t, 8> analog_inputs{};
+		uint8_t outputs = 0;
+		std::array<uint16_t, 64> eeprom{};
+		std::array<uint8_t, 0x2000> ram{};
+		z80 cpu{};
+		double carry = 0;
+		uint64_t time = 0;
+		std::array<uint8_t, 7> port_value{};
+		uint8_t port_config = 0, serial_output = 0, cmd = 0;
+		uint16_t address = 0;
+		bool secondary = false;
+		uint8_t adc_shift = 0;
+		int ee = 0, cs = 0, clk = 0, di = 0;
+		uint32_t accum = 0, shift = 0;
+		int bits = 0, cmd_ee = 0, ee_addr = 0;
+		bool locked = true;
+		uint64_t ready_at = 0, cs_rise = 0;
+	};
+
 	static constexpr int CLOCK = 4000000;    // 32 MHz / 8
 
 	model1io(const std::vector<uint8_t> &rom, uint8_t *dpram);
 	void reset();
+	state save_state() const;
+	void load_state(const state &saved);
 	// Runs the Z80 for `usec` microseconds.
 	void run(double usec);
 
