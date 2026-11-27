@@ -16,4 +16,5 @@ public:
 	virtual ~local_cabinet_link() = default;
 	virtual void run_frame() = 0;
 	virtual local_link_status status(unsigned cabinet) const = 0;
+	virtual bool retire(model1 &) { return false; }
 };

@@ -13,4 +13,18 @@ inline m1comm::memory retire_lan_snapshot(m1comm::memory snapshot)
 	return snapshot;
 }
 
+inline m1comm::memory retire_local_snapshot(m1comm::memory frozen, const m1comm::memory &live)
+{
+	auto retired = retire_lan_snapshot(frozen);
+	if (live[1] == 1) {
+		// FE1670 reads the master record's race roster, timer and lap status.
+		std::copy(live.begin() + 0x10 + 0xb8, live.begin() + 0x10 + 0x1c4,
+			retired.begin() + 0x10 + 0xb8);
+		retired[0x10 + 0x10e] = 0;
+	}
+	retired[1] = live[1];
+	std::copy_n(live.begin() + 6, 10, retired.begin() + 6);
+	return retired;
+}
+
 }

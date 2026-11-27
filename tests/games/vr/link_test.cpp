@@ -1,6 +1,7 @@
 #include "../../../src/host/local_link.h"
 #include "../../../src/host/regions.h"
 #include "../../../src/games/vr/gameplay.h"
+#include "../../../src/games/vr/link.h"
 #include "../../../src/rt/native.h"
 #include "../../../src/machine/linked_pair.h"
 #include "../../../src/host/input_replay.h"
@@ -584,11 +585,116 @@ static int cabinet(const std::string &dir, int player, int port)
 }
 #endif
 
+static void race_retirement(const char *dir)
+{
+	rec::hints map;
+	assert(map.read("assets/games/vr/vr_map.txt"));
+	std::array<std::unique_ptr<model1>, 4> machines;
+	std::array<rec::context, 4> runtimes;
+	std::vector<model1 *> racers;
+	for (int p = 0; p < 4; p++) {
+		machines[p] = std::make_unique<model1>(load_regions(dir, game::id{"vr"}));
+		auto &m = *machines[p];
+		m.set_drawing(false);
+		runtimes[p].attach(m.cpu(), "vr");
+		assert(rec::build_native(m.maincpu_rom(), map));
+		m.run_cpu = [&, p](int n) { runtimes[p].run(n); };
+		m.reset();
+		for (int frame = 0; frame < 900; frame++) m.run_frame();
+		game::vr::set_coin_setting(m, game::vr::FREE_PLAY);
+		game::vr::set_link_player(m, p ? 2 : 1);
+		m.reset();
+		runtimes[p].attach(m.cpu(), "vr");
+		racers.push_back(&m);
+	}
+	linked_pair pair(racers);
+	std::array<bool, 4> retired{};
+	const std::array<int, 3> departures{1, 0, 2};
+	int departure = 0, racing = 0, continued = 0;
+	bool results = false;
+	uint32_t previous_position = 0;
+	int moving = 0;
+	for (int frame = 0; frame < 20000; frame++) {
+		const auto tick = machines[0]->link()->ticks();
+		for (int p = 0; p < 4; p++) {
+			auto &m = *machines[p];
+			const bool start = !retired[p] && ((tick >= 2400 && tick < 2406) ||
+				(tick >= 2520 && tick < 2526));
+			m.m_inputs[0] = uint8_t(~(start ? 0x10 : 0));
+			m.set_analog_input(0, 0x80);
+			m.set_analog_input(1, retired[p] ? 0 : 0x90);
+			m.set_analog_input(2, 0);
+		}
+		const auto before_frame = machines[3]->frame_number();
+		const auto before_ticks = machines[3]->link()->ticks();
+		pair.run_frame();
+		assert(machines[3]->frame_number() == before_frame + 1);
+		if (before_ticks) assert(machines[3]->link()->ticks() == before_ticks + 1);
+		const auto phase = machines[3]->work_ram()[0x1138];
+		if (phase == 0x14) {
+			++racing;
+			if (departure) {
+				++continued;
+				const auto position = machines[3]->read32(0x400d1e);
+				if (position != previous_position) ++moving;
+				previous_position = position;
+				if (machines[3]->read8(0x40d826) != 4)
+					fprintf(stderr, "retirement: race frames=%d departures=%d participants=%u\n",
+						racing, departure, machines[3]->read8(0x40d826));
+				assert(machines[3]->read8(0x40d826) == 4);
+				assert(machines[3]->link()->read(2) == 4);
+				for (int p = 0; p < 4; p++)
+					if (retired[p]) assert(machines[3]->link()->read(0x10 + (p + 1) * 0x1c4 + 0x10e) == 0);
+			}
+			if (departure < 3 && racing == 600 + departure * 150) {
+				fprintf(stderr, "retirement: removing cabinet %d at race frame %d, participants=%u\n",
+					departures[departure] + 1, racing, machines[3]->read8(0x40d826));
+				const int player = departures[departure++];
+				const auto before = input_replay::ram_hash(*machines[3]);
+				assert(pair.retire(*machines[player], game::vr::retire_local_snapshot));
+				assert(input_replay::ram_hash(*machines[3]) == before);
+				retired[player] = true;
+			}
+		} else if (departure) {
+			assert(phase >= 0x15 && phase <= 0x1e);
+			if (phase == 0x1c) { results = true; break; }
+		}
+	}
+	assert(departure == 3 && continued >= 600 && moving >= 100 && results);
+	puts("Local retirement: slave/master departures preserve race RAM, frame clock, IDs, movement and results with one survivor");
+}
+
 int main(int argc, char **argv)
 {
 	board_protocol();
 	relay_protocol();
 	solo_relay_protocol();
+	for (int count : {3, 4}) {
+		std::array<m1comm::memory, 4> snapshots{};
+		for (int p = 0; p < count; p++) {
+			snapshots[p][1] = p ? 2 : 1;
+			snapshots[p][4] = 1;
+			snapshots[p][6] = uint8_t(0x50 + p);
+			snapshots[p][0x10] = uint8_t(0x30 + p);
+		}
+		if (argc == 3 && !strcmp(argv[1], "--retirement")) {
+			race_retirement(argv[2]);
+			return 0;
+		}
+		for (int id = 0; id <= count; id++) {
+			m1comm board([](const auto &, auto &) -> bool {
+				throw std::logic_error("group exchange must not use the pair transport");
+			});
+			board.write(1, id == 0 ? 0 : id == 1 ? 1 : 2);
+			board.set_cn(1);
+			const auto racers = std::span(snapshots.data(), count);
+			if (id == 0) board.receive_group(racers);
+			else board.tick_group(id, racers);
+			assert(board.read(2) == id && board.read(3) == count && board.ticks() == 1);
+			if (id != 1) assert(board.read(6) == 0x50);
+			for (int p = 0; p < count; p++) assert(board.read(0x10 + (p + 1) * 0x1c4) == 0x30 + p);
+		}
+	}
 	if (argc == 3 && !strcmp(argv[1], "--in-process")) {
 		in_process(argv[2]);
 		puts("VR in-process link tests passed");

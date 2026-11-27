@@ -13,7 +13,11 @@ inline std::string gamepad_guid(SDL_JoystickID id)
 
 // Reconcile rather than reopening every pad: a Bluetooth connection can appear in stages.
 inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2], bool swapped,
-	const std::array<SDL_JoystickID, 2> &preferred = {})
+	const std::array<SDL_JoystickID, 2> &preferred = {});
+
+template<size_t N>
+inline bool refresh_gamepad_slots(SDL_Gamepad **pads, const player_controls *ctl, bool swapped,
+	const std::array<SDL_JoystickID, N> &preferred)
 {
 	int count = 0;
 	SDL_JoystickID *ids = SDL_GetGamepads(&count);
@@ -21,15 +25,15 @@ inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2],
 		fprintf(stderr, "Couldn't enumerate gamepads: %s\n", SDL_GetError());
 		return false;
 	}
-	std::array<SDL_JoystickID, 2> before{};
-	for (int p = 0; p < 2; p++)
+	std::array<SDL_JoystickID, N> before{};
+	for (size_t p = 0; p < N; p++)
 		if (pads[p]) before[p] = SDL_GetGamepadID(pads[p]);
-	std::array<SDL_Gamepad *, 2> next{};
+	std::array<SDL_Gamepad *, N> next{};
 	std::vector<bool> used(count, false);
-	for (int p = 0; p < 2; p++)
+	for (size_t p = 0; p < N; p++)
 		for (int i = 0; preferred[p] && i < count; i++) {
 			if (used[i] || ids[i] != preferred[p]) continue;
-			for (int old = 0; old < 2; old++)
+			for (size_t old = 0; old < N; old++)
 				if (before[old] == ids[i]) next[p] = pads[old];
 			if (!next[p]) {
 				next[p] = SDL_OpenGamepad(ids[i]);
@@ -42,7 +46,7 @@ inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2],
 		}
 	// Explicit choices first, then automatic assignments, then missing choices' fallbacks.
 	for (int pass = 0; pass < 3; pass++)
-		for (int p = 0; p < 2; p++) {
+		for (size_t p = 0; p < N; p++) {
 			const std::string &choice = ctl[p].pad_choice;
 			if (next[p] || choice == "none") continue;
 			const bool chosen = choice != "auto";
@@ -50,7 +54,7 @@ inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2],
 			for (int i = 0; i < count && !next[p]; i++) {
 				if (used[i] || (pass == 0 && gamepad_guid(ids[i]) != choice)) continue;
 				used[i] = true;
-				for (int old = 0; old < 2; old++)
+				for (size_t old = 0; old < N; old++)
 					if (before[old] == ids[i]) next[p] = pads[old];
 				if (!next[p]) {
 					next[p] = SDL_OpenGamepad(ids[i]);
@@ -62,12 +66,18 @@ inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2],
 		}
 	SDL_free(ids);
 	if (swapped && next[0] && next[1]) std::swap(next[0], next[1]);
-	for (auto *pad : { pads[0], pads[1] })
-		if (pad && pad != next[0] && pad != next[1]) SDL_CloseGamepad(pad);
+	for (size_t p = 0; p < N; p++)
+		if (pads[p] && std::find(next.begin(), next.end(), pads[p]) == next.end()) SDL_CloseGamepad(pads[p]);
 	bool changed = false;
-	for (int p = 0; p < 2; p++) {
+	for (size_t p = 0; p < N; p++) {
 		pads[p] = next[p];
 		changed |= before[p] != (pads[p] ? SDL_GetGamepadID(pads[p]) : 0);
 	}
 	return changed;
+}
+
+inline bool refresh_gamepads(SDL_Gamepad *pads[2], const player_controls ctl[2], bool swapped,
+	const std::array<SDL_JoystickID, 2> &preferred)
+{
+	return refresh_gamepad_slots(pads, ctl, swapped, preferred);
 }
