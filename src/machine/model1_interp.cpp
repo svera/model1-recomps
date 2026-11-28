@@ -2199,7 +2199,8 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 		const glm::mat4 steer(smooth * glm::inverse(ra + (rb - ra) * t));
 		for (size_t i = 0; i < nb; i++) {
 			const slot &sb = b.slots[i];
-			if (sb.polys.empty() || overlay(sb) || (sb.owner == 1 && match[i] >= 0)) continue;     // (drawn without the camera)
+			// The still world was already carried by the two cameras in older_views.
+			if (sb.polys.empty() || overlay(sb) || sb.owner == 1) continue;
 			if (!m_blend_ok[i]) {                    // not blended: as it is, but turned too
 				memcpy(m_blend[i].data(), sb.mat, sizeof sb.mat);
 				memcpy(m_blend_from[i].data(), sb.mat, sizeof sb.mat);
