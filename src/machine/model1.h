@@ -493,6 +493,7 @@ private:
 		bool screen_space = false;                  // HUD viewport, independent of the world camera
 		bool rear_view_pivot = false;
 		uint32_t owner = 0;                          // (video_traits::records) 0: not known, 1: the still world, else its record
+		bool camera_follow = true;                   // (video_traits::records) eligible for the filtered camera turn
 	};
 	using projection_view = std::array<uint32_t, 8>; // viewport and screen-space projection translation
 	struct view_zoom {
@@ -856,6 +857,7 @@ private:
 	// (video_traits::records) per word of each display list, what the game drew with the matrix
 	// written there (slot::owner), and the camera as the list was written
 	std::vector<uint32_t> m_list_owner[2];
+	std::vector<uint8_t> m_list_camera_follow[2];
 	std::vector<game::record_visibility> m_list_visibility[2];
 	uint64_t m_list_visibility_frame[2] = { ~0ull, ~0ull };
 	std::map<uint32_t, std::vector<game::render_object>> m_list_extra[2];

@@ -3,6 +3,11 @@
 
 namespace game::vr {
 
+constexpr game::matrix_writer animated_scenery_writer(uint32_t caller)
+{
+	return { 0xff8500, 25, caller, 0, false, false };
+}
+
 // The 3D blended between its 30 game frames a second, each part paired by what the game says it
 // is (a car's wheels change model as they turn and the trackside reuses its models along the
 // track, so pairing parts by place in the list put tyres between wheels). Its routine at FF8500
@@ -23,19 +28,19 @@ const video_traits VIDEO{ .smooth_frames = true,
 	// use the current pair directly. Keep the half-pixels lost by the tile-register writes.
 	.sky_scroll = sky_camera{ 0x501408, 0x50140a, 0x501418, 0x50141a, 0x500501, sky_camera::format::tile_pair, 0x501420 },
 	.records = draw_records{ {
-		{ 0xff8500, 25, 0xffab97 }, { 0xff8500, 25, 0xffb72c },
-		{ 0xff8500, 25, 0xffb254 },
-		{ 0xff8500, 25, 0xffc0a1 },
-		{ 0xff8500, 25, 0xffd19c },
-		{ 0xff8500, 25, 0xffcec9 },
-		{ 0xff8500, 25, 0xffb81c }, { 0xff8500, 25, 0xffb859 },
-		{ 0xff8500, 25, 0xffc235 }, { 0xff8500, 25, 0xffc251 },
-		{ 0xff8500, 25, 0xffd809 }, { 0xff8500, 25, 0xffd85a },
-		{ 0xff8500, 25, 0xffd9e8 }, { 0xff8500, 25, 0xffda21 }, { 0xff8500, 25, 0xffda67 },
-		{ 0xff8500, 25, 0xffdb49 }, { 0xff8500, 25, 0xffdb9a }, { 0xff8500, 25, 0xffdbd5 },
-		{ 0xff8500, 25, 0xffddd4 }, { 0xff8500, 25, 0xffddeb },
-		{ 0xff8500, 25, 0xffde6e }, { 0xff8500, 25, 0xffdedc }, { 0xff8500, 25, 0xffdf42 },
-		{ 0xff8500, 19 }, { 0xff85d8, 25 }
+		animated_scenery_writer(0xffab97), animated_scenery_writer(0xffb72c),
+		animated_scenery_writer(0xffb254),
+		animated_scenery_writer(0xffc0a1),
+		animated_scenery_writer(0xffd19c),
+		animated_scenery_writer(0xffcec9),
+		animated_scenery_writer(0xffb81c), animated_scenery_writer(0xffb859),
+		animated_scenery_writer(0xffc235), animated_scenery_writer(0xffc251),
+		animated_scenery_writer(0xffd809), animated_scenery_writer(0xffd85a),
+		animated_scenery_writer(0xffd9e8), animated_scenery_writer(0xffda21), animated_scenery_writer(0xffda67),
+		animated_scenery_writer(0xffdb49), animated_scenery_writer(0xffdb9a), animated_scenery_writer(0xffdbd5),
+		animated_scenery_writer(0xffddd4), animated_scenery_writer(0xffddeb),
+		animated_scenery_writer(0xffde6e), animated_scenery_writer(0xffdedc), animated_scenery_writer(0xffdf42),
+		{ 0xff8500, 19 }, { 0xff85d8, 25, 0, 0, false, false }
 	}, 0x400000, 0x410000, 0x501b00 } };
 
 }
