@@ -103,14 +103,18 @@ void model1::list_written(int buffer, uint32_t word)
 		if (camera) m_list_camera[buffer] = *camera;
 	}
 	std::vector<uint32_t> &owners = m_list_owner[buffer];
+	std::vector<uint8_t> &camera_follows = m_list_camera_follow[buffer];
 	if (owners.empty()) owners.assign(0x8000, 0);
+	if (camera_follows.empty()) camera_follows.assign(0x8000, 0);
 	uint32_t owner = 0;
+	bool camera_follow = false;
 	for (const game::matrix_writer &w : r.writers)
 		if (m_maincpu.pc() == w.pc) {
 			if (w.caller && read32(m_maincpu.reg(31)) != w.caller) continue;
 			uint32_t rec = m_maincpu.reg(w.record_register) + w.record_offset;
 			if (w.indirect) rec = read32(rec);
 			owner = rec >= r.records_from && rec < r.records_to ? rec : 1;
+			camera_follow = w.camera_follow;
 			if (!m_smooth) break;
 			if (!m_gameplay.draw_camera) {
 				memcpy(m_list_camera[buffer].data(), &m_ram_b[r.camera - 0x500000], sizeof m_list_camera[buffer]);
@@ -125,6 +129,7 @@ void model1::list_written(int buffer, uint32_t word)
 			break;
 		}
 	owners[word & 0x7fff] = owner;
+	camera_follows[word & 0x7fff] = camera_follow;
 	if (owner > 1 && !m_list_rear_target[buffer] && m_gameplay.rear_view_pivot &&
 		m_gameplay.rear_view_pivot(owner))
 		m_list_rear_target[buffer] = word & 0x7fff;
@@ -207,7 +212,11 @@ void model1::index_objects(logic_frame &lf)
 			for (int i = 0; i < 12; i++) sl.mat[i] = rdf(off + 2 + 2 * i);
 			memcpy(sl.light, light, sizeof light);
 			sl.has_light = has_light;
-			if (!owners.empty()) sl.owner = owners[off & 0x7fff];
+			if (!owners.empty()) {
+				sl.owner = owners[off & 0x7fff];
+				const auto &camera_follows = m_list_camera_follow[m_picture_buffer];
+				if (!camera_follows.empty()) sl.camera_follow = camera_follows[off & 0x7fff];
+			}
 			for (const auto &visibility : lf.visibility)
 				if (visibility.owner == sl.owner) { sl.visibility = visibility; break; }
 			if (auto it = m_list_extra[m_picture_buffer].find(off); it != m_list_extra[m_picture_buffer].end()) {
@@ -1995,7 +2004,7 @@ void model1::follow_records(logic_frame &lf, const logic_frame &before)
 		const glm::mat3 steer = glm::mat3_cast(glm::quat(lf.turn[0], lf.turn[1], lf.turn[2], lf.turn[3])) * glm::transpose(raw);
 		constexpr float KEEP = 0.75f;
 		for (const slot &s : lf.slots) {
-			if (s.screen_space || s.owner <= 1 || s.polys.empty() || s.mat[11] <= 0) continue;
+			if (s.screen_space || !s.camera_follow || s.owner <= 1 || s.polys.empty() || s.mat[11] <= 0) continue;
 			if (std::any_of(next.begin(), next.end(), [&](const logic_frame::record_way &r) { return r.owner == s.owner; })) continue;
 			logic_frame::record_way r;
 			for (const auto &o : before.follows)
@@ -2028,11 +2037,10 @@ void model1::follow_records(logic_frame &lf, const logic_frame &before)
 // record are paired by model, and so is a still-world part that sat in its place on screen while
 // the camera moved (the SEGA logo, drawn without the camera). A screen-space overlay
 // (video_traits::foreground_objects: the logo) is paired by model whichever record drew it, never
-// moves with a record and isn't turned. Each is blended on screen, from the
-// older matrix to the newer (a car the camera follows stays put; blending the camera and the car
-// apart swung it about), a part along a curve that leaves the older list at the last move's speed
-// (the game's steps are uneven). Then all of it is turned about the eye to the camera's smoothed
-// turn (smooth_turn). A camera_cut isn't blended.
+// moves with a record and isn't turned. Other objects are converted to world space with their
+// list's camera, blended there, and transformed by one interpolated camera. A screen-space overlay
+// stays on its own path. The camera's filtered turn is applied to record-owned objects, with the
+// eased follow weight; a camera_cut isn't blended.
 void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double alpha)
 {
 	auto to_mat = camera_matrix;
@@ -2041,7 +2049,8 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 		for (int e = 0; e < 3; e++) out[9 + e] = m[3][e];
 	};
 	auto camera = [&](const logic_frame &l) { return to_mat(l.camera.data()); };
-	const glm::mat4 ca = camera(a), cb = camera(b), ib = glm::affineInverse(cb);
+	const glm::mat4 ca = camera(a), cb = camera(b);
+	const glm::mat4 ia = glm::affineInverse(ca), ib = glm::affineInverse(cb);
 	const glm::mat3 turn = glm::mat3(cb) * glm::transpose(glm::mat3(ca));
 	const float angle = std::acos(std::clamp((turn[0][0] + turn[1][1] + turn[2][2] - 1) / 2, -1.0f, 1.0f));
 	const float jump = glm::length(glm::vec3(ib[3]) - glm::vec3(glm::affineInverse(ca)[3]));
@@ -2159,24 +2168,56 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 	if (has_prev) older_views(p, a, match_prev, prev, known_prev);
 	const float gap = float(b.frame - a.frame) / float(std::max(a.frame - p.frame, 1));
 	const size_t nb = b.slots.size();
+	const float camera_t = std::clamp(u, 0.0f, 1.0f);
+	const glm::quat raw_a = glm::normalize(glm::quat_cast(glm::mat3(ca)));
+	const glm::quat raw_b = glm::normalize(glm::quat_cast(glm::mat3(cb)));
+	const glm::quat raw_turn_at_filter = glm::normalize(glm::slerp(raw_a, raw_b, camera_t));
+	const glm::quat raw_turn = glm::normalize(glm::slerp(raw_a, raw_b, u));
+	const glm::vec3 eye = glm::mix(glm::vec3(ia[3]), glm::vec3(ib[3]), u);
+	glm::mat4 raw_camera = glm::mat4_cast(raw_turn);
+	raw_camera[3] = glm::vec4(-glm::mat3(raw_camera) * eye, 1);
+	const bool smooth_turn = !m_blend_cut && a.turn_age > 0 && b.turn_age == 2 && !(a.turn_hold > 0 && b.turn_hold > 0);
+	glm::quat smooth_camera_turn = raw_turn;
+	if (smooth_turn) {
+		const glm::quat qa = glm::normalize(glm::quat(a.turn[0], a.turn[1], a.turn[2], a.turn[3]));
+		const glm::quat qb = glm::normalize(glm::quat(b.turn[0], b.turn[1], b.turn[2], b.turn[3]));
+		smooth_camera_turn = glm::normalize(turn_quat(turn_vector(qb * glm::inverse(qa)) * camera_t) * qa);
+	}
+	const glm::mat4 steer(glm::mat3_cast(smooth_camera_turn) * glm::transpose(glm::mat3_cast(raw_turn_at_filter)));
+	const glm::mat4 previous_inverse = has_prev ? glm::affineInverse(camera(p)) : glm::mat4(1);
 	for (size_t i = 0; i < nb; i++) {
 		const slot &sb = b.slots[i];
 		if (sb.polys.empty() || !known[i]) continue;
 		float older_m[12];
 		from_mat(from[i], older_m);
-		for (int k = 0; k < 12; k++) m_blend[i][k] = older_m[k] + (sb.mat[k] - older_m[k]) * u;
-		// leaving the older list at its last move's speed, when the two moves are near alike
-		bool have = false;
-		glm::vec3 was(0);
-		if (has_prev && match[i] >= 0 && known_prev[match[i]]) {
-			was = glm::vec3(from[i][3]) - glm::vec3(prev[match[i]][3]);
-			have = true;
-		}
-		if (have) {
-			const glm::vec3 now(sb.mat[9] - older_m[9], sb.mat[10] - older_m[10], sb.mat[11] - older_m[11]);
-			was *= gap;
-			if (glm::length(was - now) <= 0.5f * std::max(glm::length(was), glm::length(now)) + 0.02f)
-				for (int k = 0; k < 3; k++) m_blend[i][9 + k] += u * (1 - u) * (1 - u) * (was[k] - now[k]);
+		if (overlay(sb)) {
+			for (int k = 0; k < 12; k++) m_blend[i][k] = older_m[k] + (sb.mat[k] - older_m[k]) * u;
+			// Insets and screen-space overlays use a camera that isn't in the world list.
+			if (has_prev && match[i] >= 0 && known_prev[match[i]]) {
+				glm::vec3 was = glm::vec3(from[i][3]) - glm::vec3(prev[match[i]][3]);
+				const glm::vec3 now(sb.mat[9] - older_m[9], sb.mat[10] - older_m[10], sb.mat[11] - older_m[11]);
+				was *= gap;
+				if (glm::length(was - now) <= 0.5f * std::max(glm::length(was), glm::length(now)) + 0.02f)
+					for (int k = 0; k < 3; k++) m_blend[i][9 + k] += u * (1 - u) * (1 - u) * (was[k] - now[k]);
+			}
+		} else {
+			float world_from[12], world_to[12], world_blend[12];
+			const glm::mat4 world_from_mat = ia * from[i];
+			const glm::mat4 world_to_mat = ib * to_mat(sb.mat);
+			from_mat(world_from_mat, world_from);
+			from_mat(world_to_mat, world_to);
+			for (int k = 0; k < 12; k++) world_blend[k] = world_from[k] + (world_to[k] - world_from[k]) * u;
+			if (swung(world_from, world_to)) turn_blend(world_from, world_to, u, world_blend);
+			// Keep the previous pair's velocity in world space, not across two camera frames.
+			if (has_prev && match[i] >= 0 && known_prev[match[i]]) {
+				const glm::mat4 previous_world = previous_inverse * prev[match[i]];
+				const glm::vec3 was = glm::vec3(world_from_mat[3]) - glm::vec3(previous_world[3]);
+				const glm::vec3 now(world_to[9] - world_from[9], world_to[10] - world_from[10], world_to[11] - world_from[11]);
+				const glm::vec3 scaled_was = was * gap;
+				if (glm::length(scaled_was - now) <= 0.5f * std::max(glm::length(scaled_was), glm::length(now)) + 0.02f)
+					for (int k = 0; k < 3; k++) world_blend[9 + k] += u * (1 - u) * (1 - u) * (scaled_was[k] - now[k]);
+			}
+			from_mat(raw_camera * to_mat(world_blend), m_blend[i].data());
 		}
 		const slot &light_from = match[i] >= 0 ? a.slots[match[i]] : sb;
 		memcpy(m_blend_from[i].data(), older_m, sizeof older_m);
@@ -2184,23 +2225,13 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 		m_blend_light[i] = { light_from.light[0], light_from.light[1], light_from.light[2], light_from.has_light ? 1.0f : 0.0f };
 		m_blend_ok[i] = 1;
 	}
-	// The camera's turn smoothed (smooth_turn): everything drawn with the camera turned about the
-	// eye from the blend's turn to the smoothed one, but for the cars the camera moves with
-	// (follow_records, eased), going evenly from one list's smoothed turn to the next. Past the newer list
-	// (before a cut), as at it. (A curve through them at the filter's turn speeds, which aren't the
-	// way between them, sped up and slowed within each list: the picture swayed 15 times a second,
-	// now ahead, now back.) Between two lists that both follow the camera's own turn (smooth_turn's
-	// swing back), nothing is turned: they are the game's.
-	if (!m_blend_cut && a.turn_age > 0 && b.turn_age == 2 && !(a.turn_hold > 0 && b.turn_hold > 0)) {
-		const float t = std::min(u, 1.0f);
-		const glm::quat qa(a.turn[0], a.turn[1], a.turn[2], a.turn[3]), qb(b.turn[0], b.turn[1], b.turn[2], b.turn[3]);
-		const glm::mat3 smooth = glm::mat3_cast(turn_quat(turn_vector(qb * glm::inverse(qa)) * t) * qa);
-		const glm::mat3 ra(ca), rb(cb);
-		const glm::mat4 steer(smooth * glm::inverse(ra + (rb - ra) * t));
+	// Apply the filtered camera turn only to record-owned objects; the still world already follows
+	// the shared raw camera interpolation, and objects the camera follows retain their eased weight.
+	if (smooth_turn) {
 		for (size_t i = 0; i < nb; i++) {
 			const slot &sb = b.slots[i];
-			// The still world was already carried by the two cameras in older_views.
-			if (sb.polys.empty() || overlay(sb) || sb.owner == 1) continue;
+			// The still world uses the shared raw camera; only record-owned objects take this turn.
+			if (sb.polys.empty() || overlay(sb) || sb.owner == 1 || !sb.camera_follow) continue;
 			if (!m_blend_ok[i]) {                    // not blended: as it is, but turned too
 				memcpy(m_blend[i].data(), sb.mat, sizeof sb.mat);
 				memcpy(m_blend_from[i].data(), sb.mat, sizeof sb.mat);
@@ -2209,8 +2240,8 @@ void model1::blend_by_records(const logic_frame &a, const logic_frame &b, double
 				m_blend_ok[i] = 1;
 			}
 			float w = 0;                             // a car the camera moves with: as drawn
-			for (const auto &r : a.follows) if (r.owner == sb.owner) w += r.weight * (1 - t);
-			for (const auto &r : b.follows) if (r.owner == sb.owner) w += r.weight * t;
+			for (const auto &r : a.follows) if (r.owner == sb.owner) w += r.weight * (1 - camera_t);
+			for (const auto &r : b.follows) if (r.owner == sb.owner) w += r.weight * camera_t;
 			from_mat((steer * (1 - w) + glm::mat4(w)) * to_mat(m_blend[i].data()), m_blend[i].data());
 		}
 	}

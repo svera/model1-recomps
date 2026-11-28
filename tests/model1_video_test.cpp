@@ -3247,14 +3247,15 @@ struct model1_video_test
 				l.slots[0].polys = { 1 };
 				l.slots[0].mat[11] = 10;
 				l.slots[1].owner = 0x401000;
+				l.slots[1].camera_follow = false;
 				l.slots[1].polys = { 1 };
 				for (int k = 0; k < 3; k++) l.slots[1].mat[9 + k] = parked[k];
 				m.smooth_turn(l, last);
 				m.follow_records(l, last);
-				assert(l.follows.size() == (i ? 2u : 0u));
+				assert(l.follows.size() == (i ? 1u : 0u));
 				if (i) {
 					kept.push_back(l.follows[0].weight);
-					assert(l.follows[1].owner == 0x401000 && l.follows[1].weight == 0);
+					assert(l.follows[0].owner == 0x400d00);
 				}
 				last = l;
 			}
@@ -3445,10 +3446,12 @@ struct model1_video_test
 			m.write32(0x500100, caller);
 			m.list_written(0, 8);
 			assert(m.m_list_owner[0][8] == (caller == 0xff8470 ? 0x401700 : 0x40a300));
+			assert(bool(m.m_list_camera_follow[0][8]) == (caller == 0xff8470));
 		}
 		m.cpu().pc_ref() = 0xff85d8;
 		m.list_written(1, 8);
 		assert(m.m_list_owner[1][8] == 0x40a300);
+		assert(!m.m_list_camera_follow[1][8]);
 		m.cpu().pc_ref() = 0xff8500;
 		m.cpu().reg_ptr()[19] = 0x2e0000;
 		m.list_written(0, 8);
@@ -3571,57 +3574,113 @@ struct model1_video_test
 		puts("Camera zoom: fractional projection, isolated inset, original endpoints and nonuniform/cut guards passed");
 	}
 
-	static void static_world_camera_motion()
+	static void world_space_camera_motion()
 	{
 		model1::regions regions{};
 		regions.title = game::id{ "vr" };
 		model1 m(std::move(regions));
 		m.set_smooth(true);
 
+		auto store_matrix = [](const glm::mat4 &matrix) {
+			std::array<float, 12> values{};
+			for (int c = 0; c < 3; c++)
+				for (int r = 0; r < 3; r++) values[c * 3 + r] = matrix[c][r];
+			for (int r = 0; r < 3; r++) values[9 + r] = matrix[3][r];
+			return values;
+		};
+		auto write_matrix = [&](float *out, const glm::mat4 &matrix) {
+			const auto values = store_matrix(matrix);
+			for (int i = 0; i < 12; i++) out[i] = values[i];
+		};
+		auto camera_pose = [](const glm::quat &rotation, const glm::vec3 &eye) {
+			glm::mat4 view = glm::mat4_cast(rotation);
+			view[3] = glm::vec4(-glm::mat3(view) * eye, 1);
+			return view;
+		};
+		auto turn_values = [](const glm::quat &rotation) {
+			return std::array<float, 4>{ rotation.w, rotation.x, rotation.y, rotation.z };
+		};
+
 		model1::logic_frame a, b;
 		a.frame = 10;
 		b.frame = 12;
 		a.has_camera = b.has_camera = true;
-		a.camera = b.camera = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
-		b.camera[0] = std::cos(.15f);
-		b.camera[2] = -std::sin(.15f);
-		b.camera[6] = std::sin(.15f);
-		b.camera[8] = std::cos(.15f);
-
-		model1::slot older;
-		older.owner = 1;
-		older.polys = { 0x100001 };
-		older.mat[11] = 100;
-		model1::slot newer = older;
-		newer.polys = { 0x100002 };
-		a.slots = { older };
-		b.slots = { newer };
-
-		a.turn = b.turn = { 1, 0, 0, 0 };
+		const glm::quat camera_turn_a(1, 0, 0, 0);
+		const glm::quat camera_turn_b = glm::angleAxis(.15f, glm::vec3(0, 1, 0));
+		const glm::quat turn_a(1, 0, 0, 0);
+		const glm::quat turn_b = glm::angleAxis(.10f, glm::vec3(0, 1, 0));
+		const glm::mat4 ca = camera_pose(camera_turn_a, glm::vec3(0));
+		const glm::mat4 cb = camera_pose(camera_turn_b, glm::vec3(4, 1, -1));
+		a.camera = store_matrix(ca);
+		b.camera = store_matrix(cb);
+		a.turn = turn_values(turn_a);
+		b.turn = turn_values(turn_b);
 		a.turn_age = b.turn_age = 2;
+
+		glm::mat4 world(1);
+		world[3] = glm::vec4(0, 0, 100, 1);
+		glm::mat4 scenery_from(1), scenery_to(1), car_from(1), car_to(1);
+		scenery_from[3] = glm::vec4(10, 0, 100, 1);
+		scenery_to[3] = glm::vec4(20, 2, 100, 1);
+		car_from[3] = glm::vec4(5, 0, 120, 1);
+		car_to[3] = glm::vec4(15, 2, 120, 1);
+
+		model1::slot still_from, still_to, scenery_from_slot, scenery_to_slot, car_from_slot, car_to_slot;
+		still_from.owner = still_to.owner = 1;
+		still_from.polys = still_to.polys = { 0x100001 };
+		write_matrix(still_from.mat, ca * world);
+		write_matrix(still_to.mat, cb * world);
+		scenery_from_slot.owner = scenery_to_slot.owner = 2;
+		scenery_from_slot.camera_follow = scenery_to_slot.camera_follow = false;
+		scenery_from_slot.polys = scenery_to_slot.polys = { 0x100002 };
+		write_matrix(scenery_from_slot.mat, ca * scenery_from);
+		write_matrix(scenery_to_slot.mat, cb * scenery_to);
+		car_from_slot.owner = car_to_slot.owner = 3;
+		car_from_slot.polys = car_to_slot.polys = { 0x100003 };
+		write_matrix(car_from_slot.mat, ca * car_from);
+		write_matrix(car_to_slot.mat, cb * car_to);
+		a.slots = { still_from, scenery_from_slot, car_from_slot };
+		b.slots = { still_to, scenery_to_slot, car_to_slot };
 		m.blend_slots(a, b, .5);
 
-		assert(m.m_blend_ok[0]);
-		auto matrix = [](const float *m) {
-			glm::mat4 result(1);
+		assert(m.m_blend_ok[0] && m.m_blend_ok[1] && m.m_blend_ok[2]);
+		const glm::quat raw_turn_mid = glm::slerp(camera_turn_a, camera_turn_b, .5f);
+		const glm::quat turn_mid = glm::slerp(turn_a, turn_b, .5f);
+		const glm::mat4 camera_mid = camera_pose(raw_turn_mid, glm::vec3(2, .5f, -.5f));
+		const glm::mat4 steer_mid(glm::mat3_cast(turn_mid) * glm::transpose(glm::mat3_cast(raw_turn_mid)));
+		glm::mat4 scenery_mid(1), car_mid(1);
+		scenery_mid[3] = glm::vec4(15, 1, 100, 1);
+		car_mid[3] = glm::vec4(10, 1, 120, 1);
+		auto assert_matrix = [](const char *name, const float *actual, const glm::mat4 &expected) {
 			for (int c = 0; c < 3; c++)
-				result[c] = glm::vec4(m[c * 3], m[c * 3 + 1], m[c * 3 + 2], 0);
-			result[3] = glm::vec4(m[9], m[10], m[11], 1);
-			return result;
-		};
-		const glm::mat4 ca = matrix(a.camera.data());
-		const glm::mat4 cb = matrix(b.camera.data());
-		const glm::mat4 from = ca * glm::affineInverse(cb) * matrix(newer.mat);
-		std::array<float, 12> from_values{};
-		for (int c = 0; c < 3; c++)
-			for (int r = 0; r < 3; r++) from_values[c * 3 + r] = from[c][r];
-		for (int r = 0; r < 3; r++) from_values[9 + r] = from[3][r];
-		for (int c = 0; c < 3; c++)
+				for (int r = 0; r < 3; r++)
+					if (std::fabs(actual[c * 3 + r] - expected[c][r]) >= 1e-4f) {
+						fprintf(stderr, "%s matrix mismatch [%d,%d]: %.7f != %.7f\n", name, c, r, actual[c * 3 + r], expected[c][r]);
+						assert(false);
+					}
 			for (int r = 0; r < 3; r++)
-				assert(std::fabs(m.m_blend[0][c * 3 + r] - (from_values[c * 3 + r] + (newer.mat[c * 3 + r] - from_values[c * 3 + r]) * .5f)) < 1e-4f);
-		for (int r = 0; r < 3; r++)
-			assert(std::fabs(m.m_blend[0][9 + r] - (from_values[9 + r] + (newer.mat[9 + r] - from_values[9 + r]) * .5f)) < 1e-4f);
-		puts("VR static world camera motion: no second camera-turn pass");
+				if (std::fabs(actual[9 + r] - expected[3][r]) >= 1e-4f) {
+					fprintf(stderr, "%s translation mismatch [%d]: %.7f != %.7f\n", name, r, actual[9 + r], expected[3][r]);
+					assert(false);
+				}
+		};
+		assert_matrix("mid static", m.m_blend[0].data(), camera_mid * world);
+		assert_matrix("mid scenery", m.m_blend[1].data(), camera_mid * scenery_mid);
+		assert_matrix("mid car", m.m_blend[2].data(), steer_mid * camera_mid * car_mid);
+
+		m.m_replay_older = true;
+		m.blend_slots(a, b, 1.25);
+		m.m_replay_older = false;
+		const glm::quat raw_turn_past = glm::slerp(camera_turn_a, camera_turn_b, 1.25f);
+		const glm::mat4 camera_past = camera_pose(raw_turn_past, glm::vec3(5, 1.25f, -1.25f));
+		const glm::mat4 steer_past(glm::mat3_cast(turn_b) * glm::transpose(glm::mat3_cast(camera_turn_b)));
+		glm::mat4 scenery_past(1), car_past(1);
+		scenery_past[3] = glm::vec4(22.5f, 2.5f, 100, 1);
+		car_past[3] = glm::vec4(17.5f, 2.5f, 120, 1);
+		assert_matrix("past static", m.m_blend[0].data(), camera_past * world);
+		assert_matrix("past scenery", m.m_blend[1].data(), camera_past * scenery_past);
+		assert_matrix("past car", m.m_blend[2].data(), steer_past * camera_past * car_past);
+		puts("VR world-space interpolation: scenery follows the raw camera; cars retain their filtered turn");
 	}
 
 	static void scenery_motion(const char *dir, bool extended)
@@ -5065,7 +5124,7 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
-	model1_video_test::static_world_camera_motion();
+	model1_video_test::world_space_camera_motion();
 	if (argc > 1 && std::string(argv[1]) == "--wingwar-arcade-parts") {
 		model1_video_test::wingwar_arcade_parts();
 		puts("Wing War arcade parts tests passed");

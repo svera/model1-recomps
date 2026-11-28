@@ -234,6 +234,7 @@ struct matrix_writer
 	uint32_t caller = 0;             // optional return address at SP; first matching writer wins
 	int32_t record_offset = 0;
 	bool indirect = false;          // read the record pointer at register + offset
+	bool camera_follow = true;       // receives the filtered camera turn, unless this writer is scenery
 };
 
 struct draw_records
