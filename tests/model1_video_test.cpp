@@ -16,6 +16,7 @@
 #include <set>
 #include <sstream>
 #include <tuple>
+#include <glm/gtc/matrix_inverse.hpp>
 
 struct model1_video_test
 {
@@ -3570,6 +3571,59 @@ struct model1_video_test
 		puts("Camera zoom: fractional projection, isolated inset, original endpoints and nonuniform/cut guards passed");
 	}
 
+	static void static_world_camera_motion()
+	{
+		model1::regions regions{};
+		regions.title = game::id{ "vr" };
+		model1 m(std::move(regions));
+		m.set_smooth(true);
+
+		model1::logic_frame a, b;
+		a.frame = 10;
+		b.frame = 12;
+		a.has_camera = b.has_camera = true;
+		a.camera = b.camera = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
+		b.camera[0] = std::cos(.15f);
+		b.camera[2] = -std::sin(.15f);
+		b.camera[6] = std::sin(.15f);
+		b.camera[8] = std::cos(.15f);
+
+		model1::slot older;
+		older.owner = 1;
+		older.polys = { 0x100001 };
+		older.mat[11] = 100;
+		model1::slot newer = older;
+		newer.polys = { 0x100002 };
+		a.slots = { older };
+		b.slots = { newer };
+
+		a.turn = b.turn = { 1, 0, 0, 0 };
+		a.turn_age = b.turn_age = 2;
+		m.blend_slots(a, b, .5);
+
+		assert(m.m_blend_ok[0]);
+		auto matrix = [](const float *m) {
+			glm::mat4 result(1);
+			for (int c = 0; c < 3; c++)
+				result[c] = glm::vec4(m[c * 3], m[c * 3 + 1], m[c * 3 + 2], 0);
+			result[3] = glm::vec4(m[9], m[10], m[11], 1);
+			return result;
+		};
+		const glm::mat4 ca = matrix(a.camera.data());
+		const glm::mat4 cb = matrix(b.camera.data());
+		const glm::mat4 from = ca * glm::affineInverse(cb) * matrix(newer.mat);
+		std::array<float, 12> from_values{};
+		for (int c = 0; c < 3; c++)
+			for (int r = 0; r < 3; r++) from_values[c * 3 + r] = from[c][r];
+		for (int r = 0; r < 3; r++) from_values[9 + r] = from[3][r];
+		for (int c = 0; c < 3; c++)
+			for (int r = 0; r < 3; r++)
+				assert(std::fabs(m.m_blend[0][c * 3 + r] - (from_values[c * 3 + r] + (newer.mat[c * 3 + r] - from_values[c * 3 + r]) * .5f)) < 1e-4f);
+		for (int r = 0; r < 3; r++)
+			assert(std::fabs(m.m_blend[0][9 + r] - (from_values[9 + r] + (newer.mat[9 + r] - from_values[9 + r]) * .5f)) < 1e-4f);
+		puts("VR static world camera motion: no second camera-turn pass");
+	}
+
 	static void scenery_motion(const char *dir, bool extended)
 	{
 		model1 m(load_regions(dir, game::id{ "vr" }));
@@ -5011,6 +5065,7 @@ struct model1_video_test
 
 int main(int argc, char **argv)
 {
+	model1_video_test::static_world_camera_motion();
 	if (argc > 1 && std::string(argv[1]) == "--wingwar-arcade-parts") {
 		model1_video_test::wingwar_arcade_parts();
 		puts("Wing War arcade parts tests passed");
