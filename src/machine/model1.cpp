@@ -101,9 +101,9 @@ void model1::reset()
 	m_maincpu.reset();
 }
 
-bool model1::save_simulation_state(simulation_state &saved) const
+bool model1::save_simulation_state(simulation_state &saved, bool include_link) const
 {
-	if (m_comm || m_ioboard2) return false;
+	if ((m_comm && !include_link) || m_ioboard2) return false;
 	saved.cpu = m_maincpu.save_state();
 	saved.frame = m_frame;
 	saved.scanline = m_scanline;
@@ -167,12 +167,18 @@ bool model1::save_simulation_state(simulation_state &saved) const
 	saved.lle = save_lle_state();
 	if (m_ioboard) saved.io_board = m_ioboard->save_state();
 	else saved.io_board.reset();
+	if (m_comm) saved.link = m_comm->save_state();
+	else saved.link.reset();
+	saved.link_external_clock = m_comm_external_clock;
 	return true;
 }
 
-bool model1::load_simulation_state(const simulation_state &saved)
+bool model1::load_simulation_state(const simulation_state &saved, bool include_link)
 {
-	if (m_comm || m_ioboard2 || bool(m_lle) != bool(saved.lle) ||
+	if ((m_comm && !include_link) || m_ioboard2 ||
+		bool(m_comm) != bool(saved.link) ||
+		(m_comm && m_comm_external_clock != saved.link_external_clock) ||
+		bool(m_lle) != bool(saved.lle) ||
 		bool(m_ioboard) != bool(saved.io_board) ||
 		saved.ram_a.size() != m_ram_a.size() || saved.ram_b.size() != m_ram_b.size() ||
 		saved.display_list0.size() != m_display_list0_ram.size() ||
@@ -248,6 +254,7 @@ bool model1::load_simulation_state(const simulation_state &saved)
 	std::copy(saved.poly_ram.begin(), saved.poly_ram.end(), m_poly_ram.get());
 	if (!restore_lle_state(saved.lle)) return false;
 	if (m_ioboard) m_ioboard->load_state(*saved.io_board);
+	if (m_comm) m_comm->load_state(*saved.link);
 	if (m_audio) m_audio->reset();
 	m_audio_out.clear();
 
@@ -337,7 +344,11 @@ void model1::run_scanline()
 	}
 	const int line = m_scanline;
 	if (line == VBLANK_LINE) {
-		if (m_comm && !m_comm_external_clock) m_comm->tick();
+		if (m_comm) {
+			if (replay_link_override) replay_link_override(m_frame, *m_comm);
+			else if (!m_comm_external_clock) m_comm->tick();
+			if (replay_link_observer) replay_link_observer(m_frame, *m_comm);
+		}
 		if (!BIT(m_irq_mask, 1))
 			irq_raise(1);
 		// vblank starts: the display lists are scanned and swapped
@@ -478,10 +489,15 @@ void model1::uart_tick(int cycles)
 	}
 	// replies from the sound board, at the same rate
 	if (m_uart_rx_left > 0) m_uart_rx_left -= cycles;
-	if (m_audio && m_audio->tx_pending() && m_uart_rx < 0 && m_uart_rx_left <= 0) {
-		m_uart_rx = m_audio->tx_byte();
-		m_uart_rx_left = UART_BYTE_CYCLES;
-		sound_ready();
+	if (m_uart_rx < 0 && m_uart_rx_left <= 0) {
+		const std::optional<uint8_t> reply = replay_sound_reply ? replay_sound_reply(m_frame, m_scanline) :
+			m_audio && m_audio->tx_pending() ? std::optional<uint8_t>(m_audio->tx_byte()) : std::nullopt;
+		if (reply) {
+			m_uart_rx = *reply;
+			if (replay_sound_observer) replay_sound_observer(m_frame, m_scanline, *reply);
+			m_uart_rx_left = UART_BYTE_CYCLES;
+			sound_ready();
+		}
 	}
 }
 

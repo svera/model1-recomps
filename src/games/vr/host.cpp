@@ -1,6 +1,7 @@
 // Virtua Racing in the desktop host (src/host/game_host.h): its set and controls; the rest is the
 // shared host's.
 #include "../../host/game_host.h"
+#include "../../host/race_replay.h"
 #include "controls.h"
 #include "gameplay.h"
 #include "link.h"
@@ -9,6 +10,7 @@
 #include <optional>
 #include <charconv>
 #include <cstdlib>
+#include <new>
 
 namespace game::vr {
 namespace {
@@ -305,6 +307,7 @@ public:
 
 	void after_frame() override
 	{
+		finish_recorded_frame();
 		// 0x13 is a brief transition between the grid countdown and racing.
 		const uint8_t phase = ctx ? ctx->machine.work_ram()[0x1138] : 0;
 		if (!ctx || ctx->link_player != 0 || phase < 0x12 || phase > 0x14) {
@@ -340,6 +343,7 @@ public:
 		if (phase < 0x12 || phase > 0x14) return false;
 		auto state = std::dynamic_pointer_cast<gameplay_state>(ctx->machine.game_state());
 		if (!state || !ctx->machine.load_simulation_state(*race_snapshot)) return false;
+		clear_recording();
 		const bool current_extended = state->extended_draw_distance;
 		const bool current_lod = state->lod;
 		const bool current_standalone_color = state->standalone_car_color;
@@ -363,6 +367,7 @@ public:
 
 	bool booted() override
 	{
+		clear_recording();
 		race_snapshot.reset();
 		race_gameplay.reset();
 		menu_wheel = {};
@@ -398,6 +403,106 @@ public:
 	}
 
 private:
+	void clear_recording()
+	{
+		recorder.reset();
+		recording_snapshot.reset();
+		recording_gameplay.reset();
+		recording_complete = false;
+		recording_failed = false;
+		recording_error.clear();
+		recording_phase = 0xff;
+	}
+
+	void fail_recording(std::string error)
+	{
+		recorder.reset();
+		recording_snapshot.reset();
+		recording_gameplay.reset();
+		recording_complete = false;
+		recording_failed = true;
+		recording_error = std::move(error);
+		fprintf(stderr, "VR replay: %s\n", recording_error.c_str());
+	}
+
+	void begin_race_record_frame() override
+	{
+		if (!ctx || !ctx->race_replay_enabled) return;
+		const uint8_t phase = ctx->machine.work_ram()[0x1138];
+		const bool race_start = phase == 0x12 && recording_phase != 0x12;
+		recording_phase = phase;
+		if (race_start && (!recorder || recording_complete || recording_failed)) {
+			clear_recording();
+			recording_phase = phase;
+			try {
+				auto state = std::dynamic_pointer_cast<gameplay_state>(ctx->machine.game_state());
+				model1::simulation_state snapshot;
+				if (!state || !ctx->machine.save_simulation_state(snapshot, true)) {
+					fail_recording("Could not capture the race replay checkpoint.");
+					return;
+				}
+				recording_gameplay = *state;
+				recording_snapshot.emplace(std::move(snapshot));
+				recorder = std::make_unique<race_replay::race_recorder>(ctx->machine);
+				recording_error = recorder->start();
+			} catch (const std::bad_alloc &) {
+				fail_recording("Could not allocate the race replay recording.");
+				return;
+			}
+			if (!recording_error.empty()) {
+				fail_recording(std::move(recording_error));
+				return;
+			}
+		}
+		if (!recorder || recording_complete || recording_failed) return;
+		recording_error = recorder->begin_frame();
+		if (!recording_error.empty()) {
+			fail_recording(std::move(recording_error));
+		}
+	}
+
+	void finish_recorded_frame()
+	{
+		if (!recorder || recording_failed) return;
+		if (recording_complete) {
+			if (ctx->machine.work_ram()[0x1138] == 0x12 && recording_phase != 0x12)
+				clear_recording();
+			return;
+		}
+		recording_error = recorder->end_frame();
+		if (!recording_error.empty()) {
+			fail_recording(std::move(recording_error));
+			return;
+		}
+		const uint8_t phase = ctx->machine.work_ram()[0x1138];
+		if (phase == 0x1c) {
+			recorder->stop();
+			recording_complete = true;
+		} else if (phase == 0x03 || phase == 0x07 || phase == 0x10) {
+			clear_recording();
+		}
+	}
+
+	std::shared_ptr<const race_replay::race_recording> race_recording(bool completed) const override
+	{
+		if (!recorder || recording_failed || (completed && !recording_complete) ||
+			(!completed && recording_complete) || recorder->data().frames.empty()) return {};
+		return recorder->share();
+	}
+
+	bool restore_race_recording(model1 &machine) const override
+	{
+		if (!recording_snapshot || !recording_gameplay) return false;
+		auto state = std::dynamic_pointer_cast<gameplay_state>(machine.game_state());
+		if (recording_snapshot->link && !machine.link())
+			machine.enable_link({}, recording_snapshot->link_external_clock);
+		if (!state || !machine.load_simulation_state(*recording_snapshot, true)) return false;
+		*state = *recording_gameplay;
+		return true;
+	}
+
+	const std::string &race_recording_error() const override { return recording_error; }
+
 	menu_steering menu_wheel;
 	std::optional<uint64_t> steering_frame;
 	bool apply_settings()
@@ -441,6 +546,12 @@ private:
 	std::array<int, 4> machine_choices{};
 	std::optional<model1::simulation_state> race_snapshot;
 	std::optional<gameplay_state> race_gameplay;
+	std::unique_ptr<race_replay::race_recorder> recorder;
+	std::optional<model1::simulation_state> recording_snapshot;
+	std::optional<gameplay_state> recording_gameplay;
+	bool recording_complete = false, recording_failed = false;
+	uint8_t recording_phase = 0xff;
+	std::string recording_error;
 };
 
 }

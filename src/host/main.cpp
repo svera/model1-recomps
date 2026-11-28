@@ -3958,6 +3958,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 			}
 			const bool lan_boot_frame = lan_booting;
 			lan_picture_wait.reset();
+			for (int p = 0; p < cabinet_count; p++) cabinets[p]->game->begin_race_record_frame();
 			display_trace.log("simulation begin", cabinets[0]->display->window);
 			run_frame();
 			display_trace.log("simulation returned", cabinets[0]->display->window);
@@ -4014,6 +4015,7 @@ int run_two_cabinets(model1::regions regions, const std::string &data_dir, const
 					machine.set_defer_capture(true);
 					cabinets[0]->game->before_frame();
 				}
+				cabinets[0]->game->begin_race_record_frame();
 				run_frame();
 				if (mid_picture) machine.set_defer_capture(false);
 				ahead_ns = SDL_GetTicksNS() - begin;
@@ -6464,6 +6466,7 @@ int main(int argc, char **argv)
 				m.set_defer_capture(true);
 				apply_frame_inputs();
 			}
+			game_part.begin_race_record_frame();
 			m.run_frame();
 			m.set_defer_capture(false);
 			ahead_ns = SDL_GetTicksNS() - t;
@@ -7039,6 +7042,7 @@ int main(int argc, char **argv)
 				for (int i = 0; i < due; i++) {
 					if (!frame_inputs()) break;
 					if (arcade_skip) m.set_arcade_draw_next(i == due - 1 && game_run + 1 >= arcade_next_picture);
+					game_part.begin_race_record_frame();
 					m.run_frame();
 					if (!after_frame(ff)) break;
 				}

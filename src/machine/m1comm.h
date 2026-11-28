@@ -17,8 +17,26 @@ public:
 	using memory = std::array<uint8_t, 0x1000>;
 	using exchange = std::function<bool(const memory &, memory &)>;
 
+	struct state
+	{
+		memory shared{};
+		uint8_t cn = 0, fg = 0;
+		bool alive = false, failed = false;
+		uint64_t ticks = 0;
+	};
+
 	explicit m1comm(exchange transfer) : m_transfer(std::move(transfer)) {}
 	void reset() { m_shared.fill(0); m_cn = m_fg = 0; m_alive = m_failed = false; m_ticks = 0; }
+	state save_state() const { return {m_shared, m_cn, m_fg, m_alive, m_failed, m_ticks}; }
+	void load_state(const state &saved)
+	{
+		m_shared = saved.shared;
+		m_cn = saved.cn;
+		m_fg = saved.fg;
+		m_alive = saved.alive;
+		m_failed = saved.failed;
+		m_ticks = saved.ticks;
+	}
 	uint8_t read(unsigned offset) const { return m_shared[offset]; }
 	void write(unsigned offset, uint8_t value) { m_shared[offset] = value; }
 	uint8_t cn() const { return 0xfe | m_cn; }

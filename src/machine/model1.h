@@ -92,6 +92,8 @@ public:
 		int ccount = 0;
 		std::shared_ptr<void> lle;
 		std::optional<model1io::state> io_board;
+		std::optional<m1comm::state> link;
+		bool link_external_clock = false;
 	};
 
 	// Testing (the host's M1_TRACE): the one-off work done since the counts were last cleared.
@@ -132,8 +134,10 @@ public:
 	explicit model1(regions &&r);
 	game::id title() const { return m_regions.title; }
 	void reset();
-	bool save_simulation_state(simulation_state &saved) const;
-	bool load_simulation_state(const simulation_state &saved);
+	// Linked snapshots require an already configured link with the same clock mode. The transport
+	// and sound-board state are not captured; callers must isolate or reproduce those separately.
+	bool save_simulation_state(simulation_state &saved, bool include_link = false) const;
+	bool load_simulation_state(const simulation_state &saved, bool include_link = false);
 	// One video frame: CPU time, the vblank IRQ, the display-list scan and the render.
 	void run_frame();
 #if defined(__ANDROID__) && defined(M1_ALWAYS_FRAME_TIMINGS)
@@ -143,6 +147,12 @@ public:
 	// One scanline, including begin/end-of-frame work at the boundaries.
 	void run_scanline();
 	int scanline() const { return m_scanline; }
+	// Replay hooks run at the same scanline as the external event. Overrides are intended for
+	// isolated machines, not live network cabinets.
+	std::function<void(uint64_t, m1comm &)> replay_link_override;
+	std::function<void(uint64_t, const m1comm &)> replay_link_observer;
+	std::function<std::optional<uint8_t>(uint64_t, int)> replay_sound_reply;
+	std::function<void(uint64_t, int, uint8_t)> replay_sound_observer;
 	void enable_link(m1comm::exchange transfer, bool external_clock = false)
 	{
 		m_comm = std::make_unique<m1comm>(std::move(transfer));

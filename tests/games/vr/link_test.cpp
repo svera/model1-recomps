@@ -58,6 +58,10 @@ static void board_protocol()
 	broken.set_cn(1);
 	broken.tick();
 	assert(broken.read(0) == 0xff && broken.fg() == 0xfe);
+	const auto failed = broken.save_state();
+	broken.reset();
+	broken.load_state(failed);
+	assert(!broken.ready() && broken.read(0) == 0xff && broken.fg() == 0xfe);
 	broken.tick();
 	assert(broken.read(0) == 0xff);
 }
